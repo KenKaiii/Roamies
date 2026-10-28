@@ -1,0 +1,196 @@
+// Sidekick storage: conversation sessions and the commitments memory, under ~/.gg/sidekick/.
+// Writes are atomic (temp file, fsync, rename) and serialised per file, files are private (0600),
+// and a file that fails to parse is kept aside as *.corrupt-<time> instead of being overwritten.
+import { randomBytes } from 'node:crypto';
+import { existsSync, readFileSync, renameSync } from 'node:fs';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+
+export const DIR = path.join(os.homedir(), '.gg', 'sidekick');
+const SESSIONS = path.join(DIR, 'sessions');
+const MEMORY = path.join(DIR, 'memory.json');
+const SESSION_FILE = /^\d{8}-\d{6}-[a-z0-9]{6}\.json$/;
+const KEEP_SESSIONS = 60;
+const SESSION_GAP_MS = 2 * 60 * 60 * 1000;
+
+const chains = new Map();
+/** Atomic JSON write. `backup` keeps the previous version as <file>.bak. */
+export function writeJson(file, data, { backup = false } = {}) {
+  const run = async () => {
+    await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
+    const tmp = `${file}.${process.pid}.${randomBytes(3).toString('hex')}.tmp`;
+    const fh = await fs.open(tmp, 'w', 0o600);
+    try {
+      await fh.writeFile(JSON.stringify(data, null, 2));
+      await fh.sync();
+    } finally {
+      await fh.close();
+    }
+    if (backup && existsSync(file)) await fs.copyFile(file, `${file}.bak`).catch(() => {});
+    await fs.rename(tmp, file);
+  };
+  const next = (chains.get(file) ?? Promise.resolve()).then(run, run);
+  chains.set(file, next.catch(() => {}));
+  return next.catch((e) => console.error(`[store] write ${path.basename(file)} failed`, e));
+}
+
+/** Reads JSON; missing → null. Unparseable → moved aside, then the .bak is tried. */
+export function readJson(file, { backup = false } = {}) {
+  const tryRead = (f) => JSON.parse(readFileSync(f, 'utf8'));
+  try {
+    return tryRead(file);
+  } catch (e) {
+    if (e.code === 'ENOENT') return backup && existsSync(`${file}.bak`) ? safeBak(file) : null;
+    const aside = `${file}.corrupt-${Date.now()}`;
+    try { renameSync(file, aside); } catch {}
+    console.error(`[store] ${path.basename(file)} was unreadable; kept it as ${path.basename(aside)}`);
+    return backup ? safeBak(file) : null;
+  }
+  function safeBak(f) {
+    try { return tryRead(`${f}.bak`); } catch { return null; }
+  }
+}
+
+// ---------- sessions ----------
+
+const stamp = (d) => {
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+};
+
+export function newSession(provider, model) {
+  const now = new Date();
+  return { version: 1, id: `${stamp(now)}-${randomBytes(3).toString('hex')}`, startedAt: now.getTime(), lastActiveAt: now.getTime(), provider, model, messages: [] };
+}
+
+/** A session goes stale after a 2-hour gap or once the day changes. */
+export function isStale(s, now = Date.now()) {
+  if (!s) return true;
+  return now - s.lastActiveAt > SESSION_GAP_MS || new Date(s.lastActiveAt).toDateString() !== new Date(now).toDateString();
+}
+
+export async function loadLatestSession() {
+  let names = [];
+  try { names = (await fs.readdir(SESSIONS)).filter((n) => SESSION_FILE.test(n)).sort().reverse(); } catch { return null; }
+  for (const n of names.slice(0, 5)) {
+    const s = readJson(path.join(SESSIONS, n));
+    if (s?.version === 1 && Array.isArray(s.messages)) return s;
+  }
+  return null;
+}
+
+export const saveSession = (s) => (s?.messages.length ? writeJson(path.join(SESSIONS, `${s.id}.json`), s) : Promise.resolve());
+
+/** Keeps the newest sessions. Only touches files this module names, in this folder. */
+export async function pruneSessions() {
+  let names;
+  try { names = (await fs.readdir(SESSIONS)).filter((n) => SESSION_FILE.test(n)).sort(); } catch { return; }
+  const drop = names.slice(0, Math.max(0, names.length - KEEP_SESSIONS));
+  if (!drop.length) return;
+  console.error(`[store] pruning ${drop.length} old session(s), keeping ${KEEP_SESSIONS}`);
+  for (const n of drop) await fs.unlink(path.join(SESSIONS, n)).catch(() => {});
+}
+
+// Screenshots stay in memory for the current turn only: never written to disk. The marker says the
+// image was really seen, so a resumed session doesn't decide it never got one.
+const SHOT = '[You saw a screenshot here earlier; the image is no longer attached. Trust what you said about it then.]';
+const stripImages = (content) =>
+  Array.isArray(content) ? content.map((p) => (p?.type === 'image' ? { type: 'text', text: SHOT } : p)) : content;
+export function forDisk(messages) {
+  return messages
+    .filter((m) => m.role !== 'system')
+    .map((m) => {
+      if (m.role === 'tool') return { ...m, content: m.content.map((r) => ({ ...r, content: stripImages(r.content) })) };
+      if (m.role === 'user') return { ...m, content: stripImages(m.content) };
+      return m;
+    });
+}
+
+/** History carried to another provider: drop reasoning blocks (signed for the old one). */
+export function forProvider(messages, from, to) {
+  if (!from || from === to) return messages;
+  return messages.map((m) => (m.role === 'assistant' && Array.isArray(m.content) ? { ...m, content: m.content.filter((p) => p.type !== 'thinking') } : m));
+}
+
+// ---------- context budget ----------
+
+const textLen = (c) => (typeof c === 'string' ? c.length : Array.isArray(c) ? c.reduce((n, p) => n + (p?.type === 'image' ? 6000 : (p?.text ?? p?.content ?? '').length + JSON.stringify(p?.args ?? '').length), 0) : 0);
+const approxChars = (m) => (m.role === 'tool' ? m.content.reduce((n, r) => n + textLen(r.content), 0) : textLen(m.content));
+
+/**
+ * Before each model call: keep only the newest screenshot image, and if the history is over
+ * budget, drop the oldest exchanges (cutting at a user message so tool calls stay paired).
+ */
+export function fitContext(messages, { budgetTokens, force = false }) {
+  let lastShot = -1;
+  messages.forEach((m, i) => { if (m.role === 'tool' && m.content.some((r) => Array.isArray(r.content) && r.content.some((p) => p?.type === 'image'))) lastShot = i; });
+  let out = messages.map((m, i) => (m.role === 'tool' && i !== lastShot ? { ...m, content: m.content.map((r) => ({ ...r, content: stripImages(r.content) })) } : m));
+  const budget = (force ? 0.6 : 1) * budgetTokens * 3.6;
+  let total = out.reduce((n, m) => n + approxChars(m), 0);
+  if (total <= budget) return out;
+  const sys = out.filter((m) => m.role === 'system');
+  let rest = out.filter((m) => m.role !== 'system');
+  while (total > budget && rest.length > 2) {
+    let cut = rest.findIndex((m, i) => i > 0 && m.role === 'user');
+    if (cut < 0) break;
+    total -= rest.slice(0, cut).reduce((n, m) => n + approxChars(m), 0);
+    rest = rest.slice(cut);
+  }
+  const first = rest[0];
+  const note = '[Older parts of this conversation were trimmed to save space.]\n';
+  if (first?.role === 'user' && typeof first.content === 'string' && !first.content.startsWith(note)) rest[0] = { ...first, content: note + first.content };
+  return [...sys, ...rest];
+}
+
+// ---------- commitments ----------
+
+let memory = null;
+const loadMemory = () => {
+  if (memory) return memory;
+  const m = readJson(MEMORY, { backup: true });
+  memory = m?.version === 1 && Array.isArray(m.commitments) ? m : { version: 1, commitments: [] };
+  return memory;
+};
+const saveMemory = () => writeJson(MEMORY, memory, { backup: true });
+
+/** 'YYYY-MM-DD' or 'YYYY-MM-DDTHH:mm' (local time) → ms, or null. Date-only means 10am. */
+export function parseDue(due) {
+  if (due == null || due === '') return null;
+  const s = String(due).trim();
+  const d = /^\d{4}-\d{2}-\d{2}$/.test(s) ? new Date(`${s}T10:00`) : new Date(s);
+  return Number.isNaN(d.getTime()) ? undefined : d.getTime();
+}
+
+export const openCommitments = () => loadMemory().commitments.filter((c) => c.status === 'open');
+
+export async function addCommitment(text, dueMs) {
+  const c = { id: `c${randomBytes(2).toString('hex')}`, text: String(text).trim().slice(0, 200), due: dueMs ?? null, createdAt: Date.now(), status: 'open', remindedAt: null };
+  loadMemory().commitments.push(c);
+  // Cap the file: the oldest finished entries go first; open ones are never dropped.
+  const done = memory.commitments.filter((x) => x.status !== 'open');
+  if (memory.commitments.length > 200) {
+    const drop = new Set(done.sort((a, b) => (a.doneAt ?? a.createdAt) - (b.doneAt ?? b.createdAt)).slice(0, memory.commitments.length - 200).map((x) => x.id));
+    memory.commitments = memory.commitments.filter((x) => !drop.has(x.id));
+  }
+  await saveMemory();
+  return c;
+}
+
+export async function updateCommitment(id, { status, dueMs }) {
+  const c = loadMemory().commitments.find((x) => x.id === id);
+  if (!c) return null;
+  if (status) { c.status = status; if (status !== 'open') c.doneAt = Date.now(); }
+  if (dueMs !== undefined) { c.due = dueMs; c.remindedAt = null; }
+  await saveMemory();
+  return c;
+}
+
+/** Open commitments whose time has come and that haven't been reminded yet. Marks them reminded. */
+export async function takeDueReminders(now = Date.now()) {
+  const due = openCommitments().filter((c) => c.due && c.due <= now && !c.remindedAt);
+  if (!due.length) return [];
+  for (const c of due) c.remindedAt = now;
+  await saveMemory();
+  return due;
+}
