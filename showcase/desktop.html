@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Roamies on the desktop</title>
+<style>
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+  canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; cursor: grab; touch-action: none; }
+  canvas:active { cursor: grabbing; }
+</style>
+</head>
+<body>
+<canvas id="stage" aria-label="Roamies roaming the desktop"></canvas>
+<script src="roamies/core.js"></script>
+<script src="roamies/sfx.js"></script>
+<script src="roamies/agent.js"></script>
+<script src="roamies/agent-tools.js"></script>
+<script src="roamies/01-jelly.js"></script>
+<script src="roamies/02-ascii-goop.js"></script>
+<script src="roamies/03-mercury.js"></script>
+<script src="roamies/04-ascii-ghost.js"></script>
+<script src="roamies/05-nebula.js"></script>
+<script src="roamies/06-neon-noodle.js"></script>
+<script src="roamies/07-ascii-medusa.js"></script>
+<script src="roamies/08-fluff.js"></script>
+<script src="roamies/09-bubble.js"></script>
+<script src="roamies/10-dither.js"></script>
+<script src="roamies/12-sidekick.js"></script>
+<script>Roamie.bootDesktop(document.getElementById("stage"));</script>
+<script src="demo.js"></script>
+<script src="roamies/host.js"></script>
+</body>
+</html>

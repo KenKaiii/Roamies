@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sidekick</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body class="solo-page">
+<main class="grid" id="grid" aria-label="Sidekick roamie"></main>
+<button class="sound" id="sound" type="button" aria-label="Sound" aria-pressed="true">
+  <svg class="on-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></svg>
+  <svg class="off-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="m22 9-6 6M16 9l6 6"/></svg>
+</button>
+<script src="roamies/core.js"></script>
+<script src="roamies/sfx.js"></script>
+<script src="roamies/agent.js"></script>
+<script src="roamies/agent-tools.js"></script>
+<script src="roamies/10-dither.js"></script>
+<script src="roamies/12-sidekick.js"></script>
+<script>
+  Roamie.boot(document.getElementById('grid'), { only: 'sidekick', locked: true, unit: 400, spawn: (e) => ({ x: e.w * 0.5, y: e.h * 0.68 }) });
+  Roamie.sfx.bindToggle(document.getElementById('sound'));
+</script>
+<script src="demo.js"></script>
+</body>
+</html>

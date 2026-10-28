@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Menu bar only: no Dock icon, no app switcher entry, even during launch. -->
+  <key>LSUIElement</key>
+  <true/>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Sidekick listens while you hold Control and Option.</string>
+  <key>NSSpeechRecognitionUsageDescription</key>
+  <string>Sidekick turns what you say into text, on your Mac.</string>
+  <key>NSScreenCaptureUsageDescription</key>
+  <string>Sidekick looks at your screen when you ask it to.</string>
+</dict>
+</plist>
