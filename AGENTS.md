@@ -16,6 +16,9 @@ cd .. && ./build.sh dev                 # web files + sidecar + debug `cargo bui
 
 There is no linter configured yet.
 
+Releases: push a `v*` tag (or run `.github/workflows/release.yml` by hand). It builds a signed, notarized
+macOS DMG (Apple silicon and Intel) and an unsigned Windows installer into a draft GitHub release.
+
 ## Rules
 
 - CI lives in `.github/workflows/ci.yml` and must stay green.

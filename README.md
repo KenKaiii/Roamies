@@ -43,6 +43,15 @@ cd showcase/tauri/sidecar && npm ci && cd ..
 On macOS, `build.sh` signs with `APPLE_SIGNING_IDENTITY` if set, otherwise the first "Developer ID
 Application" certificate in your keychain, otherwise ad-hoc. Signing with a stable identity keeps macOS
 permissions (microphone, screen recording, accessibility) across rebuilds; ad-hoc builds re-ask each time.
+### Releases
+
+Push a version tag (`git tag v0.1.0 && git push origin v0.1.0`) or run the **Release** workflow from the
+Actions tab. It builds a signed and notarized macOS DMG for Apple silicon and Intel, plus a Windows
+installer, and attaches them to a draft release for you to publish. Windows builds aren't code-signed yet,
+so Windows shows a SmartScreen warning on first run. The signing credentials are GitHub Actions secrets
+(`APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `KEYCHAIN_PASSWORD`, `APPLE_ID`, `APPLE_PASSWORD`,
+`APPLE_TEAM_ID`), never files in the repo.
+
 Voice works best on macOS 26+, which doesn't need Siri or Dictation turned on. Windows and Linux
 builds compile, but voice is macOS only for now.
 

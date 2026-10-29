@@ -15,4 +15,6 @@ if [ "$(uname)" = "Darwin" ] && [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
   APPLE_SIGNING_IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null | sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -1)"
   export APPLE_SIGNING_IDENTITY="${APPLE_SIGNING_IDENTITY:--}"
 fi
-if [ "${1:-}" = "dev" ]; then cargo build; else cargo tauri build ${TAURI_BUNDLES:+--bundles $TAURI_BUNDLES}; fi
+# ./build.sh release --target <triple> builds for one target (used by the release workflow).
+MODE="${1:-}"; [ $# -gt 0 ] && shift
+if [ "$MODE" = "dev" ]; then cargo build; else cargo tauri build ${TAURI_BUNDLES:+--bundles $TAURI_BUNDLES} "$@"; fi

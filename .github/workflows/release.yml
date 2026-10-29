@@ -1,0 +1,121 @@
+# Release: tag a version (e.g. `git tag v0.1.0 && git push origin v0.1.0`) or run it by hand.
+# Builds a signed + notarized macOS DMG (Apple silicon and Intel) and a Windows installer, then attaches
+# them to a draft GitHub release for you to review and publish. CI (ci.yml) stays on Linux only.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            bundles: app,dmg
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            bundles: app,dmg
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bundles: nsis
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+        working-directory: showcase/tauri
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: showcase/tauri/sidecar/package-lock.json
+
+      - name: Install sidecar dependencies
+        working-directory: showcase/tauri/sidecar
+        run: npm ci
+
+      - name: Test sidecar
+        working-directory: showcase/tauri/sidecar
+        run: npm test
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: showcase/tauri/src-tauri -> target
+          key: ${{ matrix.target }}
+
+      - name: Install the Tauri CLI
+        run: cargo install tauri-cli --version "^2" --locked
+
+      # Developer ID certificate into a throwaway keychain (removed at the end of the job).
+      - name: Import Apple signing certificate
+        if: runner.os == 'macOS'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          KC="$RUNNER_TEMP/build.keychain-db"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KC"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KC" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KC" >/dev/null
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/cert.p12"
+          ID=$(security find-identity -v -p codesigning "$KC" | sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -1)
+          [ -n "$ID" ] || { echo "No Developer ID Application identity in the certificate"; exit 1; }
+          echo "APPLE_SIGNING_IDENTITY=$ID" >> "$GITHUB_ENV"
+
+      # build.sh copies the web files, bundles the sidecar, then runs `cargo tauri build`. On macOS, Tauri
+      # signs with APPLE_SIGNING_IDENTITY and notarizes with APPLE_ID/APPLE_PASSWORD/APPLE_TEAM_ID.
+      - name: Build, sign and notarize
+        env:
+          TAURI_BUNDLES: ${{ matrix.bundles }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: ./build.sh release --target ${{ matrix.target }}
+
+      - name: Check the signature and notarization
+        if: runner.os == 'macOS'
+        run: |
+          APP=$(ls -d src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.app | head -1)
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          xcrun stapler validate "$APP"
+          spctl --assess --type execute --verbose "$APP"
+
+      - name: Remove the signing keychain
+        if: always() && runner.os == 'macOS'
+        run: security delete-keychain "$RUNNER_TEMP/build.keychain-db" || true
+
+      - name: Attach to a draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          [[ "$TAG" == v* ]] || TAG="v$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --draft --title "Roamies $TAG" --generate-notes || true
+          shopt -s nullglob
+          files=(src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*-setup.exe)
+          [ ${#files[@]} -gt 0 ] || { echo "No installers were built"; exit 1; }
+          gh release upload "$TAG" "${files[@]}" --clobber
