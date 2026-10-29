@@ -801,6 +801,11 @@ fn handle_sidecar(app: &AppHandle, msg: Value) {
 
 fn main() {
     tauri::Builder::default()
+        // Must be the first plugin. A second launch (say, straight from the DMG) quits and summons this one instead.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            let app2 = app.clone();
+            let _ = app.run_on_main_thread(move || to_overlays(&app2, &json!({ "kind": "summon" })));
+        }))
         .manage(Sidecar(Mutex::new(None)))
         .manage(Roster(Mutex::new(vec!["sidekick".into()])))
         .manage(Voice(Mutex::new(None), AtomicUsize::new(0)))
