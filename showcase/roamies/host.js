@@ -100,20 +100,27 @@
         if (!thought) thought = a.think('', { stream: true, quiet: true });
         thought.append(e.text);
         break;
-      case 'text':
+      case 'text': {
         if (listen?.open) break;
+        let text = e.text;
         if (!speech) {
+          // A fresh bubble never starts with the space that joins a follow-up turn.
+          text = text.replace(/^\s+/, '');
+          if (!text) break;
           // say() morphs an open thought cloud into the speech bubble, so drop the thought handle.
           thought = null;
           speech = a.say('', { stream: true, mood: nextMood });
           nextMood = null;
         }
-        speech.append(e.text);
+        speech.append(text);
         break;
+      }
       case 'tool':
         if (listen?.open) break;
+        // Tools with nothing to show (listing commitments) don't interrupt the bubble.
+        if (!e.anim) break;
         endTalk();
-        if (e.anim) { jobs.push({ id: e.id, anim: e.anim }); playTools(); }
+        jobs.push({ id: e.id, anim: e.anim }); playTools();
         break;
       case 'tool_end':
         settle(e.id, e.isError);
