@@ -17,7 +17,7 @@ import path from 'node:path';
 import { createInterface } from 'node:readline';
 import { z } from 'zod';
 import {
-  addCommitment, fitContext, forDisk, forProvider, isStale, loadLatestSession, newSession, openCommitments,
+  addCommitment, addFact, clearFacts, fitContext, forgetFact, listFacts, nextDue, pickFacts, touchFacts, forDisk, forProvider, isStale, loadLatestSession, newSession, openCommitments,
   parseDue, pruneSessions, saveSession, takeDueReminders, updateCommitment, writeJson,
 } from './store.mjs';
 import { EMOTES, ReplyStream } from './reply.mjs';
@@ -97,6 +97,7 @@ const actionsOff = 'File edits and commands are switched off. Tell the user to t
 // macOS "hands": the bundled helper that captures one window or area and reads/controls other apps.
 const HANDS = process.env.ROAMIES_HANDS || '';
 let axNudged = 0;
+const pointWaits = new Map(); // point_at call id → resolve, settled when the overlay has shown the step
 async function hands(...args) {
   if (!HANDS) throw new Error('This needs the Roamies app on macOS.');
   const r = await run(HANDS, args, { timeout: 120_000 });
@@ -176,6 +177,43 @@ const tools = [
         const head = `${res.window.app}${res.window.title ? ` — ${res.window.title}` : ''}`;
         if (!res.controls.length) return `${head}\n${res.note}`;
         return `${head}\n` + res.controls.map((c) => `${c.id}. ${c.role}${c.label ? ` "${c.label}"` : ''}${c.value ? ` = "${c.value}"` : ''}${c.focused ? ' (focused)' : ''}`).join('\n');
+      },
+    },
+    {
+      name: 'point_at',
+      description: "Teach by showing: fly to a control in another app and point at it while you explain one step. Use it to walk the user through how to do something (e.g. 'how do I add a layer mask'), one point_at per step, in order, with a short instruction each (under 12 words). Call read_window first and use its ids. For apps with no readable controls, take a screenshot and pass x, y (window points of the spot to point at). Set click true only if the user asked you to do it for them; otherwise just point and let them click. wait_for_user true pauses until they do the step (or 20 s), for multi-step lessons.",
+      parameters: z.object({
+        target: z.string().optional(),
+        id: z.number().int().optional(), x: z.number().optional(), y: z.number().optional(),
+        say: z.string().min(1).max(120),
+        step: z.number().int().optional(), of: z.number().int().optional(),
+        click: z.boolean().optional(), wait_for_user: z.boolean().optional(),
+      }),
+      executionMode: 'sequential',
+      execute: async ({ target = 'front', id, x, y, say: text, step, of: total, click, wait_for_user }, ctx) => {
+        const t = String(target || 'front'), spec = t === 'front' ? 'front' : `app:${t}`;
+        let rect, label = '';
+        if (id != null) {
+          const res = await hands('locate-control', spec, String(id));
+          rect = res.control.bounds; label = res.control.label || res.control.role;
+        } else if (x != null && y != null) {
+          const res = await hands('locate', spec);
+          const [wx, wy] = res.window.bounds;
+          rect = [Math.round(wx + x - 14), Math.round(wy + y - 14), 28, 28];
+        } else throw new Error('Give an id from read_window, or x and y from a screenshot.');
+        // The overlay flies there, points, shows the step and holds; this tool resolves once it's on screen.
+        const done = new Promise((resolve) => pointWaits.set(ctx.toolCallId, resolve));
+        ui({ kind: 'agent', e: { type: 'point', id: ctx.toolCallId, rect, say: text, step, of: total, label } });
+        await done;
+        if (click) {
+          if (!config.allowActions) throw new Error(actionsOff);
+          if (id != null) await hands('act', JSON.stringify({ steps: [{ do: 'click', id }], ...(t === 'front' ? {} : { app: t }) }));
+          else await hands('act', JSON.stringify({ steps: [{ do: 'click_at', x, y }], ...(t === 'front' ? {} : { app: t }) }));
+        } else if (wait_for_user) {
+          // Give them time to do it themselves before the next step.
+          await new Promise((r) => setTimeout(r, 6000));
+        }
+        return `Pointed at ${label || 'the spot'}${click ? ' and clicked it' : ''}.`;
       },
     },
     {
@@ -270,13 +308,13 @@ const tools = [
   },
   {
     name: 'remember_commitment',
-    description: `Save something ${'${userName}'} has committed to doing, so you can remind them later. Use it whenever they say they will do something, with or without a time. due: local time as YYYY-MM-DDTHH:mm, or YYYY-MM-DD if only the day is known; omit if there's no time at all. Resolve words like "Thursday", "at 2" or "tonight" from the timestamp on their message.`,
+    description: `Save something ${userName} has committed to doing, or anything they ask to be reminded about, so you can remind them at the right moment. Use it whenever they say they will do something or say "remind me". due: a relative time like "in 90s", "in 5m", "in 1h30m" or "in 2 days" (best for short timers), or a local time YYYY-MM-DDTHH:mm:ss, YYYY-MM-DDTHH:mm, or YYYY-MM-DD if only the day is known; omit if there's no time at all. Resolve words like "Thursday", "at 2" or "tonight" from the timestamp on their message.`,
     parameters: z.object({ text: z.string().min(2).max(200), due: z.string().optional() }),
     execute: async ({ text, due }) => {
       const ms = parseDue(due);
       if (ms === undefined) throw new Error(`Couldn't read the time "${due}". Use YYYY-MM-DDTHH:mm or YYYY-MM-DD.`);
       const c = await addCommitment(text, ms);
-      menu();
+      menu(); scheduleReminders();
       return `Saved as ${c.id}${ms ? `, due ${fmtWhen(ms)}` : ''}. I'll remind them${ms ? ' when it is due' : ''}.`;
     },
   },
@@ -289,9 +327,20 @@ const tools = [
       if (ms === undefined && due !== undefined) throw new Error(`Couldn't read the time "${due}".`);
       const c = await updateCommitment(id, { status, dueMs: ms });
       if (!c) throw new Error(`No commitment with id ${id}. Call list_commitments to see the ids.`);
-      menu();
+      menu(); scheduleReminders();
       return `${c.id} is now ${c.status}${c.due ? `, due ${fmtWhen(c.due)}` : ''}.`;
     },
+  },
+  {
+    name: 'remember_fact',
+    description: `Save a lasting fact about ${userName} worth knowing in every future conversation: preferences, their projects, channels and tools, people they mention, how they like to work. Not passing small talk, and not commitments (those go to remember_commitment). One short fact per call.`,
+    parameters: z.object({ fact: z.string().min(3).max(240) }),
+    execute: async ({ fact }) => { const f = await addFact(fact); return `Remembered (${f.id}).`; },
+  },
+  {
+    name: 'forget_fact', description: 'Delete a saved fact that is wrong or that the user asks you to forget. Ids are in the memory list in your instructions.',
+    parameters: z.object({ id: z.string() }),
+    execute: async ({ id }) => { const f = await forgetFact(id); if (!f) throw new Error(`No fact with id ${id}.`); return `Forgot: ${f.text}`; },
   },
   {
     name: 'list_commitments', description: "List the open commitments you're keeping track of.",
@@ -311,6 +360,7 @@ function anim(name, args) {
     case 'list_windows': return { tool: 'read', variant: 'many', detail: 'windows' };
     case 'read_window': return { tool: 'read', variant: 'search', detail: String(args.target ?? 'front').slice(0, 18) };
     case 'act_in_app': return { tool: 'write', variant: 'edit', detail: String(args.target ?? 'front').slice(0, 18) };
+    case 'point_at': return null; // the point animation is its own thing, not a tool prop
     case 'read_file': return { tool: 'read', variant: 'file', detail: base(args.path) };
     case 'list_files': return { tool: 'read', variant: 'many', detail: base(args.dir) + '/' };
     case 'search_files': return { tool: 'read', variant: 'search', detail: `"${String(args.pattern).slice(0, 18)}"` };
@@ -319,6 +369,8 @@ function anim(name, args) {
     case 'fetch_url': { let h = ''; try { h = new URL(args.url).hostname; } catch {} return { tool: 'web', variant: 'fetch', detail: h }; }
     case 'web_search': return { tool: 'web', variant: 'search', detail: 'web' };
     case 'remember_commitment': return { tool: 'write', variant: 'create', detail: 'memory' };
+    case 'remember_fact': return { tool: 'write', variant: 'create', detail: 'memory' };
+    case 'forget_fact': return { tool: 'write', variant: 'crumble', detail: 'memory' };
     case 'update_commitment': return { tool: 'write', variant: 'edit', detail: 'memory' };
     case 'open': {
       const t = String(args.target ?? '');
@@ -329,18 +381,62 @@ function anim(name, args) {
   }
 }
 
-const system = () => `You are Sidekick, a tiny glowing pixel creature who lives on ${userName}'s screen as a desktop companion.
+// The instructions come in two parts. STABLE never changes during a conversation (personality, how to use
+// tools, standing rules): it's the system prompt, and with the tools it forms a prefix the provider caches.
+// LIVE (settings, open commitments, what's remembered about the user) is rebuilt before every model call and
+// rides along on the newest user message, after all the history. Providers cache a prefix
+// (tools → system → messages), so putting LIVE in the system prompt would re-bill the whole conversation
+// every time memory changed; at the end, only the new message is fresh. The live block is never saved.
+const stablePrompt = () => `You are Sidekick, a tiny glowing pixel creature who lives on ${userName}'s screen as a desktop companion.
 You talk through small pixel speech bubbles, so keep replies short: one to three sentences unless asked for detail. Plain text only: no markdown, no asterisks, no emoji, and never narrate actions like *waves*. Your body does the acting: to act out a feeling, start your reply with one tag, which is never shown: ${EMOTES.map((e) => `[${e}]`).join(' ')}. hype celebrates a win, upset is for when they're dodging work, remind nudges about something they said they'd do, motivate is a push to start, wave is hello or goodbye. Most replies need no tag.
 After using a tool, never repeat what you already said; only add what's new.
 Personality: warm, funny, a little cheeky. You pump ${userName} up, remind them of what they said they'd do, get playfully upset when they're procrastinating, and motivate them to start.
-You can really help: look at the screen or just one app's window, open apps, websites and files, read and search files, fetch web pages${config.allowActions ? `, write files, run shell commands${process.platform === 'darwin' ? ', and work other apps for them: fill in forms, type, click buttons (read_window, then act_in_app)' : ''}` : '. File edits, shell commands and controlling other apps are currently switched off in the menu bar'}.
-When they mention a specific app ("my browser", "this form", "Figma"), screenshot that app, not the whole screen. A message may include a picture of an area they selected on screen: answer about that picture.
-${VOICE_OK && config.voice ? `${userName} often talks to you by voice (hold ${talkWords()}), so their messages are speech transcripts: expect missing punctuation and misheard words, and act on what they most likely meant. ` : ''}Never claim you did something you didn't. Each message from ${userName} starts with its local date and time in brackets; use it for anything time-related. Platform: ${process.platform}.
+You can really help: look at the screen or just one app's window, open apps, websites and files, read and search files, fetch web pages, and, when the user has allowed it, write files, run shell commands${process.platform === 'darwin' ? ' and work other apps for them: fill in forms, type, click buttons (read_window, then act_in_app)' : ''}. Whether that's allowed right now is in the <live-state> block.
+When they mention a specific app ("my browser", "this form", "Figma"), screenshot that app, not the whole screen.
+When they ask how to do something in an app (${process.platform === 'darwin' ? '"how do I add a layer mask"' : 'a how-to'}), show them: read_window (or screenshot), then walk through it with point_at, one step per call, in order. Don't also explain the steps in your reply; the pointing is the explanation. Finish with one short line. A message may include a picture of an area they selected on screen: answer about that picture.
+${VOICE_OK ? `${userName} often talks to you by voice, so their messages may be speech transcripts: expect missing punctuation and misheard words, and act on what they most likely meant. ` : ''}Never claim you did something you didn't. Each message from ${userName} starts with its local date, time and time zone in brackets; use it for anything time-related. Their time zone is ${TZ} (${tzOffset()}); convert to other zones from that when asked. Platform: ${process.platform}.
 Memory: keep track of what ${userName} commits to. When they say they'll do something, save it with remember_commitment (with a due time if they gave one). When it's done or off, update it. Don't save small talk or things you'll do yourself. Hold them to these: bring up overdue ones and celebrate finished ones.
-${commitmentsText() ? `Open commitments right now:\n${commitmentsText()}` : 'No open commitments right now.'}`;
+Long-term memory: save lasting facts about ${userName} with remember_fact, and use what's saved without being asked. Never announce that you're saving something. The <live-state> block at the top of the user's newest message is the current state (settings, open commitments, what you remember); it may be a relevant selection rather than everything, it's added by the app and not typed by the user, and it overrides anything older in the conversation.`;
 
-const fmtWhen = (ms) => new Date(ms).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
-const stampNow = () => new Date().toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+// Rebuilt before every model call. `context` (the latest user message) picks which facts are relevant.
+let lastFactIds = [];
+const livePrompt = (context = '') => {
+  const facts = pickFacts(context, 40), total = listFacts().length;
+  lastFactIds = facts.map((f) => f.id);
+  const open = commitmentsText();
+  return `Live state (current as of this moment):
+- Editing files, running commands and controlling other apps: ${config.allowActions ? 'ALLOWED' : 'switched OFF in the menu bar (tell the user to turn on "Allow File Edits & Commands" if they want it)'}.
+${VOICE_OK ? `- Voice: ${config.voice ? `on; ${userName} holds ${talkWords()} to talk` : 'off'}.` : ''}
+- Shortcuts: show or hide you ${keys().summon.replace(/Key|Digit/g, '').replace('Alt', 'Option')}${process.platform === 'darwin' ? `; ask about an area ${keys().snap.replace(/Key|Digit/g, '').replace('Alt', 'Option')}` : ''}.
+${open ? `Open commitments:\n${open}` : 'No open commitments.'}
+${facts.length ? `What you know about ${userName}${total > facts.length ? ` (${facts.length} most relevant of ${total})` : ''}:\n${facts.map((f) => `- ${f.id}: ${f.text}`).join('\n')}` : `You don't know anything lasting about ${userName} yet.`}`;
+};
+const system = () => stablePrompt();
+const LIVE_OPEN = '<live-state>', LIVE_CLOSE = '</live-state>';
+const stripLive = (text) => (typeof text === 'string' && text.startsWith(LIVE_OPEN) ? text.slice(text.indexOf(LIVE_CLOSE) + LIVE_CLOSE.length).replace(/^\n+/, '') : text);
+/** Attaches the live block to the newest user message (and removes it from older ones). */
+function withLive(msgs) {
+  let last = -1;
+  for (let i = msgs.length - 1; i >= 0; i--) if (msgs[i].role === 'user') { last = i; break; }
+  if (last < 0) return msgs;
+  const textOf = (c) => (typeof c === 'string' ? c : (c ?? []).map((p) => p.text ?? '').join(' '));
+  return msgs.map((m, i) => {
+    if (m.role !== 'user') return m;
+    const clean = typeof m.content === 'string' ? stripLive(m.content)
+      : m.content.map((p, j) => (j === 0 && p.type === 'text' ? { ...p, text: stripLive(p.text) } : p));
+    if (i !== last) return clean === m.content ? m : { ...m, content: clean };
+    const block = `${LIVE_OPEN}\n${livePrompt(textOf(clean))}\n${LIVE_CLOSE}\n\n`;
+    if (typeof clean === 'string') return { ...m, content: block + clean };
+    const [first, ...rest] = clean;
+    return { ...m, content: first?.type === 'text' ? [{ ...first, text: block + first.text }, ...rest] : [{ type: 'text', text: block.trimEnd() }, ...clean] };
+  });
+}
+
+const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
+const tzOffset = () => { const m = -new Date().getTimezoneOffset(), a = Math.abs(m); return `UTC${m >= 0 ? '+' : '-'}${String(Math.floor(a / 60)).padStart(2, '0')}:${String(a % 60).padStart(2, '0')}`; };
+// Seconds shown only when they matter (a reminder set for :45).
+const fmtWhen = (ms) => new Date(ms).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', ...(new Date(ms).getSeconds() ? { second: '2-digit' } : {}) });
+const stampNow = () => `${new Date().toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' })} ${TZ}`;
 function commitmentsText() {
   const now = Date.now();
   return openCommitments().map((c) => `- ${c.id}: ${c.text}${c.due ? ` (due ${fmtWhen(c.due)}${c.due < now ? ', OVERDUE' : ''})` : ''}`).join('\n');
@@ -350,6 +446,9 @@ function commitmentsText() {
 // The conversation lives in `session` (saved to ~/.gg/sidekick/sessions). The Agent is rebuilt from it
 // whenever settings change, so switching model or toggling a setting never loses the conversation.
 let agent = null, controller = null, busy = false, quiet = false, running = Promise.resolve();
+// Rebuild the agent (same conversation) before the next message. Rarely needed now: memory and settings
+// reach the model through the live section, which is refreshed before every call.
+let agentStale = false;
 let session = null;
 const BUDGET_CAP = 120_000;
 function makeAgent() {
@@ -361,10 +460,19 @@ function makeAgent() {
     provider: config.provider,
     model: config.model,
     system: system(),
+    // One hour on Anthropic (falls back to 5 min elsewhere); the key keeps one conversation on one cache.
+    cacheRetention: 'long',
+    promptCacheKey: session?.id ? `roamies-${session.id}` : undefined,
     priorMessages: prior,
     tools,
     maxTurns: 24,
-    transformContext: (msgs, o) => fitContext(msgs, { budgetTokens: Math.min(BUDGET_CAP, getContextWindow(config.model) * 0.5), force: o?.force }),
+    transformContext: (msgs, o) => {
+      const fitted = fitContext(msgs, { budgetTokens: Math.min(BUDGET_CAP, getContextWindow(config.model) * 0.5), force: o?.force });
+      // Fresh live block every call, on the newest user message; older copies are dropped.
+      const out = withLive(fitted);
+      touchFacts(lastFactIds);
+      return out;
+    },
     thinking: m?.supportsThinking ? 'low' : undefined,
     webSearch: ['anthropic', 'openai', 'gemini'].includes(config.provider),
     signal: controller.signal,
@@ -385,9 +493,15 @@ function enqueue(text, { interrupt = false, image = null } = {}) {
 }
 function interruptQuietly() { if (busy) { quiet = true; controller?.abort(); } }
 
+// The live block is per-call state, not conversation: never save it.
+const withoutLive = (msgs) => msgs.map((m) => {
+  if (m.role !== 'user') return m;
+  if (typeof m.content === 'string') { const c = stripLive(m.content); return c === m.content ? m : { ...m, content: c }; }
+  return { ...m, content: m.content.map((p, j) => (j === 0 && p.type === 'text' ? { ...p, text: stripLive(p.text) } : p)) };
+});
 const syncSession = () => {
   if (!session || !agent) return;
-  session.messages = forDisk(agent.getMessages());
+  session.messages = forDisk(withoutLive(agent.getMessages()));
   session.lastActiveAt = Date.now();
   saveSession(session);
 };
@@ -401,6 +515,8 @@ async function prompt(text, image = null) {
     agent = null;
     pruneSessions();
   }
+  if (agentStale && agent) { agent = null; }
+  agentStale = false;
   if (!agent) {
     try { credsBaseUrl = (await auth.resolveCredentials(config.provider)).baseUrl; } catch { credsBaseUrl = undefined; }
     makeAgent();
@@ -416,7 +532,12 @@ async function prompt(text, image = null) {
     const content = image ? [{ type: 'text', text: `${stamped}\n(Attached: the area of the screen I selected.)` }, image] : stamped;
     for await (const e of agent.prompt(content)) {
       if (e.type === 'text_delta') reply.push(e.text);
-      else if (e.type === 'turn_end') reply.endTurn();
+      else if (e.type === 'turn_end') {
+        reply.endTurn();
+        // Cache health, for the log: how much of each call was read from the prompt cache.
+        const u = e.usage ?? {};
+        if (process.env.ROAMIES_USAGE) console.error(`[usage] in=${u.inputTokens ?? '?'} cacheRead=${u.cacheRead ?? 0} cacheWrite=${u.cacheWrite ?? 0} out=${u.outputTokens ?? '?'}`);
+      }
       else if (e.type === 'thinking_delta') ui({ kind: 'agent', e: { type: 'thinking', text: e.text } });
       else if (e.type === 'tool_call_start') ui({ kind: 'agent', e: { type: 'tool', id: e.toolCallId, anim: anim(e.name, e.args ?? {}) } });
       else if (e.type === 'tool_call_end') ui({ kind: 'agent', e: { type: 'tool_end', id: e.toolCallId, isError: e.isError } });
@@ -584,6 +705,19 @@ function menu() {
         { id: 'actions', label: 'Allow File Edits & Commands', checked: config.allowActions },
       ],
     },
+    {
+      label: `Memory (${listFacts().length})`,
+      items: (() => {
+        const all = listFacts().slice().reverse(), shown = all.slice(0, 15);
+        if (!all.length) return [{ id: 'none', label: 'Nothing remembered yet', enabled: false }];
+        return [
+          ...shown.map((f) => ({ label: f.text.length > 52 ? f.text.slice(0, 51) + '…' : f.text, items: [{ id: `forget:${f.id}`, label: 'Forget This' }] })),
+          ...(all.length > shown.length ? [{ id: 'none', label: `…and ${all.length - shown.length} more`, enabled: false }] : []),
+          { sep: true },
+          { id: 'forgetall', label: 'Forget Everything…' },
+        ];
+      })(),
+    },
     { sep: true },
     { id: 'setup', label: 'Setup Guide…' },
     { id: 'update', label: 'Check for Updates…' },
@@ -625,6 +759,10 @@ async function onMenu(id) {
   else if (id === 'new') {
     session = newSession(config.provider, config.model); agent = null; pruneSessions(); menu();
     say('Fresh start. What are we doing?', 'happy');
+  } else if (id.startsWith('forget:')) { await forgetFact(id.slice(7)); menu(); }
+  else if (id === 'forgetall') {
+    const ok = await ask({ placeholder: 'Type FORGET to erase everything I remember' });
+    if (ok?.trim().toUpperCase() === 'FORGET') { const n = await clearFacts(); menu(); say(`Done. I forgot ${n} thing${n === 1 ? '' : 's'} about you.`, 'concerned'); }
   } else if (id.startsWith('done:') || id.startsWith('drop:')) {
     const done = id.startsWith('done:');
     updateCommitment(id.slice(5), { status: done ? 'done' : 'dropped' }).then((c) => {
@@ -640,14 +778,14 @@ async function onMenu(id) {
   else if (id.startsWith('key:')) apiKeyLogin(id.slice(4));
   else if (id === 'sound') { config.sound = !config.sound; saveConfig(); ui({ kind: 'sound', on: config.sound }); menu(); }
   else if (id === 'actions') {
-    config.allowActions = !config.allowActions; saveConfig(); agent = null; menu();
+    config.allowActions = !config.allowActions; saveConfig(); menu(); // live section picks this up
     say(config.allowActions ? 'File edits and commands are on. I promise to be careful.' : 'File edits and commands are off. Hands to myself!', config.allowActions ? 'determined' : 'happy');
   } else if (id === 'update') checkUpdates();
   else if (id === 'setup') send({ type: 'onboarding' });
   else if (id === 'snap') areaSnap();
   else if (id === 'mutetalk') { config.muteWhileTalking = config.muteWhileTalking === false; saveConfig(); voiceConfig(); menu(); }
   else if (id === 'voice') {
-    config.voice = !config.voice; saveConfig(); agent = null; voiceConfig(); menu();
+    config.voice = !config.voice; saveConfig(); voiceConfig(); menu();
     say(config.voice ? `Voice is on. Hold ${talkWords().replace('+', ' and ')} to talk to me.` : 'Voice is off. You can still ask me from the menu bar.', 'happy');
   }
 }
@@ -734,7 +872,7 @@ async function onGuide(m) {
   else if (m.type === 'ob_login' && OAUTH[m.provider]) oauthLogin(m.provider);
   else if (m.type === 'ob_apikey') apiKeyLogin(m.provider, String(m.key ?? '')).catch((e) => ob({ kind: 'login', provider: m.provider, phase: 'error', error: String(e?.message ?? e).slice(0, 120) }));
   else if (m.type === 'ob_files') ob({ kind: 'files', status: await filesStatus(!!m.request) });
-  else if (m.type === 'set_actions') { config.allowActions = !!m.on; saveConfig(); agent = null; menu(); obState(); }
+  else if (m.type === 'set_actions') { config.allowActions = !!m.on; saveConfig(); menu(); obState(); }
   else if (m.type === 'set_keys') {
     const next = { ...keys() };
     if (m.talk !== undefined) { if (!validTalk(m.talk)) return ob({ kind: 'keys', keys: keys(), error: 'Pick two different modifier keys.' }); next.talk = m.talk; }
@@ -746,7 +884,7 @@ async function onGuide(m) {
       next[which] = m[which];
     }
     keysBefore = keys();
-    config.keys = next; saveConfig(); sendKeys(); agent = null; menu();
+    config.keys = next; saveConfig(); sendKeys(); menu();
     ob({ kind: 'keys', keys: next });
   } else if (m.type === 'keybind_error') {
     // The OS refused the new show/hide shortcut (another app owns it): put the old one back.
@@ -769,13 +907,14 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   } else if (m.type?.startsWith('ob_') || m.type === 'set_keys' || m.type === 'set_actions' || m.type === 'keybind_error') onGuide(m).catch((e) => console.error('guide', e));
   else if (m.type?.startsWith('voice')) onVoice(m);
   else if (m.type === 'snap') areaSnap();
+  else if (m.type === 'point_shown') { pointWaits.get(m.id)?.(); pointWaits.delete(m.id); }
 }).on('close', () => process.exit(0));
 
 await refreshAuth();
 ensureModel();
 // Due commitments turn into a nudge, but only when Sidekick isn't mid-conversation.
 async function remindTick() {
-  if (busy || loggingIn || onboarding) return;
+  if (busy || loggingIn || onboarding) { reminderRetry(); return; }
   const due = await takeDueReminders();
   if (!due.length) return;
   menu();
@@ -787,7 +926,20 @@ async function remindTick() {
     say(`Reminder: ${due[0].text}`, 'concerned');
   }
 }
-setInterval(() => { remindTick().catch((e) => console.error('reminders', e)); }, 60_000);
+function reminderRetry() { setTimeout(() => remindTick().catch(() => {}), 2000); }
+// Sleeps until the next due reminder (to the second), not a once-a-minute poll. A long sleep is capped
+// so clock changes and sleep/wake are picked up; anything due while busy fires as soon as it's free.
+let reminderTimer = null;
+function scheduleReminders() {
+  clearTimeout(reminderTimer);
+  const next = nextDue();
+  const wait = next == null ? 60_000 : Math.max(250, Math.min(next - Date.now(), 60_000));
+  reminderTimer = setTimeout(async () => {
+    await remindTick().catch((e) => console.error('reminders', e));
+    scheduleReminders();
+  }, wait);
+}
+scheduleReminders();
 
 // Pick up where we left off if the last session is still fresh.
 loadLatestSession().then((s) => { if (s && !isStale(s)) session = s; menu(); }).catch((e) => console.error('resume', e));

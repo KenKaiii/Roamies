@@ -80,6 +80,8 @@
     // Station: the sidekick keeps a home spot and idles around it. When the cursor works nearby it
     // scoots to the closest spot that's clear of the cursor; dropping it somewhere makes that home.
     const station = { x: null, y: null, flee: 0, moving: false, quietUntil: 0, held: false };
+    // Teach mode: fly next to a control, point at it, light it up, say the step. One at a time.
+    let guide = null;
     const AVOID = () => k.R * 5;
     const spotOK = (x, y) => {
       const S = bounds(), r = k.R;
@@ -560,6 +562,32 @@
         return api.say(text, { mood: 'happy', point: [reach, -1.75] });
       },
       // Make (x, y) home and move there now, e.g. to restore where the user last left it.
+      // rect: [x, y, w, h] in overlay px. Resolves when the Sidekick has arrived and the step is showing.
+      point: ({ rect, say: text, step, of, label }) => {
+        ensureShown();
+        const [rx, ry, rw, rh] = rect, cx = rx + rw / 2, cy = ry + rh / 2, R0 = k.R, S = bounds();
+        // Stand beside the target on whichever side has room (prefer the right), a little below it,
+        // so the raised mitt reaches it and the speech bubble doesn't cover it.
+        const room = { right: S.r - (rx + rw), left: rx - S.l, below: S.b - (ry + rh), above: ry - S.t };
+        const side = room.right > R0 * 3.4 ? 'right' : room.left > R0 * 3.4 ? 'left' : room.below > R0 * 3.4 ? 'below' : 'above';
+        const off = R0 * 2.3;
+        let px = side === 'right' ? rx + rw + off : side === 'left' ? rx - off : cx;
+        let py = side === 'below' ? ry + rh + off : side === 'above' ? ry - off : cy + R0 * 0.6;
+        px = clamp(px, S.l + R0 * 1.6, S.r - R0 * 1.6); py = clamp(py, S.t + R0 * 1.8, S.b - R0 * 1.5);
+        // Hand target in body radii, pointing from the body toward the control's near edge.
+        const tx = clamp(cx, rx + 6, rx + rw - 6), ty = clamp(cy, ry + 6, ry + rh - 6);
+        let hx = (tx - px) / R0, hy = (ty - py) / R0;
+        const len = Math.hypot(hx, hy) || 1, reach = Math.min(len, 1.7);
+        hx = (hx / len) * reach; hy = (hy / len) * reach;
+        if (guide?.bubble) guide.bubble.end?.();
+        const g = { rect, tx, ty, hand: [hx, hy], px, py, text, step, of, label, started: now, arrived: false, done: deferred() };
+        guide = g;
+        setStation(px, py); m.goTo(px, py); station.moving = true; station.quietUntil = now + 30;
+        presence.summoned = true; presence.lastActive = now;
+        k.S('pip');
+        return g.done;
+      },
+      endGuide: () => { if (guide) { guide.bubble?.end?.(); guide = null; station.quietUntil = now + 1; } },
       place: (x, y) => {
         setStation(x, y); m.x = x; m.y = y; m.vx = m.vy = 0; m.mode = 'rest'; m.rest = 1;
         station.moving = false; station.flee = 0; station.quietUntil = now + 1;
@@ -722,6 +750,18 @@
       ...plugin,
       update: (dt, env) => {
         now += dt; W = env.w; H = env.h; SAFE = env.safe ?? R.safe;
+        if (guide) {
+          presence.lastActive = now;
+          const g = guide, d = Math.hypot(m.x - g.px, m.y - g.py);
+          if (!g.arrived && (d < k.R * 0.35 || now - g.started > 1.6)) {
+            g.arrived = true; g.arrivedAt = now;
+            m.x = g.px; m.y = g.py; m.vx = m.vy = 0;
+            k.S('ping'); k.sq.kick(6);
+            g.bubble = api.say(g.text, { mood: 'happy', point: g.hand });
+            setTimeout(() => g.done.resolve(), 900);
+          }
+          if (g.arrived && now - g.arrivedAt > 45) api.endGuide();
+        }
         if (env.mouse?.active || presence.cursor == null) presence.cursor = [env.mouse?.x ?? W / 2, env.mouse?.y ?? H / 2];
         const onStage = stage();
         if (presence.auto) {
@@ -747,7 +787,8 @@
             setStation(m.x, m.y); station.quietUntil = now + 2.5; station.moving = false;
           }
           station.held = held;
-          if (!held && env.mouse) {
+          // While pointing at a step, stay put: the user's cursor is supposed to come over here.
+          if (!held && env.mouse && !guide) {
             const cx = env.mouse.x, cy = env.mouse.y, dBody = Math.hypot(cx - m.x, cy - m.y);
             // Pointing right at it or its bubble means "I want this"; hovering around it means "you're in my way".
             const onIt = dBody < m.radius * 1.1 || (b && hitBubble(b, cx, cy));
@@ -806,6 +847,47 @@
       },
       over: (ctx, env) => {
         if (!stage()) return;
+        if (guide?.arrived) {
+          const g = guide, [rx, ry, rw, rh] = g.rect, age = now - g.arrivedAt;
+          const pulse = 0.5 + 0.5 * Math.sin(age * 5), grow = Math.min(1, age / 0.25);
+          const pad = 5 + (1 - grow) * 14, x0 = rx - pad, y0 = ry - pad, w = rw + pad * 2, h = rh + pad * 2;
+          const P = k.P, col = (a) => css(PAL[L], a);
+          ctx.save();
+          // soft glow + stepped LED frame (pixel corners, like the rest of the app)
+          ctx.shadowColor = col(0.9); ctx.shadowBlur = 10 + pulse * 10;
+          ctx.strokeStyle = col(0.9); ctx.lineWidth = 2;
+          const c = Math.max(P * 2, 6);
+          ctx.beginPath();
+          ctx.moveTo(x0 + c, y0); ctx.lineTo(x0 + w - c, y0); ctx.lineTo(x0 + w - c, y0 + P); ctx.lineTo(x0 + w, y0 + P); ctx.lineTo(x0 + w, y0 + c);
+          ctx.lineTo(x0 + w, y0 + h - c); ctx.lineTo(x0 + w, y0 + h - P); ctx.lineTo(x0 + w - c, y0 + h - P); ctx.lineTo(x0 + w - c, y0 + h);
+          ctx.lineTo(x0 + c, y0 + h); ctx.lineTo(x0 + c, y0 + h - P); ctx.lineTo(x0, y0 + h - P); ctx.lineTo(x0, y0 + h - c);
+          ctx.lineTo(x0, y0 + c); ctx.lineTo(x0, y0 + P); ctx.lineTo(x0 + c, y0 + P); ctx.closePath();
+          ctx.stroke();
+          ctx.shadowBlur = 0;
+          ctx.fillStyle = col(0.08 + pulse * 0.06); ctx.fill();
+          // a ripple every 1.4 s, so the eye finds it
+          const rp = (age % 1.4) / 1.4;
+          if (rp < 0.7) { ctx.strokeStyle = col(0.5 * (1 - rp / 0.7)); ctx.lineWidth = 1.5; ctx.strokeRect(x0 - rp * 18, y0 - rp * 18, w + rp * 36, h + rp * 36); }
+          // marching LED dots from the mitt to the frame
+          const hx = m.x + g.hand[0] * k.R, hy = m.y + g.hand[1] * k.R;
+          const ex = clamp(hx, x0, x0 + w), ey = clamp(hy, y0, y0 + h), dist = Math.hypot(ex - hx, ey - hy);
+          if (dist > 14) {
+            const n = Math.floor(dist / 8), off = (age * 30) % 8;
+            for (let i = 1; i < n; i++) {
+              const u = (i * 8 + off) / dist; if (u >= 1) break;
+              ctx.fillStyle = col(0.35 + 0.5 * u); ctx.fillRect(Math.round(hx + (ex - hx) * u) - 1, Math.round(hy + (ey - hy) * u) - 1, 3, 3);
+            }
+          }
+          // step badge: "2/4" on a tag at the frame's top-left
+          if (g.step) {
+            const t = g.of ? `${g.step}/${g.of}` : String(g.step);
+            ctx.font = '700 12px "Martian Mono", ui-monospace, monospace';
+            const tw = ctx.measureText(t).width + 14, th = 20, bx = x0, by = y0 >= th + 6 ? y0 - th - 4 : y0 + h + 4;
+            ctx.fillStyle = col(1); ctx.fillRect(bx, by, tw, th);
+            ctx.fillStyle = css(PAL[0], 1); ctx.textBaseline = 'middle'; ctx.fillText(t, bx + 7, by + th / 2 + 0.5);
+          }
+          ctx.restore();
+        }
         if (tool) {
           ctx.save();
           if (b?.grid) {

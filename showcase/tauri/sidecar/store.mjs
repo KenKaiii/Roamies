@@ -158,16 +158,38 @@ const loadMemory = () => {
   if (memory) return memory;
   const m = readJson(MEMORY, { backup: true });
   memory = m?.version === 1 && Array.isArray(m.commitments) ? m : { version: 1, commitments: [] };
+  if (!Array.isArray(memory.facts)) memory.facts = []; // added later: older files have no facts yet
   return memory;
 };
 const saveMemory = () => writeJson(MEMORY, memory, { backup: true });
 
-/** 'YYYY-MM-DD' or 'YYYY-MM-DDTHH:mm' (local time) → ms, or null. Date-only means 10am. */
-export function parseDue(due) {
+/**
+ * Due time → ms, or null for none, or undefined if unreadable. Accepts local times
+ * 'YYYY-MM-DD' (10am), 'YYYY-MM-DDTHH:mm', 'YYYY-MM-DDTHH:mm:ss', or a relative 'in 90s', 'in 5m',
+ * 'in 1h30m', 'in 2 days' measured from `now`.
+ */
+const UNIT = { s: 1e3, sec: 1e3, secs: 1e3, second: 1e3, seconds: 1e3, m: 6e4, min: 6e4, mins: 6e4, minute: 6e4, minutes: 6e4,
+  h: 36e5, hr: 36e5, hrs: 36e5, hour: 36e5, hours: 36e5, d: 864e5, day: 864e5, days: 864e5 };
+export function parseDue(due, now = Date.now()) {
   if (due == null || due === '') return null;
-  const s = String(due).trim();
-  const d = /^\d{4}-\d{2}-\d{2}$/.test(s) ? new Date(`${s}T10:00`) : new Date(s);
+  const s = String(due).trim().toLowerCase();
+  const rel = /^(?:in\s+)?((?:\d+(?:\.\d+)?\s*[a-z]+\s*)+)$/.exec(s);
+  if (rel && /^in\s/.test(s)) {
+    let ms = 0;
+    for (const [, n, u] of rel[1].matchAll(/(\d+(?:\.\d+)?)\s*([a-z]+)/g)) {
+      if (!UNIT[u]) return undefined;
+      ms += parseFloat(n) * UNIT[u];
+    }
+    return ms > 0 ? now + ms : undefined;
+  }
+  const d = /^\d{4}-\d{2}-\d{2}$/.test(s) ? new Date(`${s}T10:00`) : new Date(String(due).trim());
   return Number.isNaN(d.getTime()) ? undefined : d.getTime();
+}
+
+/** When the next reminder is due (ms), so the timer can sleep until exactly then. */
+export function nextDue() {
+  const t = openCommitments().filter((c) => c.due && !c.remindedAt).map((c) => c.due);
+  return t.length ? Math.min(...t) : null;
 }
 
 export const openCommitments = () => loadMemory().commitments.filter((c) => c.status === 'open');
@@ -192,6 +214,63 @@ export async function updateCommitment(id, { status, dueMs }) {
   if (dueMs !== undefined) { c.due = dueMs; c.remindedAt = null; }
   await saveMemory();
   return c;
+}
+
+// ---------- facts (long-term memory about the user) ----------
+
+const FACT_CAP = 150;
+export const listFacts = () => loadMemory().facts.slice();
+
+/** Saves a fact; a near-duplicate of an existing one replaces it instead of piling up. */
+export async function addFact(text) {
+  const t = String(text).trim().replace(/\s+/g, ' ').slice(0, 240);
+  const key = t.toLowerCase().replace(/[^a-z0-9 ]/g, '');
+  const facts = loadMemory().facts;
+  const same = facts.find((f) => f.text.toLowerCase().replace(/[^a-z0-9 ]/g, '') === key);
+  if (same) { same.updatedAt = Date.now(); await saveMemory(); return same; }
+  const f = { id: `f${randomBytes(2).toString('hex')}`, text: t, createdAt: Date.now() };
+  facts.push(f);
+  if (facts.length > FACT_CAP) facts.splice(0, facts.length - FACT_CAP); // oldest go first
+  await saveMemory();
+  return f;
+}
+
+// Picks which facts go into the prompt: the newest few always, then the ones that share words with
+// what's being talked about, then the most recently used. Keeps the prompt small as memory grows.
+const STOP = new Set('the a an and or but to of in on at for with is are was were be it this that my me i you your his her its our their what how when where why can do does just like about from have has had will would should could not no yes so if then than'.split(' '));
+const words = (t) => new Set(String(t).toLowerCase().match(/[a-z0-9]{3,}/g)?.filter((w) => !STOP.has(w)) ?? []);
+export function pickFacts(context = '', limit = 40) {
+  const facts = loadMemory().facts;
+  if (facts.length <= limit) return facts.slice();
+  const ctx = words(context), byNew = facts.slice().sort((a, b) => (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt));
+  const chosen = new Set(byNew.slice(0, 8).map((f) => f.id));
+  const scored = facts.filter((f) => !chosen.has(f.id)).map((f) => {
+    let hit = 0; for (const w of words(f.text)) if (ctx.has(w)) hit++;
+    return { f, score: hit * 10 + ((f.usedAt ?? f.updatedAt ?? f.createdAt) / 1e12) };
+  }).sort((a, b) => b.score - a.score);
+  for (const { f } of scored) { if (chosen.size >= limit) break; chosen.add(f.id); }
+  return facts.filter((f) => chosen.has(f.id));
+}
+
+/** Marks facts as used (they were in the prompt for a turn), so useful ones stay near the top. */
+export function touchFacts(ids) {
+  const now = Date.now(), set = new Set(ids);
+  for (const f of loadMemory().facts) if (set.has(f.id)) f.usedAt = now;
+}
+
+export async function clearFacts() {
+  const n = loadMemory().facts.length;
+  memory.facts = [];
+  await saveMemory();
+  return n;
+}
+
+export async function forgetFact(id) {
+  const facts = loadMemory().facts, i = facts.findIndex((f) => f.id === id);
+  if (i < 0) return null;
+  const [f] = facts.splice(i, 1);
+  await saveMemory();
+  return f;
 }
 
 /** Open commitments whose time has come and that haven't been reminded yet. Marks them reminded. */
