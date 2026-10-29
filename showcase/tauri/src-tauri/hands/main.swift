@@ -108,11 +108,13 @@ func frame(_ el: AXUIElement) -> CGRect? {
 }
 
 let INTERACTIVE: Set<String> = ["AXButton", "AXTextField", "AXTextArea", "AXSearchField", "AXSecureTextField", "AXCheckBox", "AXRadioButton",
-                                "AXPopUpButton", "AXComboBox", "AXMenuButton", "AXLink", "AXSlider", "AXTab", "AXDisclosureTriangle", "AXIncrementor"]
+                                "AXPopUpButton", "AXComboBox", "AXMenuButton", "AXLink", "AXSlider", "AXTab", "AXDisclosureTriangle", "AXIncrementor",
+                                "AXDateField", "AXTimeField", "AXDateTimeArea"]
 let ROLE_NAME: [String: String] = ["AXButton": "button", "AXTextField": "text field", "AXTextArea": "text area", "AXSearchField": "search field",
                                    "AXSecureTextField": "password field", "AXCheckBox": "checkbox", "AXRadioButton": "radio", "AXPopUpButton": "dropdown",
                                    "AXComboBox": "combo box", "AXMenuButton": "menu button", "AXLink": "link", "AXSlider": "slider", "AXTab": "tab",
-                                   "AXDisclosureTriangle": "disclosure", "AXIncrementor": "stepper"]
+                                   "AXDisclosureTriangle": "disclosure", "AXIncrementor": "stepper",
+                                   "AXDateField": "date field", "AXTimeField": "time field", "AXDateTimeArea": "date field"]
 
 /// The app's accessibility window that is the same window as `w` (by position and size), so apps with
 /// several windows are read from the one that was asked for, not whichever has focus.
@@ -130,6 +132,55 @@ func axWindow(_ app: AXUIElement, _ w: Win?) -> AXUIElement? {
 
 /// Walks the window's tree and numbers every control. Ids are stable for the same walk, so
 /// `act` re-walks and finds the same element by id (checking its label still matches).
+func frontPid() -> pid_t? { NSWorkspace.shared.frontmostApplication?.processIdentifier }
+
+/// Brings the window's app forward and waits until macOS reports it frontmost (up to ~1.2 s).
+func bringToFront(_ w: Win, _ app: AXUIElement) -> Bool {
+    if frontPid() == w.pid { return true }
+    let run = NSRunningApplication(processIdentifier: w.pid)
+    for attempt in 0..<3 {
+        run?.unhide()
+        run?.activate(options: [.activateAllWindows])
+        AXUIElementSetAttributeValue(app, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
+        if let win = axWindow(app, w) { AXUIElementPerformAction(win, kAXRaiseAction as CFString) }
+        if attempt == 2, let url = run?.bundleURL {
+            // Last resort: open the app again, which macOS always honours.
+            let cfg = NSWorkspace.OpenConfiguration(); cfg.activates = true
+            NSWorkspace.shared.openApplication(at: url, configuration: cfg) { _, _ in }
+        }
+        // Opening the app again is asynchronous, so give the last attempt longer.
+        for _ in 0..<(attempt == 2 ? 40 : 8) {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+            if frontPid() == w.pid { Thread.sleep(forTimeInterval: 0.1); return true }
+        }
+    }
+    return frontPid() == w.pid
+}
+
+/// A field with no label of its own: the text just before it in its row (many forms put the label in a
+/// plain element next to the field instead of a linked <label>).
+func nearbyLabel(_ e: AXUIElement) -> String? {
+    var cur = e
+    for _ in 0..<3 {
+        guard let parent = attr(cur, kAXParentAttribute).map({ $0 as! AXUIElement }),
+              let kids = attr(parent, kAXChildrenAttribute) as? [AXUIElement],
+              let at = kids.firstIndex(where: { CFEqual($0, cur) }) else { return nil }
+        for sib in kids[..<at].reversed() {
+            var stack: [(AXUIElement, Int)] = [(sib, 0)]
+            while let (el, d) = stack.popLast() {
+                let role = axRole(el)
+                if FIELD_ROLES.contains(role) || INTERACTIVE.contains(role) { break }
+                if role == "AXStaticText", let t = str(el, kAXValueAttribute), t.trimmingCharacters(in: .whitespaces).count >= 2 {
+                    return String(t.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60))
+                }
+                if d < 3 { stack += ((attr(el, kAXChildrenAttribute) as? [AXUIElement]) ?? []).reversed().map { ($0, d + 1) } }
+            }
+        }
+        cur = parent
+    }
+    return nil
+}
+
 /// Controls scrolled out of view come after the visible ones (marked offscreen), so long pages and chat
 /// histories can't push what's actually on screen off the list.
 func walk(_ app: AXUIElement, _ w: Win? = nil, limit: Int = 260) -> [(AXUIElement, [String: Any])] {
@@ -145,6 +196,9 @@ func walk(_ app: AXUIElement, _ w: Win? = nil, limit: Int = 260) -> [(AXUIElemen
             if (attr(el, kAXEnabledAttribute) as? Bool) != false {
                 var label = str(el, kAXTitleAttribute) ?? str(el, kAXDescriptionAttribute) ?? str(el, "AXPlaceholderValue") ?? str(el, kAXHelpAttribute) ?? ""
                 if label.isEmpty, let t = attr(el, kAXTitleUIElementAttribute) { label = str(t as! AXUIElement, kAXValueAttribute) ?? "" }
+                if label.isEmpty, FIELD_ROLES.contains(role) { label = nearbyLabel(el) ?? "" }
+                // A placeholder alone hides the real label ("e.g. Jane Doe" is the Full Name field): add the label too.
+                if FIELD_ROLES.contains(role), str(el, kAXTitleAttribute) == nil, let ph = str(el, "AXPlaceholderValue"), label == ph, let near = nearbyLabel(el), near != ph { label = "\(near) (\(ph))" }
                 var item: [String: Any] = ["role": ROLE_NAME[role] ?? role, "label": String(label.prefix(80)),
                                            "bounds": [Int(f.minX), Int(f.minY), Int(f.width), Int(f.height)]]
                 if role != "AXSecureTextField", let v = str(el, kAXValueAttribute), !v.isEmpty { item["value"] = String(v.prefix(80)) }
@@ -213,9 +267,10 @@ func pressText(_ e: AXUIElement) -> Bool {
     return false
 }
 
-// Clicks that delete, pay, send or sign out run only when the sidecar has asked the user ("confirmed").
+// Clicks that delete, pay, send or sign out (in English and other common languages) run only when the sidecar
+// has asked the user ("confirmed").
 // Kept in sync with RISKY_CLICK in sidecar/safety.mjs.
-let RISKY = try! NSRegularExpression(pattern: #"\b(delete|remove|erase|destroy|wipe|reset|deactivate|close (my |your )?account|cancel (my |your |the )?(subscription|plan|membership|account|order)|unsubscribe|pay|purchase|buy|place (the |your )?order|checkout|check out|confirm (payment|order|purchase|transfer)|send|transfer|withdraw|uninstall|empty trash|discard|sign out|log out|logout|format|revoke|publish)\b"#, options: .caseInsensitive)
+let RISKY = try! NSRegularExpression(pattern: #"(?:^|[^\p{L}])(delete|remove|erase|destroy|wipe|reset|deactivate|close (my |your )?account|cancel (my |your |the )?(subscription|plan|membership|account|order)|unsubscribe|pay|purchase|buy|place (the |your )?order|checkout|check out|confirm (payment|order|purchase|transfer)|send|transfer|withdraw|uninstall|empty trash|discard|sign out|log out|logout|format|revoke|publish|eliminar|borrar|pagar|comprar|enviar|cerrar sesi[oó]n|supprimer|effacer|payer|acheter|envoyer|se d[eé]connecter|d[eé]connexion|l[oö]schen|entfernen|bezahlen|kaufen|senden|abmelden|excluir|apagar|terminar sess[aã]o|elimina|cancella|paga|acquista|invia|esci|verwijderen|betalen|kopen|verzenden|uitloggen|afmelden|padam|hapus|bayar|beli|hantar|kirim|log keluar|nyahlanggan)(?![\p{L}])|删除|刪除|移除|清空|支付|付款|购买|購買|发送|發送|退出登录|登出|注销|削除|消去|支払|購入|送信|ログアウト|退会|삭제|결제|구매|전송|보내기|로그아웃"#, options: .caseInsensitive)
 func risky(_ s: String) -> Bool { RISKY.firstMatch(in: s, range: NSRange(s.startIndex..., in: s)) != nil }
 
 /// Text fields inside web pages (browsers, Electron apps) ignore a value set through accessibility:
@@ -228,6 +283,151 @@ func inWebPage(_ e: AXUIElement) -> Bool {
         cur = attr(c, kAXParentAttribute).map { $0 as! AXUIElement }
     }
     return false
+}
+
+// ---------- forms ----------
+
+let FIELD_ROLES: Set<String> = ["AXTextField", "AXTextArea", "AXSearchField", "AXComboBox", "AXSecureTextField", "AXDateField", "AXTimeField", "AXDateTimeArea"]
+let DROP_ROLES: Set<String> = ["AXPopUpButton", "AXComboBox", "AXMenuButton", "AXTextField", "AXButton"]
+func axRole(_ e: AXUIElement) -> String { str(e, kAXRoleAttribute) ?? "" }
+func fold(_ s: String) -> String {
+    s.lowercased().replacingOccurrences(of: "*", with: "").replacingOccurrences(of: ":", with: "")
+        .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+/// The field a form label names: one whose own label or placeholder matches, else the field nearest the
+/// visible label text (to its right on the same row, or just below it). Labels on many sites aren't linked
+/// to their field, so clicking the label puts the cursor nowhere.
+func fieldFor(_ app: AXUIElement, _ w: Win, _ controls: [(AXUIElement, [String: Any])], _ name: String, roles: Set<String>) -> (AXUIElement, [String: Any])? {
+    let q = fold(name)
+    guard !q.isEmpty else { return nil }
+    let cands = controls.filter { roles.contains(axRole($0.0)) && ($0.1["offscreen"] as? Bool) != true } + controls.filter { roles.contains(axRole($0.0)) && ($0.1["offscreen"] as? Bool) == true }
+    let names: ((AXUIElement, [String: Any])) -> [String] = { c in
+        let l = (c.1["label"] as? String) ?? ""
+        let base = l.range(of: " (").map { String(l[..<$0.lowerBound]) } ?? l
+        return [l, base, str(c.0, "AXPlaceholderValue") ?? "", str(c.0, kAXTitleAttribute) ?? "", str(c.0, kAXDescriptionAttribute) ?? ""].map(fold).filter { !$0.isEmpty }
+    }
+    if let m = cands.first(where: { names($0).contains(q) }) { return m }
+    if let m = cands.first(where: { names($0).contains { $0.hasPrefix(q) || q.hasPrefix($0) && $0.count >= 4 } }) { return m }
+    guard let (_, lab) = findTextEls(app, w, name, hidden: true).first(where: { wholeMatch($0.1, name) }), let lb = lab["bounds"] as? [Int] else { return nil }
+    let L = CGRect(x: lb[0], y: lb[1], width: lb[2], height: lb[3])
+    // A field on the label's own row always beats one below it; "below" means stacked under the label
+    // (same left edge), not merely lower down, which is the next row's field in a two-column form.
+    var row: (CGFloat, (AXUIElement, [String: Any]))?, under: (CGFloat, (AXUIElement, [String: Any]))?
+    for c in cands {
+        guard let f = frame(c.0) else { continue }
+        if f.minX >= L.midX, f.minY <= L.midY, f.maxY >= L.midY, f.minX - L.maxX < 500 {
+            let d = f.minX - L.maxX
+            if row == nil || d < row!.0 { row = (d, c) }
+        } else if f.minY >= L.minY + 2, f.minY - L.maxY <= 60, abs(f.minX - L.minX) <= 60 {
+            let d = f.minY - L.maxY
+            if under == nil || d < under!.0 { under = (d, c) }
+        }
+    }
+    return row?.1 ?? under?.1
+}
+
+/// The element that has keyboard focus in this app, if any.
+func focusedEl(_ app: AXUIElement) -> AXUIElement? { attr(app, kAXFocusedUIElementAttribute).map { $0 as! AXUIElement } }
+
+/// Somewhere typing goes into text: a field, or anything whose value can be edited.
+func isEditable(_ e: AXUIElement?) -> Bool {
+    guard let e else { return false }
+    if FIELD_ROLES.contains(axRole(e)) { return true }
+    var settable: DarwinBoolean = false
+    return AXUIElementIsAttributeSettable(e, kAXValueAttribute as CFString, &settable) == .success && settable.boolValue
+}
+
+/// Puts the cursor in a field, replaces its text and reads back what it shows. Never types unless the field
+/// really has focus, so text can't land in some other field or set off page shortcuts.
+func typeInto(_ app: AXUIElement, _ e: AXUIElement, _ text: String) -> (ok: Bool, shows: String) {
+    AXUIElementSetAttributeValue(e, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+    if let f = frame(e) { click(CGPoint(x: f.midX, y: min(f.midY, f.minY + 12))) }
+    Thread.sleep(forTimeInterval: 0.08)
+    let role = axRole(e)
+    if !inWebPage(e), !["AXDateField", "AXTimeField", "AXDateTimeArea"].contains(role),
+       AXUIElementSetAttributeValue(e, kAXValueAttribute as CFString, text as CFString) == .success, str(e, kAXValueAttribute) == text {
+        return (true, text)
+    }
+    let focusedHere: Bool = {
+        if (attr(e, kAXFocusedAttribute) as? Bool) == true { return true }
+        guard let f = focusedEl(app) else { return false }
+        return CFEqual(f, e) || (frame(f).map { fr in frame(e).map { $0.intersects(fr) } ?? false } ?? false)
+    }()
+    if !focusedHere, !["AXDateField", "AXTimeField", "AXDateTimeArea"].contains(role) { return (false, str(e, kAXValueAttribute) ?? "") }
+    if ["AXDateField", "AXTimeField", "AXDateTimeArea"].contains(role) {
+        // Date fields are a row of segments (month, day, year): start in the first and type digits; each
+        // segment moves on by itself when full.
+        // The segments (month, day, year steppers) can sit a few levels down inside the field.
+        var segs: [(AXUIElement, CGRect)] = []
+        var stack: [(AXUIElement, Int)] = ((attr(e, kAXChildrenAttribute) as? [AXUIElement]) ?? []).map { ($0, 1) }
+        while let (c, d) = stack.popLast() {
+            if axRole(c) == "AXIncrementor", let f = frame(c) { segs.append((c, f)) }
+            else if d < 5 { stack += ((attr(c, kAXChildrenAttribute) as? [AXUIElement]) ?? []).map { ($0, d + 1) } }
+        }
+        segs.sort { $0.1.minX < $1.1.minX }
+        // Click each segment and type its part with real number keys (segments ignore keyless characters
+        // and don't always move on by themselves). Parts go in the order the segments appear.
+        let digitKey: [Character: CGKeyCode] = ["0": 29, "1": 18, "2": 19, "3": 20, "4": 21, "5": 23, "6": 22, "7": 26, "8": 28, "9": 25]
+        let parts = text.split { !$0.isNumber }.map(String.init)
+        let pairs: [((AXUIElement, CGRect)?, String)] = segs.count == parts.count ? zip(segs, parts).map { ($0, $1) } : [(segs.first, parts.joined())]
+        for (seg, part) in pairs {
+            if let seg { click(CGPoint(x: seg.1.midX, y: seg.1.midY)); Thread.sleep(forTimeInterval: 0.08) }
+            for ch in part {
+                guard let k = digitKey[ch] else { continue }
+                let d = CGEvent(keyboardEventSource: src, virtualKey: k, keyDown: true)!, u = CGEvent(keyboardEventSource: src, virtualKey: k, keyDown: false)!
+                d.flags = []; u.flags = []
+                d.post(tap: .cghidEventTap); u.post(tap: .cghidEventTap)
+                Thread.sleep(forTimeInterval: 0.03)
+            }
+        }
+        Thread.sleep(forTimeInterval: 0.15)
+        return (true, segs.compactMap { str($0.0, kAXValueAttribute) }.joined(separator: "/"))
+    } else {
+        _ = pressKey("cmd+a"); typeText(text)
+    }
+    Thread.sleep(forTimeInterval: 0.12)
+    return (true, str(e, kAXValueAttribute) ?? "")
+}
+
+/// A menu item or list option with this text anywhere in the app: open dropdown menus and pickers often
+/// live outside the window. Exact text first, then text that starts with it.
+func findOption(_ app: AXUIElement, _ w: Win, _ option: String) -> AXUIElement? {
+    let q = fold(option)
+    var roots: [AXUIElement] = (attr(app, kAXChildrenAttribute) as? [AXUIElement]) ?? []
+    if let win = axWindow(app, w) { roots.insert(win, at: 0) }
+    var exact: AXUIElement?, prefix: AXUIElement?, visited = 0
+    var stack: [(AXUIElement, Int)] = roots.reversed().map { ($0, 0) }
+    while let (el, depth) = stack.popLast(), visited < 20000, exact == nil {
+        visited += 1
+        let role = axRole(el)
+        if role == "AXMenuBar" { continue }
+        if ["AXMenuItem", "AXStaticText", "AXCell", "AXRow", "AXButton", "AXRadioButton", "AXLink", "AXGroup", "AXListItem", "AXOption"].contains(role) {
+            for t in [str(el, kAXTitleAttribute), str(el, kAXValueAttribute), str(el, kAXDescriptionAttribute)].compactMap({ $0 }).map(fold) where !t.isEmpty {
+                if t == q { exact = el; break }
+                if prefix == nil, t.hasPrefix(q), t.count <= q.count + 25 { prefix = el }
+            }
+        }
+        if depth < 60, let kids = attr(el, kAXChildrenAttribute) as? [AXUIElement] { for k in kids.reversed() { stack.append((k, depth + 1)) } }
+    }
+    return exact ?? prefix
+}
+
+/// Presses an element, or clicks its middle if it can't be pressed. Scrolls it into view first.
+func activate(_ e: AXUIElement) {
+    AXUIElementPerformAction(e, "AXScrollToVisible" as CFString)
+    if axRole(e) == "AXMenuItem" || AXUIElementPerformAction(e, kAXPressAction as CFString) == .success {
+        if axRole(e) == "AXMenuItem" { AXUIElementPerformAction(e, kAXPressAction as CFString) }
+        return
+    }
+    if pressText(e) { return }
+    if let f = frame(e) { click(CGPoint(x: f.midX, y: f.midY)) }
+}
+
+func scrollAt(_ p: CGPoint, dy: Int32, dx: Int32) {
+    CGEvent(mouseEventSource: src, mouseType: .mouseMoved, mouseCursorPosition: p, mouseButton: .left)?.post(tap: .cghidEventTap)
+    Thread.sleep(forTimeInterval: 0.03)
+    if let e = CGEvent(scrollWheelEvent2Source: src, units: .line, wheelCount: 2, wheel1: dy, wheel2: dx, wheel3: 0) { e.flags = []; e.post(tap: .cghidEventTap) }
 }
 
 /// A whole label or heading, not the same words buried in a paragraph.
@@ -296,13 +496,16 @@ func axApp(_ w: Win) -> AXUIElement {
 
 // ---------- input ----------
 
-let src = CGEventSource(stateID: .hidSystemState)
+// A private source: events don't pick up modifier keys still held (or just "pressed" by a cmd+a step),
+// which turned typed digits into Cmd+1… and switched browser tabs.
+let src = CGEventSource(stateID: .privateState)
 func typeText(_ s: String) {
     for chunk in Array(s.utf16).chunked(16) {
         var u = chunk
         let d = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: true)!, up = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: false)!
         d.keyboardSetUnicodeString(stringLength: u.count, unicodeString: &u)
         up.keyboardSetUnicodeString(stringLength: u.count, unicodeString: &u)
+        d.flags = []; up.flags = []
         d.post(tap: .cghidEventTap); up.post(tap: .cghidEventTap)
         Thread.sleep(forTimeInterval: 0.012)
     }
@@ -336,7 +539,9 @@ func pressKey(_ combo: String) -> Bool {
 }
 func click(_ p: CGPoint) {
     for t in [CGEventType.mouseMoved, .leftMouseDown, .leftMouseUp] {
-        CGEvent(mouseEventSource: src, mouseType: t, mouseCursorPosition: p, mouseButton: .left)!.post(tap: .cghidEventTap)
+        let e = CGEvent(mouseEventSource: src, mouseType: t, mouseCursorPosition: p, mouseButton: .left)!
+        e.flags = []
+        e.post(tap: .cghidEventTap)
         Thread.sleep(forTimeInterval: 0.04)
     }
 }
@@ -454,11 +659,12 @@ case "act":
         fail("Blocked for safety: I can point at things in \(name), but I never type or click in it. Show the user where to click instead.")
     }
     // Bring the target app forward so keystrokes land there, not in Roamies.
-    if NSWorkspace.shared.frontmostApplication?.processIdentifier != w.pid {
-        NSRunningApplication(processIdentifier: w.pid)?.activate(options: [])
-        Thread.sleep(forTimeInterval: 0.3)
-    }
     let app = axApp(w)
+    // Keys and clicks go to whichever app is in front, so the target must really be there first.
+    // activate() alone is only a request since macOS 14 and is often ignored for a background helper.
+    if !bringToFront(w, app) {
+        out(["ok": false, "error": "Couldn't bring \(w.app) to the front, so nothing was typed or clicked. Ask the user to click its window once, then try again.", "done": []])
+    }
     // With several windows of one app, keystrokes go to its main window: make that the one we read.
     if let axw = axWindow(app, w), (attr(axw, kAXMainAttribute) as? Bool) != true {
         AXUIElementPerformAction(axw, kAXRaiseAction as CFString)
@@ -477,6 +683,11 @@ case "act":
         if what != "wait", let front = NSWorkspace.shared.frontmostApplication, let name = handsOff(front.processIdentifier) {
             out(["ok": false, "error": "Blocked for safety: \(name) came to the front, and I never type or click in it.", "done": done])
         }
+        // Raw keys and typing land in the front app: if another app took over, stop instead of typing into it.
+        if ["key", "type", "click_at"].contains(what), frontPid() != w.pid, !bringToFront(w, app) {
+            let other = NSWorkspace.shared.frontmostApplication?.localizedName ?? "another app"
+            out(["ok": false, "error": "Step \(i + 1): \(other) is in front instead of \(w.app), so I stopped before typing into the wrong app.", "done": done])
+        }
         if what == "click_at", let x = s["x"] as? Double, let y = s["y"] as? Double {
             let gx = (s["global"] as? Bool ?? false) ? x : w.x + x, gy = (s["global"] as? Bool ?? false) ? y : w.y + y
             if let under = windows().first(where: { CGRect(x: $0.x, y: $0.y, width: $0.w, height: $0.h).contains(CGPoint(x: gx, y: gy)) }), let name = handsOff(under.pid) {
@@ -491,12 +702,8 @@ case "act":
             }
             if what == "set", let text = s["text"] as? String {
                 // Native fields take the value directly; web page fields need real keystrokes or the page never sees it.
-                AXUIElementSetAttributeValue(e, kAXFocusedAttribute as CFString, kCFBooleanTrue)
-                let web = inWebPage(e)
-                let r: AXError = web ? .failure : AXUIElementSetAttributeValue(e, kAXValueAttribute as CFString, text as CFString)
-                if r != .success || str(e, kAXValueAttribute) != text {
-                    if let f = frame(e) { click(CGPoint(x: f.midX, y: f.midY)) }
-                    _ = pressKey("cmd+a"); typeText(text)
+                if !typeInto(app, e, text).ok {
+                    out(["ok": false, "error": "Step \(i + 1): couldn't put the cursor in \"\(info["label"] ?? "that field")\", so nothing was typed.", "done": done])
                 }
                 done.append("set \(info["label"] ?? "field \(info["id"]!)")")
             } else if what == "focus" {
@@ -538,7 +745,88 @@ case "act":
             Thread.sleep(forTimeInterval: 0.15)
             controls = walk(app, w)
         case "type":
+            // Typing outside a text field fires page shortcuts (YouTube's k pauses, Cmd-less digits switch views).
+            guard isEditable(focusedEl(app)) else {
+                out(["ok": false, "error": "Step \(i + 1): the cursor isn't in a text field, so typing would go nowhere. Use {do:'fill', field, text} to fill a field by its label.", "done": done])
+            }
             typeText(s["text"] as? String ?? ""); done.append("typed text")
+        case "fill":
+            // A form field by its label, placeholder or id: put the cursor in it, replace its text, check it took.
+            let text = s["text"] as? String ?? ""
+            var s = s
+            if s["id"] == nil, let n = Int((s["field"] as? String ?? "").trimmingCharacters(in: .whitespaces)) { s["id"] = n }
+            let name = (s["field"] as? String) ?? ""
+            if el(s) == nil, fieldFor(app, w, controls, name, roles: FIELD_ROLES) == nil { Thread.sleep(forTimeInterval: 0.3); controls = walk(app, w) }
+            guard let (e, info) = el(s) ?? fieldFor(app, w, controls, name, roles: FIELD_ROLES) else {
+                out(["ok": false, "error": "Step \(i + 1): no text field called \"\(name)\" here. Check its label with read_window.", "done": done])
+            }
+            let label = (info["label"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? name
+            let r = typeInto(app, e, text)
+            if !r.ok { out(["ok": false, "error": "Step \(i + 1): couldn't put the cursor in \"\(label)\", so nothing was typed.", "done": done]) }
+            let shows = r.shows.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Password fields show dots: the right number of them is a match. (They're secure fields, so the check
+            // below never runs on them; this note is why.)
+            let secure = axRole(e) == "AXSecureTextField" || str(e, kAXSubroleAttribute) == "AXSecureTextField"
+            if secure, shows.count != text.count, !shows.isEmpty {
+                out(["ok": false, "error": "Step \(i + 1): the password field shows \(shows.count) characters, not \(text.count). Fill it again.", "done": done])
+            }
+            let plain = !secure && ["AXTextField", "AXTextArea", "AXSearchField", "AXComboBox"].contains(axRole(e))
+            if plain, !shows.isEmpty || !text.isEmpty, !fold(shows).contains(fold(text).prefix(40)) {
+                var settable: DarwinBoolean = true
+                AXUIElementIsAttributeSettable(e, kAXValueAttribute as CFString, &settable)
+                if shows.isEmpty, !settable.boolValue || ((attr(e, "AXReadOnly") as? Bool) == true) {
+                    out(["ok": false, "error": "Step \(i + 1): \"\(label)\" can't be typed in; it opens a picker. Use click_text on it, then on the month arrows (e.g. 'Next Month') and the day (its label reads like 'Choose Monday, November 16th, 2026').", "done": done])
+                }
+                out(["ok": false, "error": "Step \(i + 1): typed into \"\(label)\" but it shows \"\(shows.prefix(80))\". Check the field with read_window.", "done": done])
+            }
+            done.append("\(label) = \"\(axRole(e) == "AXSecureTextField" ? "••••" : String(shows.prefix(60)))\"")
+            controls = walk(app, w)
+        case "choose":
+            // A dropdown (native, custom or a picker) by label or id: open it, find the option (scrolling the
+            // list if needed) and pick it. Falls back to typing the option and Return, which most dropdowns accept.
+            let option = s["option"] as? String ?? s["text"] as? String ?? ""
+            var s = s
+            if s["id"] == nil, let n = Int((s["field"] as? String ?? "").trimmingCharacters(in: .whitespaces)) { s["id"] = n }
+            let name = (s["field"] as? String) ?? ""
+            // No usable name and the page has exactly one dropdown in view: that's the one.
+            let pageDrops = controls.filter { ["AXPopUpButton", "AXComboBox"].contains(axRole($0.0)) && ($0.1["offscreen"] as? Bool) != true && inWebPage($0.0) }
+            let only = pageDrops.count == 1 ? pageDrops.first : nil
+            guard !option.isEmpty, let (e, info) = el(s) ?? fieldFor(app, w, controls, name, roles: DROP_ROLES) ?? only else {
+                out(["ok": false, "error": "Step \(i + 1): no dropdown called \"\(name)\" here, or no option given. Check with read_window.", "done": done])
+            }
+            let label = (info["label"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? name
+            if risky(option), (s["confirmed"] as? Bool) != true {
+                out(["ok": false, "error": "Stopped before choosing \"\(option)\": it could delete, pay, send or sign out, and the user hasn't said yes to that.", "done": done])
+            }
+            activate(e)
+            Thread.sleep(forTimeInterval: 0.35)
+            if let o = findOption(app, w, option) {
+                activate(o)
+            } else {
+                // Typing only goes where focus is a field or the dropdown itself.
+                if isEditable(focusedEl(app)) || (focusedEl(app).map { CFEqual($0, e) } ?? false) || axRole(e) == "AXPopUpButton" {
+                    typeText(option); Thread.sleep(forTimeInterval: 0.35); _ = pressKey("return")
+                } else {
+                    _ = pressKey("escape")
+                    out(["ok": false, "error": "Step \(i + 1): opened \"\(label)\" but no option \"\(option)\" showed up. Take a screenshot to see the choices.", "done": done])
+                }
+            }
+            Thread.sleep(forTimeInterval: 0.45)
+            let shows = [str(e, kAXValueAttribute), str(e, kAXTitleAttribute)].compactMap { $0 }.first { !$0.isEmpty } ?? ""
+            done.append("chose \"\(option)\" in \(label)\(shows.isEmpty ? "" : " (shows \"\(shows.prefix(60))\")")")
+            controls = walk(app, w)
+        case "scroll":
+            // Scroll the page, or a list/dropdown/panel under a control or text: direction up/down/left/right, amount in steps.
+            let dir = (s["direction"] as? String ?? "down").lowercased()
+            let n = max(1, min(30, (s["amount"] as? Int) ?? 5))
+            var p = CGPoint(x: w.x + w.w / 2, y: w.y + w.h / 2)
+            if let (e, _) = el(s), let f = frame(e) { p = CGPoint(x: f.midX, y: f.midY) }
+            else if let q = s["text"] as? String, let (e, _) = findTextEls(app, w, q).first, let f = frame(e) { p = CGPoint(x: f.midX, y: f.midY) }
+            let (dy, dx): (Int32, Int32) = dir == "up" ? (3, 0) : dir == "left" ? (0, 3) : dir == "right" ? (0, -3) : (-3, 0)
+            for _ in 0..<n { scrollAt(p, dy: dy, dx: dx); Thread.sleep(forTimeInterval: 0.04) }
+            Thread.sleep(forTimeInterval: 0.25)
+            done.append("scrolled \(dir)")
+            controls = walk(app, w)
         case "key":
             guard pressKey(s["key"] as? String ?? "") else { out(["ok": false, "error": "Step \(i + 1): unknown key \(s["key"] ?? "")", "done": done]) }
             done.append("pressed \(s["key"]!)")
@@ -554,7 +842,7 @@ case "act":
         }
     }
     // A click or key may have changed the page: hand back what's there now, so no read_window round trip is needed.
-    let changing = steps.contains { ["click", "click_text", "press_button", "key", "click_at"].contains($0["do"] as? String ?? "") }
+    let changing = steps.contains { ["click", "click_text", "press_button", "key", "click_at", "fill", "choose", "scroll", "set"].contains($0["do"] as? String ?? "") }
     if changing {
         let w2 = resolve(target) ?? w
         let app2 = w2.pid == w.pid ? app : axApp(w2)

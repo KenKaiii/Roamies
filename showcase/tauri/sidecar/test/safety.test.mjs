@@ -129,3 +129,29 @@ console.log('safety tests: passed');
     assert.ok(!isRiskyClick(l), `"${l}" is a normal click`);
   console.log('risky click tests: passed');
 }
+
+// The activity log never keeps what was typed into forms or files, only its length.
+{
+  const { redactArgs } = await import('../safety.mjs');
+  const r = redactArgs('act_in_app', { target: 'browser', steps: [
+    { do: 'fill', field: 'Email', text: 'ken@example.com' }, { do: 'type', text: 'secret' }, { do: 'set', id: 3, text: 'abc' },
+    { do: 'click_text', text: 'Submit' }, { do: 'choose', field: 'Country', option: 'Malaysia' }] });
+  assert.deepEqual(r.steps.map((s) => s.text ?? s.option), ['[15 chars]', '[6 chars]', '[3 chars]', 'Submit', 'Malaysia']);
+  assert.equal(r.steps[0].field, 'Email', 'which field is kept; what went in is not');
+  assert.deepEqual(redactArgs('write_file', { path: '~/a.txt', content: 'hello' }), { path: '~/a.txt', content: '[5 chars]' });
+  assert.deepEqual(redactArgs('open', { target: 'Safari' }), { target: 'Safari' });
+  console.log('log redaction tests: passed');
+}
+
+// Risky buttons in other languages need a yes too (the check used to know English only).
+{
+  const { isRiskyClick } = await import('../safety.mjs');
+  for (const l of ['Supprimer le compte', 'Eliminar cuenta', 'Konto löschen', 'Jetzt kaufen', 'Pagar ahora', 'Envoyer', 'Abmelden', 'Cerrar sesión',
+    'Excluir conta', 'Acquista ora', 'Verwijderen', 'Padam akaun', 'Bayar sekarang', 'Log keluar', 'Hapus', 'Kirim pesan',
+    '删除账户', '立即付款', '退出登录', 'アカウントを削除', '購入する', 'ログアウト', '계정 삭제', '결제하기', '로그아웃'])
+    assert.ok(isRiskyClick(l), `"${l}" needs a yes`);
+  for (const l of ['Einstellungen', 'Paramètres', 'Configuración', 'Tetapan', 'Profil', 'Weiter', 'Suivant', '设置', '設定', '설정',
+    'Pagination', 'Sender name', 'Payment history', 'Buyer guide', 'Kopenhagen', 'Esciolto', 'Bayaran balik policy page'])
+    assert.ok(!isRiskyClick(l), `"${l}" is a normal click`);
+  console.log('multilingual risky click tests: passed');
+}

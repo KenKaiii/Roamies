@@ -43,8 +43,16 @@ const rel = (abs, home) => { const h = slash(home); return abs === h ? '' : abs.
 
 // Buttons that delete, pay, send or sign out: Sidekick needs the user's yes before clicking one,
 // even if it was asked to "show" it. Kept in sync with RISKY in hands/main.swift.
-export const RISKY_CLICK = /\b(delete|remove|erase|destroy|wipe|reset|deactivate|close (my |your )?account|cancel (my |your |the )?(subscription|plan|membership|account|order)|unsubscribe|pay|purchase|buy|place (the |your )?order|checkout|check out|confirm (payment|order|purchase|transfer)|send|transfer|withdraw|uninstall|empty trash|discard|sign out|log out|logout|format|revoke|publish)\b/i;
+export const RISKY_CLICK = /(?:^|[^\p{L}])(delete|remove|erase|destroy|wipe|reset|deactivate|close (my |your )?account|cancel (my |your |the )?(subscription|plan|membership|account|order)|unsubscribe|pay|purchase|buy|place (the |your )?order|checkout|check out|confirm (payment|order|purchase|transfer)|send|transfer|withdraw|uninstall|empty trash|discard|sign out|log out|logout|format|revoke|publish|eliminar|borrar|pagar|comprar|enviar|cerrar sesi[oó]n|supprimer|effacer|payer|acheter|envoyer|se d[eé]connecter|d[eé]connexion|l[oö]schen|entfernen|bezahlen|kaufen|senden|abmelden|excluir|apagar|terminar sess[aã]o|elimina|cancella|paga|acquista|invia|esci|verwijderen|betalen|kopen|verzenden|uitloggen|afmelden|padam|hapus|bayar|beli|hantar|kirim|log keluar|nyahlanggan)(?![\p{L}])|删除|刪除|移除|清空|支付|付款|购买|購買|发送|發送|退出登录|登出|注销|削除|消去|支払|購入|送信|ログアウト|退会|삭제|결제|구매|전송|보내기|로그아웃/iu;
 export const isRiskyClick = (label) => RISKY_CLICK.test(String(label ?? ''));
+
+/** Tool arguments as they go in the activity log: anything typed into fields or files becomes its length. */
+export function redactArgs(name, args = {}) {
+  const len = (t) => `[${String(t ?? '').length} chars]`;
+  if (name === 'act_in_app') return { ...args, steps: (args.steps ?? []).map((s) => (['type', 'set', 'fill'].includes(s.do) ? { ...s, text: len(s.text) } : s)) };
+  if (name === 'write_file') return { path: args.path, content: len(args.content) };
+  return args;
+}
 
 /** read_file / list_files / search_files. Returns { level, reason, path }. */
 export function checkRead(p, home, { recursive = false } = {}) {
