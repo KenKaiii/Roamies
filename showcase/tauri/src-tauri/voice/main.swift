@@ -5,6 +5,7 @@
 // (ends on a pause or another tap). JSON lines on stdout; exits when stdin closes.
 // Modifier state is read with CGEventSource, which needs no Input Monitoring permission.
 import AVFoundation
+import CoreAudio
 import CoreGraphics
 import Foundation
 import Speech
@@ -172,6 +173,44 @@ final class LegacyRecognizer: Recognizer {
     func cancel() { task?.cancel(); task = nil }
 }
 
+// Mutes the default output while you talk so music or videos don't drown you out (or end up in the
+// transcript), then puts it back. Only ever un-mutes what it muted itself.
+enum OutputMute {
+    private static var device: AudioDeviceID?
+    static var enabled = true
+
+    private static func addr(_ sel: AudioObjectPropertySelector, _ scope: AudioObjectPropertyScope) -> AudioObjectPropertyAddress {
+        AudioObjectPropertyAddress(mSelector: sel, mScope: scope, mElement: kAudioObjectPropertyElementMain)
+    }
+    private static func defaultOutput() -> AudioDeviceID? {
+        var id = AudioDeviceID(0), size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        var a = addr(kAudioHardwarePropertyDefaultOutputDevice, kAudioObjectPropertyScopeGlobal)
+        return AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &a, 0, nil, &size, &id) == noErr && id != 0 ? id : nil
+    }
+    private static func muted(_ dev: AudioDeviceID) -> Bool? {
+        var a = addr(kAudioDevicePropertyMute, kAudioDevicePropertyScopeOutput)
+        guard AudioObjectHasProperty(dev, &a) else { return nil }
+        var v = UInt32(0), size = UInt32(MemoryLayout<UInt32>.size)
+        return AudioObjectGetPropertyData(dev, &a, 0, nil, &size, &v) == noErr ? v != 0 : nil
+    }
+    private static func set(_ dev: AudioDeviceID, _ on: Bool) -> Bool {
+        var a = addr(kAudioDevicePropertyMute, kAudioDevicePropertyScopeOutput)
+        var v: UInt32 = on ? 1 : 0
+        return AudioObjectSetPropertyData(dev, &a, 0, nil, UInt32(MemoryLayout<UInt32>.size), &v) == noErr
+    }
+
+    static func begin() {
+        guard enabled, device == nil, let dev = defaultOutput(), muted(dev) == false else { return }
+        if set(dev, true) { device = dev; log("output muted while listening") }
+    }
+    static func end() {
+        guard let dev = device else { return }
+        device = nil
+        // Unmute only if it's still muted: the user may have unmuted by hand meanwhile.
+        if muted(dev) == true, set(dev, false) { log("output restored") }
+    }
+}
+
 final class Voice {
     enum Phase { case idle, armed, holding, handsFree, finishing }
 
@@ -187,6 +226,29 @@ final class Voice {
     init() {
         // Resolve the locale and fetch the model up front so the first ⌃⌥ is instant.
         if #available(macOS 26, *), SpeechTranscriber.isAvailable { _ = AnalyzerRecognizer.prepare() }
+    }
+
+    // The talk chord: any two of ⌃ ⌥ ⌘ ⇧ (default ⌃⌥). Set with --chord or {"cmd":"chord"}.
+    private static let allMods: CGEventFlags = [.maskControl, .maskAlternate, .maskCommand, .maskShift]
+    private var chordMask: CGEventFlags = [.maskControl, .maskAlternate]
+    static func mask(_ names: [String]) -> CGEventFlags? {
+        var m: CGEventFlags = []
+        for n in names {
+            switch n.lowercased() {
+            case "control", "ctrl": m.insert(.maskControl)
+            case "option", "alt": m.insert(.maskAlternate)
+            case "command", "cmd": m.insert(.maskCommand)
+            case "shift": m.insert(.maskShift)
+            default: return nil
+            }
+        }
+        return names.count == 2 && m.rawValue.nonzeroBitCount == 2 ? m : nil
+    }
+    func setChord(_ names: [String]) {
+        guard let m = Self.mask(names) else { return log("ignored chord \(names)") }
+        if phase != .idle { cancel() }
+        chordMask = m; blocked = true
+        log("talk chord: \(names.joined(separator: "+"))")
     }
 
     private static let modifierKeys: Set<CGKeyCode> = [0x36, 0x37, 0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F]
@@ -209,13 +271,13 @@ final class Voice {
 
     func tick() {
         let now = uptime()
-        let f = CGEventSource.flagsState(.combinedSessionState)
-        let ctrl = f.contains(.maskControl), opt = f.contains(.maskAlternate)
-        let extra = f.contains(.maskCommand) || f.contains(.maskShift)
-        let chord = ctrl && opt && !extra
-        let down = ctrl && opt // once talking, a stray ⇧/⌘ doesn't count as letting go
+        let f = CGEventSource.flagsState(.combinedSessionState).intersection(Self.allMods)
+        let held = f.intersection(chordMask)
+        let down = held == chordMask // once talking, a stray extra modifier doesn't count as letting go
+        let extra = !f.subtracting(chordMask).isEmpty
+        let chord = down && !extra
         defer { prevChord = chord }
-        if !ctrl && !opt { blocked = false }
+        if held.isEmpty { blocked = false }
 
         // Debounced release: true only once ⌃⌥ has been up for releaseDebounce.
         let released: Bool = {
@@ -273,6 +335,7 @@ final class Voice {
                 self.startAudio()
             }
         }
+        if !dryRun { OutputMute.begin() }
         emit(["type": "state", "state": "listening", "mode": mode])
         if !best.isEmpty { emit(["type": "partial", "text": best]) }
     }
@@ -320,6 +383,15 @@ final class Voice {
     }
 
     /// The shell saw ⌃⌥S: that ⌃⌥ was a shortcut, not a request to talk.
+    /// Start listening hands-free without a key press (after an area snap). Ends on a pause or a tap.
+    func listenNow() {
+        guard phase == .idle else { return }
+        arm(uptime())
+        phase = .handsFree
+        blocked = true // the snap shortcut's keys may still be held: don't read them as a tap
+        showListening("handsfree", uptime())
+    }
+
     func externalCancel() {
         if phase == .armed || phase == .holding || phase == .handsFree { cancel() }
         blocked = true
@@ -402,6 +474,7 @@ final class Voice {
     }
 
     private func stopAudio() {
+        OutputMute.end()
         guard let eng = engine else { return }
         eng.inputNode.removeTap(onBus: 0)
         eng.stop()
@@ -440,14 +513,64 @@ final class Voice {
     }
 }
 
+// ---------- one-shot permission modes (used by the setup guide) ----------
+// --perms prints the current state; --request <mic|speech|screen> asks, then prints the state.
+// Run as a child of Roamies, so macOS attributes the prompts and grants to Roamies.
+func permStatus() -> [String: Any] {
+    func av(_ s: AVAuthorizationStatus) -> String { s == .authorized ? "granted" : s == .notDetermined ? "unknown" : "denied" }
+    func sp(_ s: SFSpeechRecognizerAuthorizationStatus) -> String { s == .authorized ? "granted" : s == .notDetermined ? "unknown" : "denied" }
+    var analyzer = false
+    if #available(macOS 26, *) { analyzer = SpeechTranscriber.isAvailable }
+    return [
+        "type": "perms",
+        "mic": av(AVCaptureDevice.authorizationStatus(for: .audio)),
+        // SpeechAnalyzer (macOS 26+) needs no speech-recognition permission.
+        "speech": analyzer ? "granted" : sp(SFSpeechRecognizer.authorizationStatus()),
+        "speechNeeded": !analyzer,
+        "screen": CGPreflightScreenCaptureAccess() ? "granted" : "unknown",
+    ]
+}
+let args = CommandLine.arguments
+if args.contains("--perms") { emit(permStatus()); exit(0) }
+if let i = args.firstIndex(of: "--request"), i + 1 < args.count {
+    let done = DispatchSemaphore(value: 0)
+    switch args[i + 1] {
+    case "mic": AVCaptureDevice.requestAccess(for: .audio) { _ in done.signal() }; done.wait()
+    case "speech": SFSpeechRecognizer.requestAuthorization { _ in done.signal() }; done.wait()
+    case "screen": _ = CGRequestScreenCaptureAccess()
+    default: break
+    }
+    emit(permStatus()); exit(0)
+}
+
+var signalSources: [DispatchSourceSignal] = []
 let voice = Voice()
+if args.contains("--no-mute") { OutputMute.enabled = false }
+if let i = args.firstIndex(of: "--chord"), i + 1 < args.count { voice.setChord(args[i + 1].components(separatedBy: ",")) }
 let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { _ in voice.tick() }
 RunLoop.main.add(timer, forMode: .common)
 Thread.detachNewThread {
     while let line = readLine() {
-        if line.contains("\"cancel\"") { DispatchQueue.main.async { voice.externalCancel() } }
+        guard let data = line.data(using: .utf8), let msg = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { continue }
+        switch msg["cmd"] as? String {
+        case "cancel": DispatchQueue.main.async { voice.externalCancel() }
+        case "listen": DispatchQueue.main.async { voice.listenNow() }
+        case "chord": if let mods = msg["mods"] as? [String] { DispatchQueue.main.async { voice.setChord(mods) } }
+        case "mute": if let on = msg["on"] as? Bool { DispatchQueue.main.async { OutputMute.enabled = on; if !on { OutputMute.end() } } }
+        default: break
+        }
     }
+    // Roamies quit: never leave the Mac muted.
+    DispatchQueue.main.sync { OutputMute.end() }
     exit(0)
+}
+// Killed (Quit, crash restart): restore output on the way out too.
+for sig in [SIGTERM, SIGINT, SIGHUP] {
+    signal(sig, SIG_IGN)
+    let src = DispatchSource.makeSignalSource(signal: sig, queue: .main)
+    src.setEventHandler { OutputMute.end(); exit(0) }
+    src.resume()
+    signalSources.append(src)
 }
 emit(["type": "ready", "engine": voice.engineName, "dryRun": dryRun])
 RunLoop.main.run()

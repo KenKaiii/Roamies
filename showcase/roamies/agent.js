@@ -150,6 +150,8 @@
         k.S('pop');
       }
       b.mood = opts.mood ?? null;
+      // point: hand target in body radii (e.g. [0.3, -1.6] points up) held while the bubble is open.
+      b.point = opts.point ?? null;
       if (b.mood === 'happy') face.set('happy', 0.9);
       const h = handle(b);
       if (text) h.append(text);
@@ -543,6 +545,20 @@
         return k.vanish(instant ? null : variant ?? nextVariant(), instant);
       },
       toggle: () => (visible() ? api.hide() : api.show({ summoned: true })),
+      // First-run hello: drop in from the menu bar right under the tray icon (x in overlay px) and point up at it.
+      intro: (x, text) => {
+        // The raised hand (not the body) goes under the icon: the hand reaches HAND_DX radii right of
+        // the body, so the body sits that much to the left. Near the right edge it can't, so it shifts
+        // and the hand angles over instead.
+        const S = bounds(), r = k.R, HAND_DX = 0.35;
+        const px = clamp(x - HAND_DX * r, S.l + r * 1.7, S.r - r * 1.7), py = S.t + r * 2.1;
+        const reach = clamp((x - px) / r, -1.2, 1.2);
+        if (visible()) k.vanish(null, true);
+        setStation(px, py);
+        presence.summoned = true; presence.lastActive = now;
+        k.appear('drop', px, py);
+        return api.say(text, { mood: 'happy', point: [reach, -1.75] });
+      },
       // Make (x, y) home and move there now, e.g. to restore where the user last left it.
       place: (x, y) => {
         setStation(x, y); m.x = x; m.y = y; m.vx = m.vy = 0; m.mode = 'rest'; m.rest = 1;
@@ -627,7 +643,9 @@
           if (!ok && st.name === 'run') { st.variant = 'fail'; return; }
           if (st.parked || !ok) st.finish(ok);
         };
-        return { progress(p) { st.p = p; return this; }, done(ok = true) { done(ok); return this; }, get closed() { return st.closed; }, state: st };
+        // target(rect): the real area being worked on (e.g. the window being captured), in overlay px.
+        if (opts.rect) { st.target = opts.rect; st.targetName = opts.rectName; }
+        return { progress(p) { st.p = p; return this; }, target(rect, name) { st.target = rect; st.targetName = name; st.def.retarget?.(st, C); return this; }, done(ok = true) { done(ok); return this; }, get closed() { return st.closed; }, state: st };
       },
       get busy() { return !!(b || tool); },
       get bubble() { return b; },
@@ -688,6 +706,10 @@
         gestT += dt * (talking ? 1 : 0.3);
         const g = Math.sin(gestT * 3.1), g2 = Math.sin(gestT * 1.7 + 1);
         const brow = b.mood === 'annoyed' ? 'angry' : b.mood === 'concerned' ? 'raised' : b.mood === 'determined' ? 'determined' : null;
+        if (b.point) {
+          const bob = Math.sin(t * 5) * 0.06;
+          return { arms: 1, tr: [b.point[0], b.point[1] + bob], tl: [-0.9, 0.45], mouth: mouthT > 0 ? mouthMode : 'grin', brow: 'raised' };
+        }
         return {
           arms: talking ? 1 : 0.4,
           tr: [0.95 + g * 0.08, 0.05 - Math.max(0, g) * 0.35], tl: [-0.98 - g2 * 0.06, 0.25 - Math.max(0, g2) * 0.18],

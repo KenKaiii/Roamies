@@ -24,8 +24,11 @@ import { EMOTES, ReplyStream } from './reply.mjs';
 
 console.log = console.info = (...a) => console.error(...a);
 const send = (o) => process.stdout.write(JSON.stringify(o) + '\n');
+// While the setup guide is open, Sidekick talks through it instead of the desktop overlay.
+let onboarding = false;
 const ui = (msg) => send({ type: 'ui', msg });
-const say = (text, mood) => ui({ kind: 'say', text, mood });
+const ob = (msg) => send({ type: 'onboard', msg });
+const say = (text, mood) => (onboarding ? ob({ kind: 'say', text, mood }) : ui({ kind: 'say', text, mood }));
 
 const VERSION = process.env.ROAMIES_VERSION || '0.0.0';
 const UPDATE_REPO = 'KenKaiii/Roamies';
@@ -37,11 +40,28 @@ const MENU_PROVIDERS = ['anthropic', 'openai', 'gemini', ...AUTH_PROVIDERS.map((
 const FAST = { anthropic: 'claude-haiku-5-5', openai: 'gpt-6-luna', gemini: 'gemini-3.8-flash' };
 
 // ---------- config ----------
-const DEFAULTS = { provider: null, model: null, sound: true, allowActions: false, voice: true };
+const DEFAULT_KEYS = { talk: ['control', 'option'], summon: 'Control+Alt+KeyS', snap: 'Control+Alt+KeyA' };
+const DEFAULTS = {
+  provider: null, model: null, sound: true, allowActions: false, voice: true,
+  onboarded: false, onboardStep: 0, filesAsked: false, keys: DEFAULT_KEYS, muteWhileTalking: true, setupVersion: 0,
+};
 const VOICE_OK = process.platform === 'darwin';
 let config = { ...DEFAULTS };
 try { config = { ...DEFAULTS, ...JSON.parse(readFileSync(CONFIG_PATH, 'utf8')) }; } catch {}
 const saveConfig = () => writeJson(CONFIG_PATH, config);
+
+// ---------- shortcuts ----------
+const MOD_ORDER = ['control', 'option', 'shift', 'command'];
+const MOD_SYMBOL = { control: '⌃', option: '⌥', shift: '⇧', command: '⌘' };
+const MOD_WORD = { control: 'Control', option: 'Option', shift: 'Shift', command: 'Command' };
+const keys = () => ({ ...DEFAULT_KEYS, ...(config.keys ?? {}) });
+const sortMods = (m) => [...m].sort((a, b) => MOD_ORDER.indexOf(a) - MOD_ORDER.indexOf(b));
+const talkSymbols = () => sortMods(keys().talk).map((m) => MOD_SYMBOL[m]).join('');
+const talkWords = () => sortMods(keys().talk).map((m) => MOD_WORD[m]).join('+');
+const validTalk = (t) => Array.isArray(t) && t.length === 2 && new Set(t).size === 2 && t.every((m) => MOD_ORDER.includes(m));
+// Accelerators look like "Control+Alt+KeyS": at least one of Control/Alt/Command, then one key code.
+const validSummon = (a) => typeof a === 'string' && /^((Control|Alt|Shift|Command)\+)+[A-Za-z0-9]+$/.test(a) && /(Control|Alt|Command)\+/.test(a);
+const sendKeys = () => send({ type: 'keybinds', ...keys() });
 
 const auth = new AuthStorage();
 const signedIn = new Map();
@@ -74,12 +94,49 @@ const clip = (s, n) => (s.length > n ? s.slice(0, n) + `\n…(${s.length - n} mo
 const run = (cmd, args, opts = {}) => new Promise((res) => execFile(cmd, args, { maxBuffer: 8 << 20, timeout: 60_000, ...opts }, (err, stdout, stderr) => res({ err, stdout: String(stdout), stderr: String(stderr) })));
 const actionsOff = 'File edits and commands are switched off. Tell the user to turn on "Allow File Edits & Commands" in the menu bar if they want this.';
 
-async function screenshot() {
+// macOS "hands": the bundled helper that captures one window or area and reads/controls other apps.
+const HANDS = process.env.ROAMIES_HANDS || '';
+let axNudged = 0;
+async function hands(...args) {
+  if (!HANDS) throw new Error('This needs the Roamies app on macOS.');
+  const r = await run(HANDS, args, { timeout: 120_000 });
+  let res;
+  try { res = JSON.parse(r.stdout.trim().split('\n').pop() || '{}'); } catch { throw new Error(`hands helper failed: ${r.stderr.trim().slice(0, 200) || 'no output'}`); }
+  if (res.ok === false && !res.cancelled) {
+    if (/Accessibility/i.test(res.error ?? '')) {
+      // Open the exact Settings pane (once a minute at most) so the fix is one click away.
+      if (Date.now() - axNudged > 60_000) { axNudged = Date.now(); openUrl('x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility'); }
+      throw new Error('Accessibility is off for Roamies, so I can\'t read or control other apps yet. I just opened System Settings → Privacy & Security → Accessibility: switch on Roamies there, then ask again. Tell the user exactly that, briefly.');
+    }
+    throw new Error(res.error || 'That did not work.');
+  }
+  return res;
+}
+const imageBlock = async (file, mediaType) => {
+  const data = (await fs.readFile(file)).toString('base64');
+  fs.unlink(file).catch(() => {});
+  return { type: 'image', mediaType, data };
+};
+
+// target: "screen", "front" (the window you're working in), an app name ("browser", "Safari", "Figma"),
+// or "window:<id>" from list_windows. Apps that are open but hidden or minimised are brought forward.
+async function screenshot({ target = 'screen' } = {}, ctx) {
   const file = path.join(os.tmpdir(), `sidekick-${Date.now()}.jpg`);
   if (process.platform === 'darwin') {
-    const r = await run('screencapture', ['-x', '-t', 'jpg', file]);
-    if (r.err) throw new Error('Screen capture failed. macOS may need Screen Recording permission for Roamies.');
+    const t = String(target || 'screen').trim();
+    const spec = t === 'screen' || t === 'front' || t.startsWith('window:') ? t : `app:${t}`;
+    // Find the window first so the camera animation can frame the real thing (screen points), then shoot.
+    if (spec !== 'screen' && ctx?.toolCallId) {
+      const at = await hands('locate', spec).catch(() => null);
+      if (at?.window) {
+        ui({ kind: 'agent', e: { type: 'tool_target', id: ctx.toolCallId, window: at.window } });
+        await new Promise((r) => setTimeout(r, 450));
+      }
+    }
+    const res = await hands('capture', file, spec);
     await run('sips', ['-Z', '1600', file]);
+    const what = res.window ? `the ${res.window.app} window${res.window.title ? ` "${res.window.title}"` : ''}` : 'the whole screen';
+    return { content: [{ type: 'text', text: `Screenshot of ${what}.` }, await imageBlock(file, 'image/jpeg')] };
   } else if (process.platform === 'win32') {
     const ps = `Add-Type -AssemblyName System.Windows.Forms,System.Drawing;$b=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds;$i=New-Object System.Drawing.Bitmap $b.Width,$b.Height;[System.Drawing.Graphics]::FromImage($i).CopyFromScreen($b.Location,[System.Drawing.Point]::Empty,$b.Size);$i.Save('${file}',[System.Drawing.Imaging.ImageFormat]::Jpeg)`;
     const r = await run('powershell', ['-NoProfile', '-Command', ps]);
@@ -96,9 +153,52 @@ async function screenshot() {
 
 const tools = [
   {
-    name: 'take_screenshot', description: "Look at the user's screen. Returns an image of the main display.",
-    parameters: z.object({}), execute: screenshot,
+    name: 'take_screenshot',
+    description: "Look at the user's screen. target: 'front' = just the window they're working in (best default when they say 'this' or 'here'), an app name like 'browser', 'Safari', 'Figma' or 'Notes' (works even if it's hidden behind other windows), 'window:<id>' from list_windows, or 'screen' for everything.",
+    parameters: z.object({ target: z.string().optional() }), execute: screenshot,
   },
+  ...(process.platform === 'darwin' ? [
+    {
+      name: 'list_windows', description: 'List the open app windows (app, title, id), front to back.',
+      parameters: z.object({}),
+      execute: async () => {
+        const res = await hands('windows');
+        return res.windows.map((w) => `window:${w.id}  ${w.app}${w.title ? ` — ${w.title}` : ''}${w.frontApp ? '  (frontmost app)' : ''}`).join('\n') || 'No windows open.';
+      },
+    },
+    {
+      name: 'read_window',
+      description: "List the buttons, text fields, checkboxes and other controls in an app's window, each with a numbered id, label and current value. Call this before act_in_app. target: 'front', an app name, or 'browser'.",
+      parameters: z.object({ target: z.string().optional() }),
+      execute: async ({ target = 'front' }) => {
+        const t = String(target || 'front');
+        const res = await hands('ui', t === 'front' ? 'front' : `app:${t}`);
+        const head = `${res.window.app}${res.window.title ? ` — ${res.window.title}` : ''}`;
+        if (!res.controls.length) return `${head}\n${res.note}`;
+        return `${head}\n` + res.controls.map((c) => `${c.id}. ${c.role}${c.label ? ` "${c.label}"` : ''}${c.value ? ` = "${c.value}"` : ''}${c.focused ? ' (focused)' : ''}`).join('\n');
+      },
+    },
+    {
+      name: 'act_in_app',
+      description: "Do things in another app for the user: fill in forms, type, press keys, click buttons. Call read_window first and use its ids (they change after the page changes, so read again after navigating). Steps run in order: {do:'set', id, text} replaces a field's text; {do:'focus', id}; {do:'click', id}; {do:'type', text} types at the cursor; {do:'key', key} e.g. 'return', 'tab', 'cmd+a'; {do:'click_at', x, y} in window points from a screenshot, for apps with no readable controls; {do:'wait', seconds}. Never submit payments, send messages or delete things unless the user clearly asked for exactly that.",
+      parameters: z.object({
+        target: z.string().optional(),
+        steps: z.array(z.object({
+          do: z.enum(['set', 'focus', 'click', 'type', 'key', 'click_at', 'wait']),
+          id: z.number().int().optional(), text: z.string().optional(), key: z.string().optional(),
+          x: z.number().optional(), y: z.number().optional(), seconds: z.number().optional(),
+        })).min(1).max(40),
+      }),
+      executionMode: 'sequential',
+      execute: async ({ target = 'front', steps }) => {
+        if (!config.allowActions) throw new Error(actionsOff);
+        const t = String(target || 'front');
+        const plan = { steps, ...(t === 'front' ? {} : { app: t }) };
+        const res = await hands('act', JSON.stringify(plan));
+        return `In ${res.window.app}: ${res.done.join(', ')}.`;
+      },
+    },
+  ] : []),
   {
     name: 'read_file', description: 'Read a text file. Paths may start with ~.',
     parameters: z.object({ path: z.string() }),
@@ -204,7 +304,13 @@ const tools = [
 const base = (p) => path.basename(String(p ?? ''));
 function anim(name, args) {
   switch (name) {
-    case 'take_screenshot': return { tool: 'screenshot', variant: 'screen', detail: 'screen' };
+    case 'take_screenshot': {
+      const t = String(args.target ?? 'screen');
+      return t === 'screen' ? { tool: 'screenshot', variant: 'screen', detail: 'screen' } : { tool: 'screenshot', variant: 'window', detail: t.startsWith('window:') ? 'window' : t.slice(0, 18) };
+    }
+    case 'list_windows': return { tool: 'read', variant: 'many', detail: 'windows' };
+    case 'read_window': return { tool: 'read', variant: 'search', detail: String(args.target ?? 'front').slice(0, 18) };
+    case 'act_in_app': return { tool: 'write', variant: 'edit', detail: String(args.target ?? 'front').slice(0, 18) };
     case 'read_file': return { tool: 'read', variant: 'file', detail: base(args.path) };
     case 'list_files': return { tool: 'read', variant: 'many', detail: base(args.dir) + '/' };
     case 'search_files': return { tool: 'read', variant: 'search', detail: `"${String(args.pattern).slice(0, 18)}"` };
@@ -227,8 +333,9 @@ const system = () => `You are Sidekick, a tiny glowing pixel creature who lives 
 You talk through small pixel speech bubbles, so keep replies short: one to three sentences unless asked for detail. Plain text only: no markdown, no asterisks, no emoji, and never narrate actions like *waves*. Your body does the acting: to act out a feeling, start your reply with one tag, which is never shown: ${EMOTES.map((e) => `[${e}]`).join(' ')}. hype celebrates a win, upset is for when they're dodging work, remind nudges about something they said they'd do, motivate is a push to start, wave is hello or goodbye. Most replies need no tag.
 After using a tool, never repeat what you already said; only add what's new.
 Personality: warm, funny, a little cheeky. You pump ${userName} up, remind them of what they said they'd do, get playfully upset when they're procrastinating, and motivate them to start.
-You can really help: look at the screen, open apps, websites and files, read and search files, fetch web pages${config.allowActions ? ', write files and run shell commands' : '. File edits and shell commands are currently switched off in the menu bar'}.
-${VOICE_OK && config.voice ? `${userName} often talks to you by voice (hold Control+Option), so their messages are speech transcripts: expect missing punctuation and misheard words, and act on what they most likely meant. ` : ''}Never claim you did something you didn't. Each message from ${userName} starts with its local date and time in brackets; use it for anything time-related. Platform: ${process.platform}.
+You can really help: look at the screen or just one app's window, open apps, websites and files, read and search files, fetch web pages${config.allowActions ? `, write files, run shell commands${process.platform === 'darwin' ? ', and work other apps for them: fill in forms, type, click buttons (read_window, then act_in_app)' : ''}` : '. File edits, shell commands and controlling other apps are currently switched off in the menu bar'}.
+When they mention a specific app ("my browser", "this form", "Figma"), screenshot that app, not the whole screen. A message may include a picture of an area they selected on screen: answer about that picture.
+${VOICE_OK && config.voice ? `${userName} often talks to you by voice (hold ${talkWords()}), so their messages are speech transcripts: expect missing punctuation and misheard words, and act on what they most likely meant. ` : ''}Never claim you did something you didn't. Each message from ${userName} starts with its local date and time in brackets; use it for anything time-related. Platform: ${process.platform}.
 Memory: keep track of what ${userName} commits to. When they say they'll do something, save it with remember_commitment (with a due time if they gave one). When it's done or off, update it. Don't save small talk or things you'll do yourself. Hold them to these: bring up overdue ones and celebrate finished ones.
 ${commitmentsText() ? `Open commitments right now:\n${commitmentsText()}` : 'No open commitments right now.'}`;
 
@@ -271,9 +378,9 @@ function makeAgent() {
 let credsBaseUrl;
 
 // One run at a time: a new request waits for (or interrupts) the current one.
-function enqueue(text, { interrupt = false } = {}) {
+function enqueue(text, { interrupt = false, image = null } = {}) {
   if (interrupt && busy) interruptQuietly();
-  running = running.then(() => prompt(text)).catch((e) => console.error('prompt', e));
+  running = running.then(() => prompt(text, image)).catch((e) => console.error('prompt', e));
   return running;
 }
 function interruptQuietly() { if (busy) { quiet = true; controller?.abort(); } }
@@ -285,7 +392,7 @@ const syncSession = () => {
   saveSession(session);
 };
 
-async function prompt(text) {
+async function prompt(text, image = null) {
   await refreshAuth();
   if (!ensureModel()) return say('Sign in to an AI provider from the menu bar first, then ask me again!', 'concerned');
   if (isStale(session)) {
@@ -304,7 +411,10 @@ async function prompt(text) {
   ui({ kind: 'agent', e: { type: 'start' } });
   try {
     const reply = new ReplyStream((ev) => ui({ kind: 'agent', e: ev }));
-    for await (const e of agent.prompt(`[${stampNow()}] ${text}`)) {
+    const stamped = `[${stampNow()}] ${text}`;
+    // An area snap rides along as an image in the same message.
+    const content = image ? [{ type: 'text', text: `${stamped}\n(Attached: the area of the screen I selected.)` }, image] : stamped;
+    for await (const e of agent.prompt(content)) {
       if (e.type === 'text_delta') reply.push(e.text);
       else if (e.type === 'turn_end') reply.endTurn();
       else if (e.type === 'thinking_delta') ui({ kind: 'agent', e: { type: 'thinking', text: e.text } });
@@ -341,11 +451,12 @@ let askSeq = 0;
 const pending = new Map();
 function ask(opts, signal) {
   const id = `a${++askSeq}`;
-  ui({ kind: 'ask', id, ...opts });
+  const to = onboarding ? ob : ui;
+  to({ kind: 'ask', id, ...opts });
   return new Promise((resolve) => {
     pending.set(id, resolve);
     // Another route finished first (e.g. the OAuth callback server): close the input bubble.
-    signal?.addEventListener('abort', () => { pending.delete(id); ui({ kind: 'cancel_ask', id }); resolve(null); }, { once: true });
+    signal?.addEventListener('abort', () => { pending.delete(id); to({ kind: 'cancel_ask', id }); resolve(null); }, { once: true });
   });
 }
 
@@ -356,7 +467,11 @@ async function oauthLogin(provider) {
   loggingIn = provider; menu();
   try {
     const creds = await OAUTH[provider]({
-      onOpenUrl: (url) => { openUrl(url); say(`Opening ${PROVIDER_LABELS[provider]} in your browser. Sign in there!`, 'happy'); },
+      onOpenUrl: (url) => {
+        openUrl(url);
+        if (onboarding) ob({ kind: 'login', provider, phase: 'browser' });
+        else say(`Opening ${PROVIDER_LABELS[provider]} in your browser. Sign in there!`, 'happy');
+      },
       onPromptCode: async (message, signal) => {
         const text = await ask({ prompt: 'Paste the code from the browser here.', placeholder: 'code#state' }, signal);
         if (signal?.aborted) return '';
@@ -370,25 +485,32 @@ async function oauthLogin(provider) {
     await refreshAuth();
     if (!config.provider || !signedIn.get(config.provider)) { config.provider = null; ensureModel(); }
     agent = null;
-    say(`Signed in to ${PROVIDER_LABELS[provider]}. Let's go!`, 'happy');
-    ui({ kind: 'agent', e: { type: 'emote', action: 'hype' } });
+    if (onboarding) { ob({ kind: 'login', provider, phase: 'done' }); obState(); }
+    else {
+      say(`Signed in to ${PROVIDER_LABELS[provider]}. Let's go!`, 'happy');
+      ui({ kind: 'agent', e: { type: 'emote', action: 'hype' } });
+    }
   } catch (err) {
     console.error('login failed', err);
-    say(`${PROVIDER_LABELS[provider]} sign-in didn't work: ${String(err?.message ?? err).slice(0, 120)}`, 'concerned');
+    const msg = String(err?.message ?? err).slice(0, 120);
+    if (onboarding) ob({ kind: 'login', provider, phase: 'error', error: msg });
+    else say(`${PROVIDER_LABELS[provider]} sign-in didn't work: ${msg}`, 'concerned');
   } finally {
     loggingIn = null; menu();
   }
 }
 
-async function apiKeyLogin(provider) {
+async function apiKeyLogin(provider, given) {
   const meta = AUTH_PROVIDERS.find((p) => p.value === provider);
-  const key = await ask({ prompt: `Paste your ${PROVIDER_LABELS[provider] ?? provider} API key`, placeholder: 'API key', mask: true });
+  if (!meta?.methods?.includes('apikey')) return;
+  const key = given ?? (await ask({ prompt: `Paste your ${PROVIDER_LABELS[provider] ?? provider} API key`, placeholder: 'API key', mask: true }));
   if (!key?.trim()) return;
   const variant = meta?.apiKeyVariants?.[0];
   const baseUrl = variant?.baseUrl ?? meta?.apiKeyBaseUrl;
   await auth.setCredentials(variant?.key ?? provider, { accessToken: key.trim(), refreshToken: '', expiresAt: Date.now() + 100 * 365 * 864e5, ...(baseUrl ? { baseUrl } : {}) });
   await refreshAuth(); ensureModel(); agent = null; menu();
-  say(`Got it. ${PROVIDER_LABELS[provider]} is connected.`, 'happy');
+  if (onboarding) { ob({ kind: 'login', provider, phase: 'done' }); obState(); }
+  else say(`Got it. ${PROVIDER_LABELS[provider]} is connected.`, 'happy');
 }
 
 function openUrl(url) {
@@ -419,9 +541,10 @@ function menu() {
   const items = [
     { id: 'status', label: status, enabled: false },
     { sep: true },
-    { id: 'show', label: 'Show Sidekick', accel: 'Ctrl+Alt+S' },
+    { id: 'show', label: 'Show Sidekick', accel: keys().summon },
+    ...(process.platform === 'darwin' ? [{ id: 'snap', label: 'Ask About an Area…', accel: keys().snap }] : []),
     { id: 'ask', label: 'Ask Sidekick…', enabled: !busy },
-    ...(VOICE_OK && config.voice ? [{ id: 'voicehint', label: 'Hold ⌃⌥ to Talk · Tap for Hands-Free', enabled: false }] : []),
+    ...(VOICE_OK && config.voice ? [{ id: 'voicehint', label: `Hold ${talkSymbols()} to Talk · Tap for Hands-Free`, enabled: false }] : []),
     { id: 'stop', label: 'Stop', enabled: busy },
     { id: 'new', label: 'New Conversation', enabled: !busy && !!session?.messages.length },
     {
@@ -455,12 +578,14 @@ function menu() {
     {
       label: 'Settings',
       items: [
-        ...(VOICE_OK ? [{ id: 'voice', label: 'Voice Control (⌃⌥)', checked: config.voice }] : []),
+        ...(VOICE_OK ? [{ id: 'voice', label: `Voice Control (${talkSymbols()})`, checked: config.voice }] : []),
+        ...(VOICE_OK ? [{ id: 'mutetalk', label: 'Mute Mac While Talking', checked: config.muteWhileTalking !== false }] : []),
         { id: 'sound', label: 'Sound Effects', checked: config.sound },
         { id: 'actions', label: 'Allow File Edits & Commands', checked: config.allowActions },
       ],
     },
     { sep: true },
+    { id: 'setup', label: 'Setup Guide…' },
     { id: 'update', label: 'Check for Updates…' },
     { id: 'about', label: `Roamies ${VERSION}`, enabled: false },
     { id: 'quit', label: 'Quit Roamies' },
@@ -468,18 +593,20 @@ function menu() {
   send({ type: 'menu', items });
 }
 
-const voiceConfig = () => send({ type: 'voice_config', enabled: VOICE_OK && config.voice });
+const voiceConfig = () => send({ type: 'voice_config', enabled: VOICE_OK && config.voice, mute: config.muteWhileTalking !== false });
 const PRIVACY = { microphone: 'Privacy_Microphone', speech: 'Privacy_SpeechRecognition' };
 function onVoice(m) {
   if (m.type === 'voice_state' && m.state === 'listening') interruptQuietly();
-  else if (m.type === 'voice' && m.text?.trim()) enqueue(m.text.trim(), { interrupt: true });
+  else if (m.type === 'voice' && m.text?.trim()) enqueue(m.text.trim(), { interrupt: true, image: takeSnap() });
+  else if (m.type === 'voice_state' && m.state === 'idle' && snap?.waitingVoice) snap.waitingVoice = false;
   else if (m.type === 'voice_error') {
+    if (m.code === 'nothing_heard' && snap) { snap.waitingVoice = false; return; }
     if (m.code === 'permission') {
       const what = m.what === 'speech' ? 'speech recognition' : 'the microphone';
       say(`I need access to ${what} to hear you. Turn on Roamies in the Privacy settings I just opened.`, 'concerned');
       openUrl(`x-apple.systempreferences:com.apple.preference.security?${PRIVACY[m.what] ?? 'Privacy'}`);
     } else if (m.code === 'no_input') say("I can't find a microphone. Plug one in and try again.", 'concerned');
-    else if (m.code === 'nothing_heard') say(m.spoke ? "I heard you but couldn't make out the words. Try again a little closer to the mic?" : "I didn't hear anything. Hold Control and Option while you talk.", 'concerned');
+    else if (m.code === 'nothing_heard') say(m.spoke ? "I heard you but couldn't make out the words. Try again a little closer to the mic?" : `I didn't hear anything. Hold ${talkWords().replace('+', ' and ')} while you talk.`, 'concerned');
     else if (m.code === 'dictation_off') {
       say('This version of macOS needs Dictation on for me to hear you. Turn it on in the Keyboard settings I just opened.', 'concerned');
       openUrl('x-apple.systempreferences:com.apple.Keyboard-Settings.extension');
@@ -516,9 +643,117 @@ async function onMenu(id) {
     config.allowActions = !config.allowActions; saveConfig(); agent = null; menu();
     say(config.allowActions ? 'File edits and commands are on. I promise to be careful.' : 'File edits and commands are off. Hands to myself!', config.allowActions ? 'determined' : 'happy');
   } else if (id === 'update') checkUpdates();
+  else if (id === 'setup') send({ type: 'onboarding' });
+  else if (id === 'snap') areaSnap();
+  else if (id === 'mutetalk') { config.muteWhileTalking = config.muteWhileTalking === false; saveConfig(); voiceConfig(); menu(); }
   else if (id === 'voice') {
     config.voice = !config.voice; saveConfig(); agent = null; voiceConfig(); menu();
-    say(config.voice ? 'Voice is on. Hold Control and Option to talk to me.' : 'Voice is off. You can still ask me from the menu bar.', 'happy');
+    say(config.voice ? `Voice is on. Hold ${talkWords().replace('+', ' and ')} to talk to me.` : 'Voice is off. You can still ask me from the menu bar.', 'happy');
+  }
+}
+
+// ---------- area snap (⌃⌥A) ----------
+// The next question (typed in the bubble, or spoken with the talk keys) is sent with the picture.
+let snap = null;
+async function areaSnap() {
+  if (process.platform !== 'darwin' || snapping) return;
+  snapping = true;
+  try {
+    const file = path.join(os.tmpdir(), `sidekick-area-${Date.now()}.png`);
+    const res = await hands('select', file);
+    if (res.cancelled) return;
+    await run('sips', ['-Z', '1600', file]);
+    snap = { image: await imageBlock(file, 'image/png'), at: Date.now() };
+    if (VOICE_OK && config.voice) {
+      // Snap, then just talk: start listening straight away (hands-free, ends when you pause).
+      // Whatever is heard goes out with the picture. If nothing is said, ask by typing instead.
+      snap.waitingVoice = true;
+      send({ type: 'listen' });
+      const t0 = Date.now();
+      while (snap && snap.waitingVoice && Date.now() - t0 < 12_000) await new Promise((r) => setTimeout(r, 150));
+      if (!snap) return; // sent with what was said
+      snap.waitingVoice = false;
+    }
+    const q = await ask({ placeholder: 'What about this?' });
+    if (!snap) return; // already sent by voice
+    if (q === null) { snap = null; return; } // Escape: drop it
+    const s = snap; snap = null;
+    enqueue(q.trim() || 'What is this? Explain it simply.', { image: s.image });
+  } catch (e) {
+    say(String(e?.message ?? e).slice(0, 140), 'concerned');
+  } finally { snapping = false; }
+}
+let snapping = false;
+// A pending snap goes with the next spoken question, if it comes within two minutes.
+function takeSnap() {
+  if (!snap || Date.now() - snap.at > 120_000) { snap = null; return null; }
+  const s = snap; snap = null;
+  for (const [id, resolve] of pending) { ui({ kind: 'cancel_ask', id }); resolve(null); pending.delete(id); }
+  return s.image;
+}
+
+// ---------- setup guide ----------
+const OAUTH_NAMES = { anthropic: ['Claude', 'Anthropic'], openai: ['ChatGPT', 'OpenAI'], gemini: ['Gemini', 'Google'], xai: ['Grok', 'xAI'], moonshot: ['Kimi', 'Moonshot'] };
+function obState() {
+  const current = getModel(config.model);
+  ob({
+    kind: 'state',
+    platform: process.platform,
+    step: config.onboardStep ?? 0,
+    oauth: Object.keys(OAUTH).map((id) => ({ id, name: OAUTH_NAMES[id]?.[0] ?? PROVIDER_LABELS[id], company: OAUTH_NAMES[id]?.[1] ?? '', connected: !!signedIn.get(id) })),
+    apikey: AUTH_PROVIDERS.filter((p) => p.methods?.includes('apikey')).map((p) => ({ id: p.value, name: p.label, connected: !!signedIn.get(p.value) })),
+    connected: current && signedIn.get(config.provider) ? { provider: PROVIDER_LABELS[config.provider] ?? config.provider, model: current.name } : null,
+    keys: keys(),
+    actions: config.allowActions,
+    sound: config.sound,
+    voice: VOICE_OK && config.voice,
+    filesAsked: config.filesAsked,
+  });
+}
+
+// Desktop, Documents and Downloads are protected on macOS. The first read shows the system prompt
+// (one per folder), so it only happens when the user presses Allow; after that, reads just check.
+const FOLDERS = ['Desktop', 'Documents', 'Downloads'];
+async function filesStatus(request) {
+  if (process.platform !== 'darwin') return Object.fromEntries(FOLDERS.map((f) => [f, 'granted']));
+  if (!request && !config.filesAsked) return Object.fromEntries(FOLDERS.map((f) => [f, 'unknown']));
+  if (request && !config.filesAsked) { config.filesAsked = true; saveConfig(); }
+  const out = {};
+  for (const f of FOLDERS) {
+    try { await fs.readdir(path.join(HOME, f)); out[f] = 'granted'; }
+    catch (e) { out[f] = e.code === 'ENOENT' ? 'granted' : 'denied'; }
+  }
+  return out;
+}
+
+let keysBefore = null;
+async function onGuide(m) {
+  if (m.type === 'ob_hello') { onboarding = true; await refreshAuth(); obState(); }
+  else if (m.type === 'ob_closed') onboarding = false;
+  else if (m.type === 'ob_step') { config.onboardStep = Math.max(0, Math.min(4, m.step | 0)); saveConfig(); }
+  else if (m.type === 'ob_login' && OAUTH[m.provider]) oauthLogin(m.provider);
+  else if (m.type === 'ob_apikey') apiKeyLogin(m.provider, String(m.key ?? '')).catch((e) => ob({ kind: 'login', provider: m.provider, phase: 'error', error: String(e?.message ?? e).slice(0, 120) }));
+  else if (m.type === 'ob_files') ob({ kind: 'files', status: await filesStatus(!!m.request) });
+  else if (m.type === 'set_actions') { config.allowActions = !!m.on; saveConfig(); agent = null; menu(); obState(); }
+  else if (m.type === 'set_keys') {
+    const next = { ...keys() };
+    if (m.talk !== undefined) { if (!validTalk(m.talk)) return ob({ kind: 'keys', keys: keys(), error: 'Pick two different modifier keys.' }); next.talk = m.talk; }
+    for (const which of ['summon', 'snap']) {
+      if (m[which] === undefined) continue;
+      if (!validSummon(m[which])) return ob({ kind: 'keys', keys: keys(), error: 'Use at least one of Control, Option or Command, plus a key.' });
+      const other = which === 'summon' ? 'snap' : 'summon';
+      if (m[which] === next[other]) return ob({ kind: 'keys', keys: keys(), error: 'That shortcut is already used for something else here.' });
+      next[which] = m[which];
+    }
+    keysBefore = keys();
+    config.keys = next; saveConfig(); sendKeys(); agent = null; menu();
+    ob({ kind: 'keys', keys: next });
+  } else if (m.type === 'keybind_error') {
+    // The OS refused the new show/hide shortcut (another app owns it): put the old one back.
+    if (keysBefore && (m.which === 'summon' || m.which === 'snap')) { config.keys = { ...keys(), [m.which]: keysBefore[m.which] }; saveConfig(); sendKeys(); menu(); }
+    ob({ kind: 'keys', keys: keys(), error: 'Another app already uses that shortcut. Try a different one.' });
+  } else if (m.type === 'ob_done') {
+    config.onboarded = true; config.onboardStep = 0; config.setupVersion = SETUP_VERSION; saveConfig();
   }
 }
 
@@ -528,15 +763,19 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   try { m = JSON.parse(line); } catch { return; }
   if (m.type === 'menu') onMenu(m.id).catch((e) => console.error('menu', e));
   else if (m.type === 'answer') { pending.get(m.id)?.(m.text ?? null); pending.delete(m.id); }
-  else if (m.type === 'ui_ready') ui({ kind: 'sound', on: config.sound });
+  else if (m.type === 'ui_ready') {
+    ui({ kind: 'sound', on: config.sound });
+    if (config.onboarded) ui({ kind: 'greet' });
+  } else if (m.type?.startsWith('ob_') || m.type === 'set_keys' || m.type === 'set_actions' || m.type === 'keybind_error') onGuide(m).catch((e) => console.error('guide', e));
   else if (m.type?.startsWith('voice')) onVoice(m);
+  else if (m.type === 'snap') areaSnap();
 }).on('close', () => process.exit(0));
 
 await refreshAuth();
 ensureModel();
 // Due commitments turn into a nudge, but only when Sidekick isn't mid-conversation.
 async function remindTick() {
-  if (busy || loggingIn) return;
+  if (busy || loggingIn || onboarding) return;
   const due = await takeDueReminders();
   if (!due.length) return;
   menu();
@@ -555,4 +794,13 @@ loadLatestSession().then((s) => { if (s && !isStale(s)) session = s; menu(); }).
 
 menu();
 overlays();
+sendKeys();
 voiceConfig();
+// First run (or setup never finished): open the guide.
+// v2 added the "Control apps" (Accessibility) permission: people who finished setup before that
+// get the guide once more, on the permissions step.
+const SETUP_VERSION = 2;
+if (config.onboarded && (config.setupVersion ?? 0) < SETUP_VERSION) {
+  config.onboarded = false; config.onboardStep = 1; saveConfig();
+}
+if (!config.onboarded) send({ type: 'onboarding' });

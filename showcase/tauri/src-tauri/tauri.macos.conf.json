@@ -1,7 +1,8 @@
 {
   "bundle": {
     "externalBin": [
-      "binaries/roamies-voice"
+      "binaries/roamies-voice",
+      "binaries/roamies-hands"
     ],
     "macOS": {
       "dmg": {
@@ -18,7 +19,9 @@
           "x": 495,
           "y": 222
         }
-      }
+      },
+      "hardenedRuntime": true,
+      "entitlements": "Roamies.entitlements"
     }
   }
 }
