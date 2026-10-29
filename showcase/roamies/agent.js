@@ -32,6 +32,54 @@
     return g;
   };
 
+  // Emoji: drawn as two cells of coloured LED dots. They take two UTF-16 units (a surrogate pair, or a symbol
+  // plus its emoji selector), which is also two columns in the layout, so wrapping and streaming line up.
+  const EMOJI = /\p{Extended_Pictographic}/u;
+  const emojis = new Map();
+  let ecan = null, ectx = null;
+  // Returns [x, y, r, g, b, ...] dots on a (2*CW-1) x CH grid, or null if this font can't draw it.
+  const emojiGlyph = (cluster) => {
+    if (emojis.has(cluster)) return emojis.get(cluster);
+    const EW = CW * 2 - 1, S = 8;
+    if (!ecan) { ecan = document.createElement('canvas'); ecan.width = EW * S; ecan.height = CH * S; ectx = ecan.getContext('2d', { willReadFrequently: true }); }
+    ectx.clearRect(0, 0, ecan.width, ecan.height);
+    ectx.textAlign = 'center'; ectx.textBaseline = 'middle';
+    ectx.font = `${CH * S * 0.82}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
+    ectx.fillText(cluster, (EW * S) / 2, (CH * S) / 2 + S * 0.3);
+    const px = ectx.getImageData(0, 0, ecan.width, ecan.height).data;
+    const pts = [];
+    for (let y = 0; y < CH; y++) for (let x = 0; x < EW; x++) {
+      let r = 0, g = 0, bl = 0, a = 0;
+      for (let j = 0; j < S; j++) for (let i = 0; i < S; i++) {
+        const o = ((y * S + j) * ecan.width + x * S + i) * 4, al = px[o + 3] / 255;
+        r += px[o] * al; g += px[o + 1] * al; bl += px[o + 2] * al; a += al;
+      }
+      if (a / (S * S) > 0.35) pts.push(x, y, Math.round(r / a), Math.round(g / a), Math.round(bl / a));
+    }
+    const g = pts.length ? pts : null;
+    emojis.set(cluster, g);
+    return g;
+  };
+  // At index j of s: the emoji that starts there and how many units it covers, or null.
+  const emojiAt = (s, j) => {
+    const cp = s.codePointAt(j);
+    if (cp == null || !(cp > 0xffff || EMOJI.test(String.fromCodePoint(cp)))) return null;
+    const len = (c) => (c > 0xffff ? 2 : 1), ri = (c) => c >= 0x1f1e6 && c <= 0x1f1ff;
+    let n = len(cp);
+    if (ri(cp) && ri(s.codePointAt(j + 2))) n = 4; // a flag is two regional letters
+    for (;;) {
+      const c = s.codePointAt(j + n);
+      if (c == null) break;
+      if (c === 0x200d && s.codePointAt(j + n + 1) != null) n += 1 + len(s.codePointAt(j + n + 1)); // joined: 👨‍👩‍👧
+      else if (c === 0xfe0f || c === 0x20e3 || (c >= 0x1f3fb && c <= 0x1f3ff) || (c >= 0xe0020 && c <= 0xe007f)) n += len(c);
+      else break;
+    }
+    const cluster = s.slice(j, j + n);
+    if (!EMOJI.test(cluster) && cp <= 0xffff) return null;
+    if (!EMOJI.test(cluster) && !ri(cp)) return null; // other astral characters (rare scripts) stay as text
+    return { cluster, n };
+  };
+
   const wrap = (text, cols) => {
     const lines = [];
     let i = 0;
@@ -40,6 +88,8 @@
       let end = i, lastSpace = -1;
       while (end < n && text[end] !== '\n' && end - i < cols) { if (text[end] === ' ') lastSpace = end; end++; }
       if (end < n && text[end] !== '\n' && end - i >= cols && lastSpace > i) end = lastSpace;
+      // Never cut an emoji (a surrogate pair) across two lines.
+      else if (end < n && end > i + 1 && /[\ud800-\udbff]/.test(text[end - 1])) end--;
       lines.push({ start: i, s: text.slice(i, end) });
       if (end >= n) break;
       i = text[end] === ' ' || text[end] === '\n' ? end + 1 : end;
@@ -426,6 +476,7 @@
       const dim = bb.kind === 'thought' || ph;
       const paths = [new Path2D(), new Path2D(), new Path2D()];
       const lines = ph ? wrap(bb.input.placeholder || '', MAX_COLS) : bb.lines;
+      const emojiDots = [];
       const s0 = ph ? 0 : bb.scroll.x, first = Math.max(0, Math.floor(s0)), last = Math.min(lines.length - 1, first + bb.rows);
       const dot = t * 0.82, shown = ph ? 1e9 : Math.floor(bb.shown);
       const shownLines = lines.filter((l) => l.start < shown).length;
@@ -437,6 +488,17 @@
           if (idx >= shown) break;
           const ch = line.s[j];
           if (ch === ' ') continue;
+          const em = emojiAt(line.s, j);
+          if (em) {
+            const eg = idx + em.n <= shown || ph ? emojiGlyph(em.cluster) : null;
+            if (eg) for (let q = 0; q < eg.length; q += 5) {
+              const py = ly + eg[q + 1];
+              if (py < -0.5 || py > bb.rows * CH - 0.5) continue;
+              emojiDots.push(j * CW + eg[q], py, eg[q + 2], eg[q + 3], eg[q + 4]);
+            }
+            j += em.n - 1;
+            continue;
+          }
           const g = glyph(ch), age = ph ? 9 : now - (bb.at[idx] ?? 0);
           const fresh = age < 0.08, drop = fresh ? -0.6 : 0;
           for (let q = 0; q < g.length; q += 3) {
@@ -462,6 +524,10 @@
       tctx.fillStyle = '#ffffff'; tctx.fill(paths[0]);
       tctx.fillStyle = css(dim ? PAL[L - 2] : HOT); tctx.fill(paths[1]);
       tctx.fillStyle = css(dim ? PAL[L - 2] : RIM, dim ? 0.85 : 0.75); tctx.fill(paths[2]);
+      for (let q = 0; q < emojiDots.length; q += 5) {
+        tctx.fillStyle = `rgba(${emojiDots[q + 2]},${emojiDots[q + 3]},${emojiDots[q + 4]},${dim ? 0.6 : 1})`;
+        tctx.fillRect(emojiDots[q] * t, emojiDots[q + 1] * t, dot, dot);
+      }
       // Clip to the frame as it is this instant: it may still be growing, or shrinking away on close.
       const ip = Math.round(pad() / P), meterCells = bb.input?.listen ? METER + 1 : 0;
       const cx1 = (bb.grid.x1 + 1 - ip) * P + P * 0.5, cy1 = (bb.grid.y1 + 1 - ip - meterCells) * P + P * 0.5;
@@ -508,7 +574,15 @@
       if (pop <= 0) return;
       const x = (g.x0 + 6) * P, y = (g.y0 * P) + (g.h * P - CH * t) / 2 + t * 0.5;
       const p1 = new Path2D(), p2 = new Path2D(), split = st.label.length;
+      const chipEmoji = [];
       for (let j = 0; j < g.text.length; j++) {
+        const em = emojiAt(g.text, j);
+        if (em) {
+          const eg = emojiGlyph(em.cluster);
+          if (eg) for (let q = 0; q < eg.length; q += 5) chipEmoji.push(x + (j * CW + eg[q]) * t, y + eg[q + 1] * t, eg[q + 2], eg[q + 3], eg[q + 4]);
+          j += em.n - 1;
+          continue;
+        }
         const gl = glyph(g.text[j]);
         for (let q = 0; q < gl.length; q += 3) (j < split ? p1 : p2).rect(x + (j * CW + gl[q]) * t, y + gl[q + 1] * t, t * 0.82, t * 0.82);
       }
@@ -517,6 +591,7 @@
       ctx.shadowColor = css(RIM, 0.7); ctx.shadowBlur = t * 3;
       ctx.fillStyle = css(HOT); ctx.fill(p1);
       ctx.fillStyle = css(PAL[L - 2]); ctx.fill(p2);
+      for (let q = 0; q < chipEmoji.length; q += 5) { ctx.fillStyle = `rgb(${chipEmoji[q + 2]},${chipEmoji[q + 3]},${chipEmoji[q + 4]})`; ctx.fillRect(chipEmoji[q], chipEmoji[q + 1], t * 0.82, t * 0.82); }
       ctx.restore();
     };
 
