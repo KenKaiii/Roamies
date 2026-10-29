@@ -1,6 +1,10 @@
 // What Sidekick may do on its own, what needs a yes from the user first, and what it never does.
 // Pure functions so every rule is tested (test/safety.test.mjs). When unsure, ask; never guess "safe".
-import path from 'node:path';
+import nodePath from 'node:path';
+// Rules work on forward-slash paths everywhere, so a Windows path (C:\Users\ken\.ssh) meets the same checks.
+const path = nodePath.posix;
+const slash = (p) => String(p ?? '').replace(/\\/g, '/');
+const isAbs = (p) => p.startsWith('/') || /^[a-z]:\//i.test(p);
 
 export const SAFE = 'safe', ASK = 'ask', BLOCK = 'block';
 const verdict = (level, reason = '') => ({ level, reason });
@@ -13,33 +17,37 @@ const SECRET = [
   /(^|\/)Library\/Keychains(\/|$)/, /(^|\/)Library\/Cookies(\/|$)/, /\/(Cookies|Login Data|Web Data)(-journal)?$/,
   /(^|\/)\.env(\.[\w-]+)?$/, /\.(pem|p12|pfx|key|keystore|jks)$/i, /(^|\/)id_(rsa|ed25519|ecdsa|dsa)(\.pub)?$/,
   /(^|\/)\.(bash|zsh|fish)_history$/, /(^|\/)\.zsh_sessions(\/|$)/,
+  /(^|\/)AppData\/(Roaming\/Microsoft\/(Credentials|Protect|Crypto)|Local\/Microsoft\/Credentials)(\/|$)/i, /\/(User Data|Profiles)\/.*\/(Cookies|Login Data|logins\.json|key4\.db)$/i,
 ];
 // Other apps' private data and synced libraries: reading these sets off macOS privacy prompts.
 const PRIVATE = [
   /(^|\/)Library\/(Containers|Group Containers|Application Support\/com\.apple\.TCC|Mail|Messages|Safari|Calendars|Photos|Accounts)(\/|$)/,
   /(^|\/)Pictures\/Photos Library\.photoslibrary(\/|$)/, /(^|\/)Music\/(Music|iTunes)(\/|$)/,
+  /(^|\/)AppData\/Local\/Packages(\/|$)/i,
 ];
 // Writing here could let something run on its own later, or break the Mac.
 const NO_WRITE = [
   /(^|\/)\.(zshrc|zprofile|zshenv|zlogin|bashrc|bash_profile|profile|login|inputrc)$/, /(^|\/)\.config\/fish(\/|$)/,
   /(^|\/)Library\/(LaunchAgents|LaunchDaemons|StartupItems|Preferences|Keychains|Application Support\/com\.apple)(\/|$)/,
   /(^|\/)\.gitconfig$/, /(^|\/)\.ssh(\/|$)/, /(^|\/)\.gg(\/|$)/, /(^|\/)\.tauri(\/|$)/, /\.app(\/|$)/, /(^|\/)crontab$/,
+  /\/Start Menu\/Programs\/Startup(\/|$)/i, /(^|\/)Documents\/(Windows)?PowerShell\/.*profile\.ps1$/i, /^[a-z]:\/(Windows|Program Files( \(x86\))?|ProgramData)(\/|$)/i,
 ];
 const SYSTEM_ROOTS = ['/System', '/usr', '/bin', '/sbin', '/etc', '/private', '/Library', '/Applications', '/var', '/opt', '/cores'];
 
 const norm = (p, home) => {
-  const s = String(p ?? '').trim();
-  const abs = s === '~' ? home : s.startsWith('~/') ? path.join(home, s.slice(2)) : path.resolve(home, s);
-  return path.normalize(abs);
+  const s = slash(p).trim(), h = slash(home);
+  const abs = s === '~' ? h : s.startsWith('~/') ? path.join(h, s.slice(2)) : isAbs(s) ? s : path.join(h, s);
+  return path.normalize(abs).replace(/(.)\/$/, '$1');
 };
-const rel = (abs, home) => (abs === home ? '' : abs.startsWith(home + path.sep) ? abs.slice(home.length + 1) : abs);
+const rel = (abs, home) => { const h = slash(home); return abs === h ? '' : abs.startsWith(h + '/') ? abs.slice(h.length + 1) : abs; };
 
 /** read_file / list_files / search_files. Returns { level, reason, path }. */
 export function checkRead(p, home, { recursive = false } = {}) {
+  home = slash(home);
   const abs = norm(p, home), r = rel(abs, home);
   if (SECRET.some((re) => re.test(r) || re.test(abs))) return { ...verdict(BLOCK, `${p} holds passwords or keys, so I never read it.`), path: abs };
   if (PRIVATE.some((re) => re.test(r) || re.test(abs))) return { ...verdict(BLOCK, `${p} is another app's private data. Reading it sets off macOS privacy prompts.`), path: abs };
-  if (recursive && (abs === home || abs === '/' || abs === path.join(home, 'Library') || abs === '/Users' || abs === '/Volumes')) {
+  if (recursive && (abs === home || abs === '/' || /^[a-z]:$/i.test(abs) || abs === path.join(home, 'Library') || abs === path.join(home, 'AppData') || /^(\/Users|\/Volumes|[a-z]:\/Users)$/i.test(abs))) {
     return { ...verdict(BLOCK, `Searching all of ${p} reaches into other apps' data and sets off macOS privacy prompts. Pick a specific folder, or use Spotlight (mdfind) to find files by name.`), path: abs };
   }
   return { ...verdict(SAFE), path: abs };
@@ -47,11 +55,12 @@ export function checkRead(p, home, { recursive = false } = {}) {
 
 /** write_file. Existing files need a yes; secrets, startup files and system folders never. */
 export function checkWrite(p, home, { exists = false } = {}) {
+  home = slash(home);
   const abs = norm(p, home), r = rel(abs, home);
   if (SECRET.some((re) => re.test(r) || re.test(abs)) || NO_WRITE.some((re) => re.test(r) || re.test(abs))) {
     return { ...verdict(BLOCK, `${p} is a protected file (keys, settings, startup scripts or an app), so I won't write to it.`), path: abs };
   }
-  if (!abs.startsWith(home + path.sep) && !abs.startsWith('/tmp/') && !abs.startsWith('/private/tmp/')) {
+  if (!abs.startsWith(home + '/') && !abs.startsWith('/tmp/') && !abs.startsWith('/private/tmp/')) {
     return { ...verdict(BLOCK, `I only write files inside your home folder, not ${p}.`), path: abs };
   }
   if (exists) return { ...verdict(ASK, `Overwrite ${r || abs}?`), path: abs };
@@ -96,7 +105,7 @@ function program(ws) {
     i++; while (i < ws.length && ws[i].startsWith('-')) i++;
     while (i < ws.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(ws[i])) i++;
   }
-  return { name: path.basename(ws[i] ?? ''), args: ws.slice(i + 1) };
+  return { name: slash(ws[i] ?? '').split('/').pop().replace(/\.(exe|com|bat|cmd)$/i, ''), args: ws.slice(i + 1) };
 }
 
 const BLOCKED_PROGRAMS = {
@@ -107,8 +116,12 @@ const BLOCKED_PROGRAMS = {
   tccutil: 'resets privacy permissions', systemsetup: 'changes system settings', dscl: 'edits user accounts', sysadminctl: 'edits user accounts',
   passwd: 'changes passwords', chflags: 'changes protected file flags', kextload: 'loads kernel code', spctl: 'changes app security checks',
   srm: 'shreds files', shred: 'shreds files', wipefs: 'erases disks', fsck: 'repairs disks', mount: 'mounts disks', umount: 'unmounts disks',
+  // Windows
+  format: 'erases disks', diskpart: 'edits disks', bcdedit: 'changes how Windows boots', vssadmin: 'deletes backups', wbadmin: 'deletes backups',
+  schtasks: 'schedules commands to run on their own', takeown: 'takes over protected files', runas: 'needs admin rights', cipher: 'can wipe disk space',
+  sc: 'installs or stops services', netsh: 'changes network and firewall settings', setx: 'changes system settings for good',
 };
-const SHELLS = new Set(['sh', 'bash', 'zsh', 'fish', 'dash', 'ksh', 'csh', 'tcsh', 'python', 'python3', 'node', 'perl', 'ruby', 'php', 'osascript', 'swift', 'deno', 'bun', 'lua']);
+const SHELLS = new Set(['powershell', 'pwsh', 'cmd', 'sh', 'bash', 'zsh', 'fish', 'dash', 'ksh', 'csh', 'tcsh', 'python', 'python3', 'node', 'perl', 'ruby', 'php', 'osascript', 'swift', 'deno', 'bun', 'lua']);
 // Read-only programs that are fine to run without asking (paths still checked).
 const READ_ONLY = new Set([
   'ls', 'pwd', 'date', 'cal', 'whoami', 'id', 'uname', 'sw_vers', 'hostname', 'uptime', 'which', 'type', 'whereis', 'echo', 'printf',
@@ -132,13 +145,20 @@ const READ_ONLY_SUB = {
 function checkSimple(text, pipeIn, home) {
   const ws = words(text);
   const prog = program(ws), args = prog.args;
-  const name = prog.name.replace(/^(mkfs|newfs|fsck)[._].*$/, '$1');
+  const name = prog.name.replace(/^(mkfs|newfs|fsck)[._].*$/, '$1').toLowerCase();
   const joined = args.join(' ');
   if (!name) return verdict(SAFE);
   if (BLOCKED_PROGRAMS[name]) return verdict(BLOCK, `\`${name}\` ${BLOCKED_PROGRAMS[name]}.`);
   if (name === 'diskutil' && /\b(erase\w*|partition\w*|zero\w*|secureErase|reformat|apfs\s+(delete|erase)\w*|unmount\w*|eject)\b/i.test(joined)) return verdict(BLOCK, '`diskutil` would erase or change a disk.');
   if (name === 'dd' && /\bof=/.test(joined)) return verdict(BLOCK, '`dd` writing to a file or disk can wipe it.');
   if (name === 'security' && /\b(find-(generic|internet)-password|dump-keychain|export|delete-keychain|unlock-keychain|set-keychain|add-trusted-cert|authorizationdb)\b/.test(joined)) return verdict(BLOCK, '`security` would read or change your saved passwords and certificates.');
+  if (name === 'reg' && /^(delete|add|import|restore|load|copy)\b/i.test(joined)) return verdict(BLOCK, '`reg` would change the Windows registry.');
+  if ((name === 'powershell' || name === 'pwsh') && /(-e(nc(odedcommand)?)?\s|iex\b|invoke-expression|downloadstring|downloadfile|invoke-webrequest|\biwr\b|start-bitstransfer|set-executionpolicy|remove-item\b.*-recurse)/i.test(joined)) return verdict(BLOCK, 'that PowerShell command downloads and runs code, or deletes whole folders.');
+  if (['rd', 'rmdir', 'del', 'erase'].includes(name) && /\/s\b/i.test(joined)) {
+    const t = args.filter((a) => !a.startsWith('/'));
+    if (!t.length || t.some((x) => { const a = norm(x.replace(/[\\/]\*(\.\*)?$/, ''), home); return a === home || /^[a-z]:\/?$/i.test(a) || path.dirname(a) === path.dirname(home) || /\/(Desktop|Documents|Downloads)$/i.test(a); })) return verdict(BLOCK, 'that would delete a whole folder like your home, Desktop or Documents.');
+    return verdict(ASK, 'This deletes folders and everything inside them.');
+  }
   if (pipeIn && SHELLS.has(name)) return verdict(BLOCK, `piping into \`${name}\` runs code that hasn't been checked (like a downloaded script).`);
   if (SHELLS.has(name) && /(^|\s)-(c|e)\b/.test(joined) && !READ_ONLY_SUB[name]?.test(joined)) {
     const inner = joined.replace(/^.*?-(c|e)\s+/, '');
@@ -193,6 +213,7 @@ function checkSimple(text, pipeIn, home) {
 
 /** run_command. SAFE runs, ASK needs the user's yes, BLOCK never runs. */
 export function classifyCommand(cmd, home) {
+  home = slash(home);
   const s = String(cmd ?? '').trim();
   if (!s) return verdict(BLOCK, 'That command is empty.');
   if (/:\s*\(\s*\)\s*\{.*:\s*\|\s*:.*\}/.test(s)) return verdict(BLOCK, 'That is a fork bomb.');
@@ -224,6 +245,7 @@ const APP_DIRS = ['/Applications/', '/System/Applications/', '/System/Library/Co
 
 /** open: websites and mail, documents and folders, and apps by name. Not scripts, installers or odd links. */
 export function checkOpen(target, home, { executable = false } = {}) {
+  home = slash(home);
   const t = String(target ?? '').trim();
   if (!t) return verdict(BLOCK, 'Nothing to open.');
   const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(t)?.[1]?.toLowerCase();
