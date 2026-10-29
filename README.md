@@ -3,15 +3,13 @@
 </p>
 
 <pre align="center">
-   ▄████████  ▄██████▄     ▄████████    ▄▄▄▄███▄▄▄▄    ▄█     ▄████████    ▄████████
-  ███    ███ ███    ███   ███    ███  ▄██▀▀▀███▀▀▀██▄ ███    ███    ███   ███    ███
-  ███    ███ ███    ███   ███    ███  ███   ███   ███ ███▌   ███    █▀    ███    █▀&nbsp;
- ▄███▄▄▄▄██▀ ███    ███   ███    ███  ███   ███   ███ ███▌  ▄███▄▄▄       ███&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-▀▀███▀▀▀▀▀   ███    ███ ▀███████████  ███   ███   ███ ███▌ ▀▀███▀▀▀     ▀███████████
-▀███████████ ███    ███   ███    ███  ███   ███   ███ ███    ███    █▄           ███
-  ███    ███ ███    ███   ███    ███  ███   ███   ███ ███    ███    ███    ▄█    ███
-  ███    ███  ▀██████▀    ███    █▀    ▀█   ███   █▀  █▀     ██████████  ▄████████▀&nbsp;
-  ███    ███&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+████████      ██████      ██████    ██      ██  ██████  ██████████    ████████
+██      ██  ██      ██  ██      ██  ████  ████    ██    ██          ██&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+██      ██  ██      ██  ██      ██  ██  ██  ██    ██    ██          ██&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+████████    ██      ██  ██████████  ██  ██  ██    ██    ████████      ██████&nbsp;&nbsp;
+██  ██      ██      ██  ██      ██  ██      ██    ██    ██                  ██
+██    ██    ██      ██  ██      ██  ██      ██    ██    ██                  ██
+██      ██    ██████    ██      ██  ██      ██  ██████  ██████████  ████████&nbsp;&nbsp;
 </pre>
 
 <p align="center">
