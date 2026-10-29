@@ -18,5 +18,8 @@
   },
   "devDependencies": {
     "esbuild": "0.28.2"
+  },
+  "overrides": {
+    "undici": "7.30.1"
   }
 }
