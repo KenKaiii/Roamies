@@ -38,7 +38,8 @@ s.messages = disk;
 await S.saveSession(s);
 const f = path.join(dir, 'sessions', `${s.id}.json`);
 assert.ok(fs.existsSync(f));
-assert.equal((fs.statSync(f).mode & 0o777).toString(8), '600', 'private file');
+// Unix permission bits don't exist on Windows (NTFS reports 0666), so only check them elsewhere.
+if (process.platform !== 'win32') assert.equal((fs.statSync(f).mode & 0o777).toString(8), '600', 'private file');
 assert.equal(fs.readdirSync(path.join(dir, 'sessions')).some((n) => n.endsWith('.tmp')), false, 'no temp leftovers');
 assert.equal((await S.loadLatestSession()).id, s.id);
 
@@ -150,5 +151,9 @@ console.log('store tests: all passed');
   assert.equal(picked.length, 10, 'respects the limit');
   assert.ok(picked.some((f) => f.text.includes('Final Cut')), 'relevant fact chosen');
   assert.equal(S4.pickFacts('', 100).length, 61, 'under the limit: everything');
+  // Regression: ids used to be 4 hex chars, so a few dozen facts could collide (~3% at 61).
+  for (let i = 0; i < 400; i++) await S4.addFact(`unique fact ${i}`);
+  const ids = S4.listFacts().map((x) => x.id);
+  assert.equal(new Set(ids).size, ids.length, 'fact ids are unique');
   console.log('fact relevance tests: passed');
 }

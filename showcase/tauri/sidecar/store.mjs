@@ -153,6 +153,12 @@ export function fitContext(messages, { budgetTokens, force = false }) {
 
 // ---------- commitments ----------
 
+/** Short id with a prefix, guaranteed not to clash with any commitment or fact already stored. */
+function newId(prefix) {
+  const taken = new Set([...loadMemory().commitments, ...loadMemory().facts].map((x) => x.id));
+  for (;;) { const id = `${prefix}${randomBytes(3).toString('hex')}`; if (!taken.has(id)) return id; }
+}
+
 let memory = null;
 const loadMemory = () => {
   if (memory) return memory;
@@ -195,7 +201,7 @@ export function nextDue() {
 export const openCommitments = () => loadMemory().commitments.filter((c) => c.status === 'open');
 
 export async function addCommitment(text, dueMs) {
-  const c = { id: `c${randomBytes(2).toString('hex')}`, text: String(text).trim().slice(0, 200), due: dueMs ?? null, createdAt: Date.now(), status: 'open', remindedAt: null };
+  const c = { id: newId('c'), text: String(text).trim().slice(0, 200), due: dueMs ?? null, createdAt: Date.now(), status: 'open', remindedAt: null };
   loadMemory().commitments.push(c);
   // Cap the file: the oldest finished entries go first; open ones are never dropped.
   const done = memory.commitments.filter((x) => x.status !== 'open');
@@ -228,7 +234,7 @@ export async function addFact(text) {
   const facts = loadMemory().facts;
   const same = facts.find((f) => f.text.toLowerCase().replace(/[^a-z0-9 ]/g, '') === key);
   if (same) { same.updatedAt = Date.now(); await saveMemory(); return same; }
-  const f = { id: `f${randomBytes(2).toString('hex')}`, text: t, createdAt: Date.now() };
+  const f = { id: newId('f'), text: t, createdAt: Date.now() };
   facts.push(f);
   if (facts.length > FACT_CAP) facts.splice(0, facts.length - FACT_CAP); // oldest go first
   await saveMemory();
