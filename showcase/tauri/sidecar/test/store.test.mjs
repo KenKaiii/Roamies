@@ -157,3 +157,27 @@ console.log('store tests: all passed');
   assert.equal(new Set(ids).size, ids.length, 'fact ids are unique');
   console.log('fact relevance tests: passed');
 }
+
+// Regression: older messages kept changing between requests, which broke the prompt cache every time.
+// Now everything before the newest request is rewritten the same way on every call.
+{
+  const S5 = await import('../store.mjs');
+  const shot = (id) => [{ role: 'assistant', content: [{ type: 'tool_call', id, name: 'take_screenshot', args: {} }] },
+    { role: 'tool', content: [{ type: 'tool_result', toolCallId: id, content: [{ type: 'image', mediaType: 'image/jpeg', data: id }] }] }];
+  const read = (id) => [{ role: 'assistant', content: [{ type: 'tool_call', id, name: 'read_window', args: {} }] },
+    { role: 'tool', content: [{ type: 'tool_result', toolCallId: id, content: 'Brave — Settings\n1 button "Back"\n2 link "Billing"' }] }];
+  const turn1 = [{ role: 'system', content: 'sys' }, { role: 'user', content: 'q1' }, ...read('r1'), ...shot('s1'), { role: 'assistant', content: 'a1' }];
+  const msgs = [...turn1, { role: 'user', content: 'q2' }, ...shot('s2'), ...shot('s3'), ...shot('s4')];
+  const f = S5.fitContext(msgs, { budgetTokens: 1e6 });
+  const datas = (JSON.stringify(f).match(/"data":"(\w+)"/g) ?? []).map((d) => d.slice(8, -1));
+  assert.deepEqual(datas, ['s3', 's4'], 'older requests lose their images; the current one keeps its newest two');
+  const oldRead = f.find((m) => m.role === 'tool' && m.content[0].toolCallId === 'r1').content[0].content;
+  assert.match(oldRead, /^Brave — Settings\n\[The full list of this window's controls was shown/, 'an old window read shrinks to its first line');
+  // The older part renders the same however many calls the current request makes: the cache prefix holds.
+  const later = S5.fitContext([...msgs, ...shot('s5')], { budgetTokens: 1e6 });
+  const upToQ2 = (x) => JSON.stringify(x.slice(0, x.findIndex((m) => m.content === 'q2') + 1));
+  assert.equal(upToQ2(later), upToQ2(f), 'earlier messages are byte-identical between calls');
+  const cur = S5.fitContext([{ role: 'system', content: 'sys' }, { role: 'user', content: 'q' }, ...read('r9')], { budgetTokens: 1e6 });
+  assert.match(cur.at(-1).content[0].content, /link "Billing"/, 'a read from the current request stays whole');
+  console.log('cache stability tests: passed');
+}

@@ -117,3 +117,15 @@ console.log('safety tests: passed');
   assert.equal(bad.length, 0, `\n${bad.join('\n')}`);
   console.log('windows safety tests: passed');
 }
+
+// Regression: asked to "show" the Delete account button, Sidekick clicked it. These clicks now need a yes.
+{
+  const { isRiskyClick } = await import('../safety.mjs');
+  for (const l of ['Delete account', 'Remove', 'Pay now', 'Buy', 'Place order', 'Checkout', 'Send', 'Send message', 'Transfer', 'Unsubscribe',
+    'Cancel subscription', 'Cancel my plan', 'Sign out', 'Log out', 'Empty Trash', 'Discard changes', 'Reset settings', 'Deactivate', 'Publish', 'Uninstall'])
+    assert.ok(isRiskyClick(l), `"${l}" needs a yes`);
+  for (const l of ['Settings', 'Save comment', 'Billing', 'Notifications', 'Projects', 'Help', 'Next', 'Open', 'Cancel', 'OK', 'Reload',
+    'Address and search bar', 'Weekly digest', 'Sending tips', 'Payment history', 'Buyer guide'])
+    assert.ok(!isRiskyClick(l), `"${l}" is a normal click`);
+  console.log('risky click tests: passed');
+}

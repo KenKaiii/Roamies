@@ -828,12 +828,12 @@
         if (guide) {
           presence.lastActive = now;
           const g = guide, d = Math.hypot(m.x - g.px, m.y - g.py);
-          if (!g.arrived && (d < k.R * 0.35 || now - g.started > 1.6)) {
+          if (!g.arrived && (d < k.R * 0.35 || now - g.started > 0.9)) {
             g.arrived = true; g.arrivedAt = now;
             m.x = g.px; m.y = g.py; m.vx = m.vy = 0;
             k.S('ping'); k.sq.kick(6);
             g.bubble = api.say(g.text, { mood: 'happy', point: g.hand });
-            setTimeout(() => g.done.resolve(), 900);
+            setTimeout(() => g.done.resolve(), 400);
           }
           if (g.arrived && now - g.arrivedAt > 45) api.endGuide();
         }

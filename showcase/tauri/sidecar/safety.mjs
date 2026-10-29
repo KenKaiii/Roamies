@@ -41,6 +41,11 @@ const norm = (p, home) => {
 };
 const rel = (abs, home) => { const h = slash(home); return abs === h ? '' : abs.startsWith(h + '/') ? abs.slice(h.length + 1) : abs; };
 
+// Buttons that delete, pay, send or sign out: Sidekick needs the user's yes before clicking one,
+// even if it was asked to "show" it. Kept in sync with RISKY in hands/main.swift.
+export const RISKY_CLICK = /\b(delete|remove|erase|destroy|wipe|reset|deactivate|close (my |your )?account|cancel (my |your |the )?(subscription|plan|membership|account|order)|unsubscribe|pay|purchase|buy|place (the |your )?order|checkout|check out|confirm (payment|order|purchase|transfer)|send|transfer|withdraw|uninstall|empty trash|discard|sign out|log out|logout|format|revoke|publish)\b/i;
+export const isRiskyClick = (label) => RISKY_CLICK.test(String(label ?? ''));
+
 /** read_file / list_files / search_files. Returns { level, reason, path }. */
 export function checkRead(p, home, { recursive = false } = {}) {
   home = slash(home);

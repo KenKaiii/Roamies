@@ -120,7 +120,9 @@ func axWindow(_ app: AXUIElement, _ w: Win?) -> AXUIElement? {
     let all = attr(app, kAXWindowsAttribute) as? [AXUIElement] ?? []
     if let w {
         let want = CGRect(x: w.x, y: w.y, width: w.w, height: w.h)
-        if let m = all.first(where: { frame($0).map { abs($0.minX - want.minX) <= 2 && abs($0.minY - want.minY) <= 2 && abs($0.width - want.width) <= 2 && abs($0.height - want.height) <= 2 } ?? false }) { return m }
+        let same = all.filter { frame($0).map { abs($0.minX - want.minX) <= 2 && abs($0.minY - want.minY) <= 2 && abs($0.width - want.width) <= 2 && abs($0.height - want.height) <= 2 } ?? false }
+        // Windows stacked at the same size (Safari's often are): the title tells them apart.
+        if let m = same.first(where: { str($0, kAXTitleAttribute) == w.title }) ?? same.first { return m }
     }
     if let f = attr(app, kAXFocusedWindowAttribute) { return (f as! AXUIElement) }
     return all.first
@@ -164,29 +166,124 @@ func walk(_ app: AXUIElement, _ w: Win? = nil, limit: Int = 260) -> [(AXUIElemen
 
 /// Any visible element whose text matches `query` (labels, headings, version numbers, plain text), best first:
 /// exact matches, then whole words, then contains; on screen in this window; smallest first (the text, not its container).
-func findText(_ app: AXUIElement, _ w: Win, _ query: String) -> [[String: Any]] {
+func findText(_ app: AXUIElement, _ w: Win, _ query: String) -> [[String: Any]] { findTextEls(app, w, query).map { $0.1 } }
+
+func findTextEls(_ app: AXUIElement, _ w: Win, _ query: String, hidden: Bool = false) -> [(AXUIElement, [String: Any])] {
     guard let root = axWindow(app, w) else { return [] }
     let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     guard !q.isEmpty else { return [] }
     let win = CGRect(x: w.x, y: w.y, width: w.w, height: w.h)
-    var hits: [(score: Int, area: CGFloat, item: [String: Any])] = []
+    var hits: [(score: Int, area: CGFloat, el: AXUIElement, item: [String: Any])] = []
     var stack: [(AXUIElement, Int)] = [(root, 0)]
     var visited = 0
     while let (el, depth) = stack.popLast(), visited < 12000 {
         visited += 1
         let texts = [kAXValueAttribute, kAXTitleAttribute, kAXDescriptionAttribute, "AXPlaceholderValue"].compactMap { str(el, $0) }
-        if let t = texts.first(where: { $0.lowercased().contains(q) }), let f = frame(el), f.width > 1, f.height > 1, win.intersects(f) {
+        if let t = texts.first(where: { $0.lowercased().contains(q) }), let f = frame(el), f.width > 1, f.height > 1, hidden || win.intersects(f) {
             let low = t.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             let score = low == q ? 0 : low.range(of: "\\b\(NSRegularExpression.escapedPattern(for: q))\\b", options: .regularExpression) != nil ? 1 : 2
             let role = str(el, kAXRoleAttribute) ?? ""
-            hits.append((score, f.width * f.height, ["text": String(t.prefix(80)), "role": ROLE_NAME[role] ?? role.replacingOccurrences(of: "AX", with: "").lowercased(),
+            hits.append((score, f.width * f.height, el, ["text": String(t.prefix(80)), "match": ["exact", "word", "partial"][score], "role": ROLE_NAME[role] ?? role.replacingOccurrences(of: "AX", with: "").lowercased(),
                                                      "bounds": [Int(f.minX), Int(f.minY), Int(f.width), Int(f.height)]]))
         }
         if depth < 60, let kids = attr(el, kAXChildrenAttribute) as? [AXUIElement] {
             for k in kids.reversed() { stack.append((k, depth + 1)) }
         }
     }
-    return hits.sorted { $0.score != $1.score ? $0.score < $1.score : $0.area < $1.area }.prefix(8).map { $0.item }
+    return hits.sorted { $0.score != $1.score ? $0.score < $1.score : $0.area < $1.area }.prefix(8).map { ($0.el, $0.item) }
+}
+
+/// Activates what a piece of text belongs to: focuses a text field, else presses the element or the nearest
+/// ancestor that can be pressed (a link around its text, a button around its label). Returns false if nothing could.
+func pressText(_ e: AXUIElement) -> Bool {
+    var cur: AXUIElement? = e
+    for _ in 0..<6 {
+        guard let c = cur else { break }
+        let role = str(c, kAXRoleAttribute) ?? ""
+        if ["AXTextField", "AXTextArea", "AXSearchField", "AXComboBox"].contains(role) {
+            AXUIElementSetAttributeValue(c, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+            if let f = frame(c) { click(CGPoint(x: f.midX, y: f.midY)) }
+            return true
+        }
+        var names: CFArray?
+        if AXUIElementCopyActionNames(c, &names) == .success, let n = names as? [String], n.contains(kAXPressAction as String),
+           AXUIElementPerformAction(c, kAXPressAction as CFString) == .success { return true }
+        cur = attr(c, kAXParentAttribute).map { $0 as! AXUIElement }
+    }
+    return false
+}
+
+// Clicks that delete, pay, send or sign out run only when the sidecar has asked the user ("confirmed").
+// Kept in sync with RISKY_CLICK in sidecar/safety.mjs.
+let RISKY = try! NSRegularExpression(pattern: #"\b(delete|remove|erase|destroy|wipe|reset|deactivate|close (my |your )?account|cancel (my |your |the )?(subscription|plan|membership|account|order)|unsubscribe|pay|purchase|buy|place (the |your )?order|checkout|check out|confirm (payment|order|purchase|transfer)|send|transfer|withdraw|uninstall|empty trash|discard|sign out|log out|logout|format|revoke|publish)\b"#, options: .caseInsensitive)
+func risky(_ s: String) -> Bool { RISKY.firstMatch(in: s, range: NSRange(s.startIndex..., in: s)) != nil }
+
+/// Text fields inside web pages (browsers, Electron apps) ignore a value set through accessibility:
+/// the page never hears about it and submits an empty field. Those need real keystrokes.
+func inWebPage(_ e: AXUIElement) -> Bool {
+    var cur = attr(e, kAXParentAttribute).map { $0 as! AXUIElement }
+    for _ in 0..<40 {
+        guard let c = cur else { return false }
+        if str(c, kAXRoleAttribute) == "AXWebArea" { return true }
+        cur = attr(c, kAXParentAttribute).map { $0 as! AXUIElement }
+    }
+    return false
+}
+
+/// A whole label or heading, not the same words buried in a paragraph.
+func wholeMatch(_ m: [String: Any], _ q: String) -> Bool {
+    (m["match"] as? String) != "partial" || ((m["text"] as? String) ?? "").count <= max(40, q.count * 3)
+}
+
+/// Visible text isn't there, but it may be further down the page: scroll the best match into view.
+/// Returns true if something was scrolled.
+func scrollToText(_ app: AXUIElement, _ w: Win, _ q: String) -> Bool {
+    let win = CGRect(x: w.x, y: w.y, width: w.w, height: w.h)
+    guard let (e, _) = findTextEls(app, w, q, hidden: true).first(where: { wholeMatch($0.1, q) && !(frame($0.0).map { win.intersects($0) } ?? false) }) else { return false }
+    var cur: AXUIElement? = e
+    for _ in 0..<4 {
+        guard let c = cur else { break }
+        if AXUIElementPerformAction(c, "AXScrollToVisible" as CFString) == .success { Thread.sleep(forTimeInterval: 0.35); return true }
+        cur = attr(c, kAXParentAttribute).map { $0 as! AXUIElement }
+    }
+    return false
+}
+
+/// Readable text in the window (headings, paragraphs, labels), top to bottom, so pages can be read without
+/// a screenshot. Visible text only, capped so a long page can't flood the reply.
+func pageText(_ app: AXUIElement, _ w: Win, cap: Int = 1800) -> [String] {
+    guard let root = axWindow(app, w) else { return [] }
+    let win = CGRect(x: w.x, y: w.y, width: w.w, height: w.h)
+    var found: [(CGFloat, CGFloat, String)] = [], seen = Set<String>(), visited = 0
+    var stack: [(AXUIElement, Int)] = [(root, 0)]
+    while let (el, depth) = stack.popLast(), visited < 8000 {
+        visited += 1
+        let role = str(el, kAXRoleAttribute) ?? ""
+        if role == "AXStaticText" || role == "AXHeading", let t = str(el, kAXValueAttribute) ?? str(el, kAXTitleAttribute) ?? str(el, kAXDescriptionAttribute),
+           let f = frame(el), win.intersects(f) {
+            let line = t.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression).trimmingCharacters(in: .whitespaces)
+            if line.count >= 2, seen.insert(line).inserted { found.append((f.minY, f.minX, String(line.prefix(160)))) }
+        }
+        if depth < 60, let kids = attr(el, kAXChildrenAttribute) as? [AXUIElement] { for k in kids.reversed() { stack.append((k, depth + 1)) } }
+    }
+    var out: [String] = [], total = 0
+    for (_, _, t) in found.sorted(by: { abs($0.0 - $1.0) > 4 ? $0.0 < $1.0 : $0.1 < $1.1 }) {
+        if total + t.count > cap { break }
+        out.append(t); total += t.count + 1
+    }
+    return out
+}
+
+/// After a click or key press the page may be loading: re-read until the controls stop changing (max ~1.2 s).
+func settle(_ app: AXUIElement, _ w: Win) -> [(AXUIElement, [String: Any])] {
+    var prev: [String] = [], cur = walk(app, w)
+    for _ in 0..<4 {
+        Thread.sleep(forTimeInterval: 0.2)
+        prev = cur.map { "\($0.1["role"] ?? "")|\($0.1["label"] ?? "")" }
+        cur = walk(app, w)
+        if cur.map({ "\($0.1["role"] ?? "")|\($0.1["label"] ?? "")" }) == prev { break }
+    }
+    return cur
 }
 
 func axApp(_ w: Win) -> AXUIElement {
@@ -305,8 +402,9 @@ case "select":
 case "ui":
     guard AXIsProcessTrusted() else { fail("Roamies needs Accessibility permission to read other apps.") }
     guard args.count >= 2, let w = resolve(args[1]) else { fail("No matching window is open.") }
-    let items = walk(axApp(w), w).map { $0.1 }
-    out(["ok": true, "window": winInfo(w), "controls": items, "note": items.isEmpty ? "This app shares no controls. Use a screenshot plus click at coordinates instead." : ""])
+    let uiApp = axApp(w)
+    let items = walk(uiApp, w).map { $0.1 }
+    out(["ok": true, "window": winInfo(w), "controls": items, "texts": pageText(uiApp, w), "note": items.isEmpty ? "This app shares no controls. Use a screenshot plus click at coordinates instead." : ""])
 
 case "locate-control":
     guard AXIsProcessTrusted() else { fail("Roamies needs Accessibility permission to read other apps.") }
@@ -328,11 +426,18 @@ case "find-text":
     else if let w = resolve(t) { wins = [w] } else { wins = [] }
     if wins.isEmpty { fail("No matching window is open.") }
     var all: [[String: Any]] = []
-    for (z, w) in wins.prefix(12).enumerated() {
-        for (i, m) in findText(axApp(w), w, args[2]).enumerated() {
-            var m = m; m["window"] = winInfo(w); m["rank"] = z * 100 + i; all.append(m)
+    func search() {
+        all = []
+        for (z, w) in wins.prefix(12).enumerated() {
+            for (i, m) in findText(axApp(w), w, args[2]).enumerated() {
+                var m = m; m["window"] = winInfo(w); m["rank"] = z * 100 + i; all.append(m)
+            }
         }
     }
+    search()
+    // "scroll": nothing whole on screen, so bring it into view in the frontmost window that has it, then look again.
+    if args.count >= 4, args[3] == "scroll", !all.contains(where: { wholeMatch($0, args[2]) }),
+       wins.prefix(12).contains(where: { scrollToText(axApp($0), $0, args[2]) }) { search() }
     // Exact text in any window beats a partial match in the front one.
     let exact = all.filter { (($0["text"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == args[2].trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
     let ordered = (exact + all.filter { m in !exact.contains { ($0["rank"] as? Int) == (m["rank"] as? Int) } }).prefix(8)
@@ -343,15 +448,23 @@ case "act":
     guard args.count >= 2, let data = args[1].data(using: .utf8),
           let plan = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
           let steps = plan["steps"] as? [[String: Any]] else { fail("bad plan") }
-    let target = (plan["app"] as? String).map { "app:\($0)" } ?? "front"
+    let target = (plan["window"] as? Int).map { "window:\($0)" } ?? (plan["app"] as? String).map { "app:\($0)" } ?? "front"
     guard let w = resolve(target) else { fail("No matching window is open.") }
     if let name = handsOff(w.pid) {
         fail("Blocked for safety: I can point at things in \(name), but I never type or click in it. Show the user where to click instead.")
     }
     // Bring the target app forward so keystrokes land there, not in Roamies.
-    NSRunningApplication(processIdentifier: w.pid)?.activate(options: [])
-    Thread.sleep(forTimeInterval: 0.35)
+    if NSWorkspace.shared.frontmostApplication?.processIdentifier != w.pid {
+        NSRunningApplication(processIdentifier: w.pid)?.activate(options: [])
+        Thread.sleep(forTimeInterval: 0.3)
+    }
     let app = axApp(w)
+    // With several windows of one app, keystrokes go to its main window: make that the one we read.
+    if let axw = axWindow(app, w), (attr(axw, kAXMainAttribute) as? Bool) != true {
+        AXUIElementPerformAction(axw, kAXRaiseAction as CFString)
+        AXUIElementSetAttributeValue(axw, kAXMainAttribute as CFString, kCFBooleanTrue)
+        Thread.sleep(forTimeInterval: 0.15)
+    }
     var controls = walk(app, w)
     var done: [String] = []
     func el(_ s: [String: Any]) -> (AXUIElement, [String: Any])? {
@@ -373,10 +486,14 @@ case "act":
         switch what {
         case "focus", "click", "set", "press_button":
             guard let (e, info) = el(s) else { out(["ok": false, "error": "Step \(i + 1): no control with id \(s["id"] ?? "?"). Call read_window again.", "done": done]) }
+            if (what == "click" || what == "press_button"), risky((info["label"] as? String) ?? ""), (s["confirmed"] as? Bool) != true {
+                out(["ok": false, "error": "Stopped before clicking \"\(info["label"] ?? "")\": it could delete, pay, send or sign out, and the user hasn't said yes to that. Tell them, and let them click it themselves.", "done": done])
+            }
             if what == "set", let text = s["text"] as? String {
-                // Prefer setting the value directly; fall back to focusing and typing (web forms often need real keystrokes).
+                // Native fields take the value directly; web page fields need real keystrokes or the page never sees it.
                 AXUIElementSetAttributeValue(e, kAXFocusedAttribute as CFString, kCFBooleanTrue)
-                let r = AXUIElementSetAttributeValue(e, kAXValueAttribute as CFString, text as CFString)
+                let web = inWebPage(e)
+                let r: AXError = web ? .failure : AXUIElementSetAttributeValue(e, kAXValueAttribute as CFString, text as CFString)
                 if r != .success || str(e, kAXValueAttribute) != text {
                     if let f = frame(e) { click(CGPoint(x: f.midX, y: f.midY)) }
                     _ = pressKey("cmd+a"); typeText(text)
@@ -386,12 +503,40 @@ case "act":
                 AXUIElementSetAttributeValue(e, kAXFocusedAttribute as CFString, kCFBooleanTrue)
                 if let f = frame(e) { click(CGPoint(x: f.midX, y: f.midY)) }
                 done.append("focused \(info["label"] ?? "field")")
+            } else if ["AXTextField", "AXTextArea", "AXSearchField", "AXComboBox"].contains(str(e, kAXRoleAttribute) ?? "") {
+                // "Pressing" a text box doesn't put the cursor in it; focus and click so typing lands there.
+                AXUIElementSetAttributeValue(e, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+                if let f = frame(e) { click(CGPoint(x: f.midX, y: f.midY)) }
+                done.append("clicked \(info["label"] ?? "field")")
             } else {
                 if AXUIElementPerformAction(e, kAXPressAction as CFString) != .success, let f = frame(e) { click(CGPoint(x: f.midX, y: f.midY)) }
                 done.append("clicked \(info["label"] ?? "control")")
             }
             Thread.sleep(forTimeInterval: 0.15)
             if what == "click" || what == "press_button" { controls = walk(app, w) }
+        case "click_text":
+            // Click by the words on screen: no read_window needed first. Exact text wins over partial.
+            // A whole label or heading, not words buried in a paragraph.
+            let q = s["text"] as? String ?? ""
+            var hit = findTextEls(app, w, q).first(where: { wholeMatch($0.1, q) })
+            if hit == nil, !q.isEmpty, scrollToText(app, w, q) { hit = findTextEls(app, w, q).first(where: { wholeMatch($0.1, q) }) }
+            guard !q.isEmpty, let (e, info) = hit else {
+                out(["ok": false, "error": "Step \(i + 1): no visible text \"\(s["text"] ?? "")\" in \(w.app). Check the exact words with a screenshot or read_window.", "done": done])
+            }
+            if risky((info["text"] as? String) ?? q), (s["confirmed"] as? Bool) != true {
+                out(["ok": false, "error": "Stopped before clicking \"\(info["text"] ?? q)\": it could delete, pay, send or sign out, and the user hasn't said yes to that. Tell them, and let them click it themselves.", "done": done])
+            }
+            if !pressText(e) {
+                guard let f = frame(e) else { out(["ok": false, "error": "Step \(i + 1): couldn't click \"\(q)\".", "done": done]) }
+                let p = CGPoint(x: f.midX, y: f.midY)
+                if let under = windows().first(where: { CGRect(x: $0.x, y: $0.y, width: $0.w, height: $0.h).contains(p) }), let name = handsOff(under.pid) {
+                    out(["ok": false, "error": "Blocked for safety: that spot is on \(name), and I never click in it.", "done": done])
+                }
+                click(p)
+            }
+            done.append("clicked \"\(info["text"] ?? q)\"")
+            Thread.sleep(forTimeInterval: 0.15)
+            controls = walk(app, w)
         case "type":
             typeText(s["text"] as? String ?? ""); done.append("typed text")
         case "key":
@@ -407,6 +552,14 @@ case "act":
         default:
             out(["ok": false, "error": "Step \(i + 1): unknown action \(what)", "done": done])
         }
+    }
+    // A click or key may have changed the page: hand back what's there now, so no read_window round trip is needed.
+    let changing = steps.contains { ["click", "click_text", "press_button", "key", "click_at"].contains($0["do"] as? String ?? "") }
+    if changing {
+        let w2 = resolve(target) ?? w
+        let app2 = w2.pid == w.pid ? app : axApp(w2)
+        let now = settle(app2, w2).map { $0.1 }
+        out(["ok": true, "done": done, "window": winInfo(w2), "controls": now, "texts": pageText(app2, w2, cap: 1200)])
     }
     out(["ok": true, "done": done, "window": winInfo(w)])
 
