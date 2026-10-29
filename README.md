@@ -1,13 +1,17 @@
+<p align="center">
+  <img src="showcase/tauri/src-tauri/icons/128x128@2x.png" width="128" alt="Roamies icon">
+</p>
+
 <pre align="center">
    ▄████████  ▄██████▄     ▄████████    ▄▄▄▄███▄▄▄▄    ▄█     ▄████████    ▄████████
   ███    ███ ███    ███   ███    ███  ▄██▀▀▀███▀▀▀██▄ ███    ███    ███   ███    ███
-  ███    ███ ███    ███   ███    ███  ███   ███   ███ ███▌   ███    █▀    ███    █▀
- ▄███▄▄▄▄██▀ ███    ███   ███    ███  ███   ███   ███ ███▌  ▄███▄▄▄       ███
+  ███    ███ ███    ███   ███    ███  ███   ███   ███ ███▌   ███    █▀    ███    █▀&nbsp;
+ ▄███▄▄▄▄██▀ ███    ███   ███    ███  ███   ███   ███ ███▌  ▄███▄▄▄       ███&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
 ▀▀███▀▀▀▀▀   ███    ███ ▀███████████  ███   ███   ███ ███▌ ▀▀███▀▀▀     ▀███████████
 ▀███████████ ███    ███   ███    ███  ███   ███   ███ ███    ███    █▄           ███
   ███    ███ ███    ███   ███    ███  ███   ███   ███ ███    ███    ███    ▄█    ███
-  ███    ███  ▀██████▀    ███    █▀    ▀█   ███   █▀  █▀     ██████████  ▄████████▀
-  ███    ███
+  ███    ███  ▀██████▀    ███    █▀    ▀█   ███   █▀  █▀     ██████████  ▄████████▀&nbsp;
+  ███    ███&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
 </pre>
 
 <p align="center">
@@ -86,21 +90,10 @@ npm install @kenkaiiii/gg-ai @kenkaiiii/gg-agent
 
 | Path | What |
 |---|---|
-| `showcase/tauri/` | The desktop app (Tauri 2): overlay shell, voice and hands helpers, agent sidecar |
-| `showcase/roamies/` | The shared JS: physics, rendering, expressions, bubbles, tool animations, sounds |
+| `showcase/tauri/src-tauri/` | The desktop app shell (Tauri 2, Rust) and the macOS voice and hands helpers (Swift) |
+| `showcase/tauri/sidecar/` | Sidekick's brain: the gg-framework agent, its tools, memory and tests |
+| `showcase/roamies/` | The creatures: physics, rendering, expressions, bubbles, tool animations, sounds |
 | `showcase/onboarding/` | The setup guide |
-
-### Signing and releases
-
-On macOS, `build.sh` signs with `APPLE_SIGNING_IDENTITY` if set, otherwise the first "Developer ID
-Application" certificate in your keychain, otherwise ad-hoc. Signing with a stable identity keeps macOS
-permissions (microphone, screen recording, accessibility) across rebuilds; ad-hoc builds re-ask each time.
-
-Push a version tag (`git tag v0.1.0 && git push origin v0.1.0`) or run the **Release** workflow from the
-Actions tab. It builds a signed and notarized macOS DMG for Apple silicon and Intel, plus a Windows
-installer, and attaches them to a draft release for you to publish. The signing credentials are GitHub
-Actions secrets (`APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `KEYCHAIN_PASSWORD`, `APPLE_ID`,
-`APPLE_PASSWORD`, `APPLE_TEAM_ID`), never files in the repo.
 
 ## License
 

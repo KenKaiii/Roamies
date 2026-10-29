@@ -23,4 +23,5 @@ macOS DMG (Apple silicon and Intel) and an unsigned Windows installer into a dra
 
 - CI lives in `.github/workflows/ci.yml` and must stay green.
 - Never commit with `--no-verify`.
+- Never commit experiments (prototypes, test pages, design tools). They stay local and are listed in `.git/info/exclude`; check `git status` before every commit.
 - Never commit secrets (Apple ID passwords, certificates, `~/.gg/auth.json`); signing credentials go in GitHub Actions secrets.
