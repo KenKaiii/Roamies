@@ -114,34 +114,79 @@ let ROLE_NAME: [String: String] = ["AXButton": "button", "AXTextField": "text fi
                                    "AXComboBox": "combo box", "AXMenuButton": "menu button", "AXLink": "link", "AXSlider": "slider", "AXTab": "tab",
                                    "AXDisclosureTriangle": "disclosure", "AXIncrementor": "stepper"]
 
-/// Walks the focused window's tree and numbers every control. Ids are stable for the same walk, so
+/// The app's accessibility window that is the same window as `w` (by position and size), so apps with
+/// several windows are read from the one that was asked for, not whichever has focus.
+func axWindow(_ app: AXUIElement, _ w: Win?) -> AXUIElement? {
+    let all = attr(app, kAXWindowsAttribute) as? [AXUIElement] ?? []
+    if let w {
+        let want = CGRect(x: w.x, y: w.y, width: w.w, height: w.h)
+        if let m = all.first(where: { frame($0).map { abs($0.minX - want.minX) <= 2 && abs($0.minY - want.minY) <= 2 && abs($0.width - want.width) <= 2 && abs($0.height - want.height) <= 2 } ?? false }) { return m }
+    }
+    if let f = attr(app, kAXFocusedWindowAttribute) { return (f as! AXUIElement) }
+    return all.first
+}
+
+/// Walks the window's tree and numbers every control. Ids are stable for the same walk, so
 /// `act` re-walks and finds the same element by id (checking its label still matches).
-func walk(_ app: AXUIElement, limit: Int = 260) -> [(AXUIElement, [String: Any])] {
-    var win = attr(app, kAXFocusedWindowAttribute)
-    if win == nil, let ws = attr(app, kAXWindowsAttribute) as? [AXUIElement] { win = ws.first }
-    guard let root = win else { return [] }
-    var found: [(AXUIElement, [String: Any])] = []
+/// Controls scrolled out of view come after the visible ones (marked offscreen), so long pages and chat
+/// histories can't push what's actually on screen off the list.
+func walk(_ app: AXUIElement, _ w: Win? = nil, limit: Int = 260) -> [(AXUIElement, [String: Any])] {
+    guard let root = axWindow(app, w) else { return [] }
+    let view = w.map { CGRect(x: $0.x, y: $0.y, width: $0.w, height: $0.h) } ?? frame(root) ?? .infinite
+    var found: [(AXUIElement, [String: Any])] = [], hidden: [(AXUIElement, [String: Any])] = []
     var stack: [(AXUIElement, Int)] = [(root as! AXUIElement, 0)]
     var visited = 0
-    while let (el, depth) = stack.popLast(), found.count < limit, visited < 6000 {
+    while let (el, depth) = stack.popLast(), found.count < limit, visited < 8000 {
         visited += 1
         let role = str(el, kAXRoleAttribute) ?? ""
         if INTERACTIVE.contains(role), let f = frame(el), f.width > 1, f.height > 1 {
             if (attr(el, kAXEnabledAttribute) as? Bool) != false {
                 var label = str(el, kAXTitleAttribute) ?? str(el, kAXDescriptionAttribute) ?? str(el, "AXPlaceholderValue") ?? str(el, kAXHelpAttribute) ?? ""
                 if label.isEmpty, let t = attr(el, kAXTitleUIElementAttribute) { label = str(t as! AXUIElement, kAXValueAttribute) ?? "" }
-                var item: [String: Any] = ["id": found.count + 1, "role": ROLE_NAME[role] ?? role, "label": String(label.prefix(80)),
+                var item: [String: Any] = ["role": ROLE_NAME[role] ?? role, "label": String(label.prefix(80)),
                                            "bounds": [Int(f.minX), Int(f.minY), Int(f.width), Int(f.height)]]
                 if role != "AXSecureTextField", let v = str(el, kAXValueAttribute), !v.isEmpty { item["value"] = String(v.prefix(80)) }
                 if (attr(el, kAXFocusedAttribute) as? Bool) == true { item["focused"] = true }
-                found.append((el, item))
+                // Mostly on screen counts as visible; a sliver at the edge doesn't.
+                let seen = view.intersection(f)
+                if !seen.isNull, seen.width * seen.height >= f.width * f.height * 0.5 { found.append((el, item)) }
+                else if hidden.count < 40 { item["offscreen"] = true; hidden.append((el, item)) }
             }
         }
         if depth < 40, let kids = attr(el, kAXChildrenAttribute) as? [AXUIElement] {
             for k in kids.reversed() { stack.append((k, depth + 1)) }
         }
     }
-    return found
+    return (found + hidden.prefix(max(0, limit - found.count))).enumerated().map { i, c in
+        var item = c.1; item["id"] = i + 1; return (c.0, item)
+    }
+}
+
+/// Any visible element whose text matches `query` (labels, headings, version numbers, plain text), best first:
+/// exact matches, then whole words, then contains; on screen in this window; smallest first (the text, not its container).
+func findText(_ app: AXUIElement, _ w: Win, _ query: String) -> [[String: Any]] {
+    guard let root = axWindow(app, w) else { return [] }
+    let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    guard !q.isEmpty else { return [] }
+    let win = CGRect(x: w.x, y: w.y, width: w.w, height: w.h)
+    var hits: [(score: Int, area: CGFloat, item: [String: Any])] = []
+    var stack: [(AXUIElement, Int)] = [(root, 0)]
+    var visited = 0
+    while let (el, depth) = stack.popLast(), visited < 12000 {
+        visited += 1
+        let texts = [kAXValueAttribute, kAXTitleAttribute, kAXDescriptionAttribute, "AXPlaceholderValue"].compactMap { str(el, $0) }
+        if let t = texts.first(where: { $0.lowercased().contains(q) }), let f = frame(el), f.width > 1, f.height > 1, win.intersects(f) {
+            let low = t.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let score = low == q ? 0 : low.range(of: "\\b\(NSRegularExpression.escapedPattern(for: q))\\b", options: .regularExpression) != nil ? 1 : 2
+            let role = str(el, kAXRoleAttribute) ?? ""
+            hits.append((score, f.width * f.height, ["text": String(t.prefix(80)), "role": ROLE_NAME[role] ?? role.replacingOccurrences(of: "AX", with: "").lowercased(),
+                                                     "bounds": [Int(f.minX), Int(f.minY), Int(f.width), Int(f.height)]]))
+        }
+        if depth < 60, let kids = attr(el, kAXChildrenAttribute) as? [AXUIElement] {
+            for k in kids.reversed() { stack.append((k, depth + 1)) }
+        }
+    }
+    return hits.sorted { $0.score != $1.score ? $0.score < $1.score : $0.area < $1.area }.prefix(8).map { $0.item }
 }
 
 func axApp(_ w: Win) -> AXUIElement {
@@ -199,6 +244,24 @@ func click(_ p: CGPoint) {
     }
 }
 
+// Apps Sidekick may point at but never type or click in: typing into a terminal would run commands
+// past every check, and these others hold passwords or security settings.
+let HANDS_OFF: [String: String] = [
+    "com.apple.Terminal": "Terminal", "com.googlecode.iterm2": "iTerm", "dev.warp.Warp-Stable": "Warp", "dev.warp.Warp": "Warp",
+    "com.mitchellh.ghostty": "Ghostty", "net.kovidgoyal.kitty": "kitty", "org.alacritty": "Alacritty", "io.alacritty": "Alacritty",
+    "com.github.wez.wezterm": "WezTerm", "co.zeit.hyper": "Hyper", "org.tabby": "Tabby", "com.raphaelamorim.rio": "Rio",
+    "com.apple.keychainaccess": "Keychain Access", "com.apple.Passwords": "Passwords", "com.apple.ScriptEditor2": "Script Editor",
+    "com.apple.Automator": "Automator", "com.apple.systempreferences": "System Settings", "com.apple.Settings": "System Settings",
+    "com.1password.1password": "1Password", "com.agilebits.onepassword7": "1Password", "com.bitwarden.desktop": "Bitwarden",
+    "com.apple.dt.Xcode": "Xcode", "com.apple.Console": "Console", "com.apple.ActivityMonitor": "Activity Monitor",
+    "com.apple.DiskUtility": "Disk Utility", "com.apple.MigrateAssistant": "Migration Assistant", "com.apple.installer": "Installer",
+]
+
+func handsOff(_ pid: pid_t) -> String? {
+    guard let id = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier else { return nil }
+    return HANDS_OFF[id]
+}
+
 // ---------- commands ----------
 
 let args = Array(CommandLine.arguments.dropFirst())
@@ -242,15 +305,38 @@ case "select":
 case "ui":
     guard AXIsProcessTrusted() else { fail("Roamies needs Accessibility permission to read other apps.") }
     guard args.count >= 2, let w = resolve(args[1]) else { fail("No matching window is open.") }
-    let items = walk(axApp(w)).map { $0.1 }
+    let items = walk(axApp(w), w).map { $0.1 }
     out(["ok": true, "window": winInfo(w), "controls": items, "note": items.isEmpty ? "This app shares no controls. Use a screenshot plus click at coordinates instead." : ""])
 
 case "locate-control":
     guard AXIsProcessTrusted() else { fail("Roamies needs Accessibility permission to read other apps.") }
     guard args.count >= 3, let w = resolve(args[1]), let id = Int(args[2]) else { fail("usage: locate-control <target> <id>") }
-    let items = walk(axApp(w))
+    let items = walk(axApp(w), w)
     guard id >= 1, id <= items.count else { fail("No control \(id) in \(w.app). Read the window again.") }
     out(["ok": true, "window": winInfo(w), "control": items[id - 1].1])
+
+case "find-text":
+    // Looks through every window of the app ("app:X"), or every window on screen ("screen"), front to back,
+    // because the text is often in a window that isn't the frontmost one.
+    guard AXIsProcessTrusted() else { fail("Roamies needs Accessibility permission to read other apps.") }
+    guard args.count >= 3 else { fail("usage: find-text <target> <text>") }
+    let t = args[1]
+    var wins: [Win]
+    if t == "screen" { wins = windows().filter { !isRoamies($0.pid) } }
+    else if t == "front", let f = resolve("front") { wins = windows().filter { $0.pid == f.pid } }
+    else if t.hasPrefix("app:") { let name = String(t.dropFirst(4)); wins = windows().filter { appMatches($0.app, name) } }
+    else if let w = resolve(t) { wins = [w] } else { wins = [] }
+    if wins.isEmpty { fail("No matching window is open.") }
+    var all: [[String: Any]] = []
+    for (z, w) in wins.prefix(12).enumerated() {
+        for (i, m) in findText(axApp(w), w, args[2]).enumerated() {
+            var m = m; m["window"] = winInfo(w); m["rank"] = z * 100 + i; all.append(m)
+        }
+    }
+    // Exact text in any window beats a partial match in the front one.
+    let exact = all.filter { (($0["text"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == args[2].trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+    let ordered = (exact + all.filter { m in !exact.contains { ($0["rank"] as? Int) == (m["rank"] as? Int) } }).prefix(8)
+    out(["ok": true, "matches": Array(ordered)])
 
 case "act":
     guard AXIsProcessTrusted() else { fail("Roamies needs Accessibility permission to control other apps.") }
@@ -259,11 +345,14 @@ case "act":
           let steps = plan["steps"] as? [[String: Any]] else { fail("bad plan") }
     let target = (plan["app"] as? String).map { "app:\($0)" } ?? "front"
     guard let w = resolve(target) else { fail("No matching window is open.") }
+    if let name = handsOff(w.pid) {
+        fail("Blocked for safety: I can point at things in \(name), but I never type or click in it. Show the user where to click instead.")
+    }
     // Bring the target app forward so keystrokes land there, not in Roamies.
     NSRunningApplication(processIdentifier: w.pid)?.activate(options: [])
     Thread.sleep(forTimeInterval: 0.35)
     let app = axApp(w)
-    var controls = walk(app)
+    var controls = walk(app, w)
     var done: [String] = []
     func el(_ s: [String: Any]) -> (AXUIElement, [String: Any])? {
         guard let id = s["id"] as? Int, id >= 1, id <= controls.count else { return nil }
@@ -271,6 +360,16 @@ case "act":
     }
     for (i, s) in steps.enumerated() {
         let what = s["do"] as? String ?? ""
+        // An earlier step may have switched apps (a click, cmd+tab, Spotlight); check before every action.
+        if what != "wait", let front = NSWorkspace.shared.frontmostApplication, let name = handsOff(front.processIdentifier) {
+            out(["ok": false, "error": "Blocked for safety: \(name) came to the front, and I never type or click in it.", "done": done])
+        }
+        if what == "click_at", let x = s["x"] as? Double, let y = s["y"] as? Double {
+            let gx = (s["global"] as? Bool ?? false) ? x : w.x + x, gy = (s["global"] as? Bool ?? false) ? y : w.y + y
+            if let under = windows().first(where: { CGRect(x: $0.x, y: $0.y, width: $0.w, height: $0.h).contains(CGPoint(x: gx, y: gy)) }), let name = handsOff(under.pid) {
+                out(["ok": false, "error": "Blocked for safety: that spot is on \(name), and I never click in it.", "done": done])
+            }
+        }
         switch what {
         case "focus", "click", "set", "press_button":
             guard let (e, info) = el(s) else { out(["ok": false, "error": "Step \(i + 1): no control with id \(s["id"] ?? "?"). Call read_window again.", "done": done]) }
@@ -292,7 +391,7 @@ case "act":
                 done.append("clicked \(info["label"] ?? "control")")
             }
             Thread.sleep(forTimeInterval: 0.15)
-            if what == "click" || what == "press_button" { controls = walk(app) }
+            if what == "click" || what == "press_button" { controls = walk(app, w) }
         case "type":
             typeText(s["text"] as? String ?? ""); done.append("typed text")
         case "key":

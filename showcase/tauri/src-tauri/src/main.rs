@@ -732,8 +732,49 @@ fn handle_voice(app: &AppHandle, msg: Value) {
     }
 }
 
+/// Checks the signed update feed (latest.json on the newest GitHub release). With `install`, downloads,
+/// verifies the signature, swaps the app in place and restarts. Progress goes to the sidecar as update_status.
+fn update(app: &AppHandle, install: bool) {
+    use tauri_plugin_updater::UpdaterExt;
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let status = |state: &str, extra: Value| {
+            let mut m = json!({ "type": "update_status", "state": state });
+            if let (Some(m), Some(e)) = (m.as_object_mut(), extra.as_object()) {
+                m.extend(e.clone());
+            }
+            to_sidecar(&app, &m);
+        };
+        let found = match app.updater() {
+            Ok(u) => u.check().await,
+            Err(e) => Err(e),
+        };
+        match found {
+            Ok(None) => status("none", json!({})),
+            Ok(Some(u)) if !install => status("available", json!({ "version": u.version })),
+            Ok(Some(u)) => {
+                status("downloading", json!({ "version": u.version }));
+                match u.download_and_install(|_, _| {}, || {}).await {
+                    Ok(()) => {
+                        status("installed", json!({ "version": u.version }));
+                        tokio_sleep(Duration::from_millis(1500)).await;
+                        app.restart();
+                    }
+                    Err(e) => status("error", json!({ "error": e.to_string() })),
+                }
+            }
+            Err(e) => status("error", json!({ "error": e.to_string() })),
+        }
+    });
+}
+
+async fn tokio_sleep(d: Duration) {
+    let _ = tauri::async_runtime::spawn_blocking(move || thread::sleep(d)).await;
+}
+
 fn handle_sidecar(app: &AppHandle, msg: Value) {
     match msg.get("type").and_then(Value::as_str) {
+        Some("update") => update(app, msg.get("install").and_then(Value::as_bool) == Some(true)),
         Some("menu") => {
             if let Some(items) = msg.get("items").and_then(Value::as_array) {
                 set_menu(app, items);
@@ -806,6 +847,7 @@ fn main() {
             let app2 = app.clone();
             let _ = app.run_on_main_thread(move || to_overlays(&app2, &json!({ "kind": "summon" })));
         }))
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Sidecar(Mutex::new(None)))
         .manage(Roster(Mutex::new(vec!["sidekick".into()])))
         .manage(Voice(Mutex::new(None), AtomicUsize::new(0)))

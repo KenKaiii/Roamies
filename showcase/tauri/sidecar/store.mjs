@@ -94,7 +94,7 @@ export async function pruneSessions() {
 
 // Screenshots stay in memory for the current turn only: never written to disk. The marker says the
 // image was really seen, so a resumed session doesn't decide it never got one.
-const SHOT = '[You saw a screenshot here earlier; the image is no longer attached. Trust what you said about it then.]';
+const SHOT = "[You saw a screenshot here earlier; the image is no longer attached. What you said about it then still stands, but the screen has likely changed since: look again before describing or pointing at what's on it now.]";
 const stripImages = (content) =>
   Array.isArray(content) ? content.map((p) => (p?.type === 'image' ? { type: 'text', text: SHOT } : p)) : content;
 export function forDisk(messages) {

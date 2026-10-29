@@ -28,3 +28,20 @@ export function rematch(expected, fresh, id) {
   hits.sort((a, b) => Math.hypot(a.bounds[0] - ex, a.bounds[1] - ey) - Math.hypot(b.bounds[0] - ex, b.bounds[1] - ey));
   return hits[0] ?? null;
 }
+
+const OLD_LOOK = "That's from before the user's latest message, and the screen may have changed since (another page, tab or app). Look again first.";
+
+/** Why a screenshot can't be used to point any more, or null if it still can. */
+export function shotProblem(shot, turn) {
+  if (!shot) return 'Take a screenshot first, then give x, y in its pixels.';
+  if (shot.turn !== turn) return `The screenshot: ${OLD_LOOK}`;
+  if (shot.used) return 'Something was clicked or opened since that screenshot, so it may be out of date. Take a new screenshot.';
+  return null;
+}
+
+/** Why a read_window list can't be used for this window any more, or null if it still can. */
+export function readProblem(read, windowId, turn) {
+  if (!read || read.win !== windowId) return 'Call read_window on this window first, then use its ids.';
+  if (read.turn !== turn) return `The read_window list: ${OLD_LOOK}`;
+  return null;
+}

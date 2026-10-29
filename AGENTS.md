@@ -21,6 +21,12 @@ macOS DMG (Apple silicon and Intel) and an unsigned Windows installer into a dra
 
 ## Rules
 
+- Every tool that touches files, commands, URLs or other apps goes through `showcase/tauri/sidecar/safety.mjs`
+  (tested in `test/safety.test.mjs`); the macOS helper also refuses to type or click in the apps in `HANDS_OFF`.
+  Add a test case with every rule change.
+- In-app updates read `latest.json` from the newest published release, signed with the key in the
+  `TAURI_SIGNING_PRIVATE_KEY` secret. Keep `plugins.updater.pubkey` in `tauri.conf.json` matching it.
+
 - CI lives in `.github/workflows/ci.yml` and must stay green.
 - Never commit with `--no-verify`.
 - Never commit experiments (prototypes, test pages, design tools). They stay local and are listed in `.git/info/exclude`; check `git status` before every commit.

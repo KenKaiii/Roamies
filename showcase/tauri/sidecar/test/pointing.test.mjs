@@ -42,3 +42,17 @@ console.log('screenshot coordinate tests: passed');
   assert.ok(sameBounds([0, 39, 1800, 1066], [0, 40, 1800, 1066]) && !sameBounds([0, 39, 1800, 1066], [200, 39, 1800, 1066]));
   console.log('stale control id tests: passed');
 }
+
+// Regression: after switching pages or apps, Sidekick pointed using what it saw for the previous request.
+{
+  const { shotProblem, readProblem } = await import('../pointing.mjs');
+  assert.match(shotProblem(null, 3), /Take a screenshot first/);
+  assert.equal(shotProblem({ turn: 3 }, 3), null, 'a screenshot from this request is fine');
+  assert.match(shotProblem({ turn: 2 }, 3), /before the user's latest message/, 'a screenshot from the last request is refused');
+  assert.match(shotProblem({ turn: 3, used: true }, 3), /clicked or opened since/, 'a screenshot taken before a click is refused');
+  assert.equal(readProblem({ win: 7, turn: 3 }, 7, 3), null, 'this window, this request');
+  assert.match(readProblem({ win: 7, turn: 2 }, 7, 3), /before the user's latest message/, 'last request: read again');
+  assert.match(readProblem({ win: 7, turn: 3 }, 9, 3), /read_window on this window first/, 'another window: read it first');
+  assert.match(readProblem(null, 9, 3), /read_window on this window first/);
+  console.log('freshness tests: passed');
+}

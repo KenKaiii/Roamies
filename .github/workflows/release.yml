@@ -1,6 +1,8 @@
 # Release: tag a version (e.g. `git tag v0.1.0 && git push origin v0.1.0`) or run it by hand.
 # Builds a signed + notarized macOS DMG (Apple silicon and Intel) and a Windows installer, then attaches
 # them to a draft GitHub release for you to review and publish. CI (ci.yml) stays on Linux only.
+# Each build also uploads a signed update bundle; the manifest job writes latest.json, the feed the
+# in-app updater reads from the newest published release.
 name: Release
 
 on:
@@ -93,6 +95,9 @@ jobs:
           TAURI_BUNDLES: ${{ matrix.bundles }}
           # Tauri skips the Finder layout step (background, icon spots) when CI=true; Actions runners can run it.
           TAURI_BUNDLER_DMG_IGNORE_CI: 'true'
+          # Signs the update bundles (minisign); the public half is plugins.updater.pubkey in tauri.conf.json.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -127,6 +132,49 @@ jobs:
           [[ "$TAG" == v* ]] || TAG="v$(node -p "require('./src-tauri/tauri.conf.json').version")"
           gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --draft --title "Roamies $TAG" --generate-notes || true
           shopt -s nullglob
-          files=(src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*-setup.exe)
+          B=src-tauri/target/${{ matrix.target }}/release/bundle
+          files=($B/dmg/*.dmg $B/nsis/*-setup.exe)
           [ ${#files[@]} -gt 0 ] || { echo "No installers were built"; exit 1; }
+          # Update bundles: both Macs produce Roamies.app.tar.gz, so name them per architecture.
+          VER=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          if [ "$RUNNER_OS" = macOS ]; then
+            ARCH=$([ "${{ matrix.target }}" = aarch64-apple-darwin ] && echo aarch64 || echo x64)
+            [ -f $B/macos/Roamies.app.tar.gz.sig ] || { echo "::error::No signed update bundle was built"; exit 1; }
+            cp $B/macos/Roamies.app.tar.gz "Roamies_${VER}_${ARCH}.app.tar.gz"
+            cp $B/macos/Roamies.app.tar.gz.sig "Roamies_${VER}_${ARCH}.app.tar.gz.sig"
+            files+=("Roamies_${VER}_${ARCH}.app.tar.gz" "Roamies_${VER}_${ARCH}.app.tar.gz.sig")
+          else
+            sigs=($B/nsis/*-setup.exe.sig)
+            [ ${#sigs[@]} -gt 0 ] || { echo "::error::No signed update installer was built"; exit 1; }
+            files+=("${sigs[@]}")
+          fi
           gh release upload "$TAG" "${files[@]}" --clobber
+
+  manifest:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Write latest.json for the in-app updater
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VER=$(node -p "require('./showcase/tauri/src-tauri/tauri.conf.json').version")
+          TAG="${GITHUB_REF_NAME}"; [[ "$TAG" == v* ]] || TAG="v$VER"
+          mkdir -p sigs && gh release download "$TAG" -p '*.sig' -D sigs
+          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/$TAG"
+          VER="$VER" URL="$URL" node -e '
+            const fs = require("fs"), { VER, URL } = process.env;
+            const sig = (f) => fs.readFileSync("sigs/" + f, "utf8").trim();
+            const platforms = {
+              "darwin-aarch64": `Roamies_${VER}_aarch64.app.tar.gz`,
+              "darwin-x86_64": `Roamies_${VER}_x64.app.tar.gz`,
+              "windows-x86_64": `Roamies_${VER}_x64-setup.exe`,
+            };
+            const out = { version: VER, notes: `Roamies ${VER}`, pub_date: new Date().toISOString(), platforms: {} };
+            for (const [k, f] of Object.entries(platforms)) out.platforms[k] = { signature: sig(f + ".sig"), url: `${URL}/${f}` };
+            fs.writeFileSync("latest.json", JSON.stringify(out, null, 2));
+          '
+          cat latest.json
+          gh release upload "$TAG" latest.json --clobber
