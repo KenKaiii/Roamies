@@ -8,7 +8,7 @@ agent (`showcase/tauri/sidecar`), shared browser JS in `showcase/roamies`, and m
 
 ```sh
 cd showcase/tauri/sidecar && npm ci     # install sidecar deps
-npm test                                # sidecar tests (reply stream, storage)
+npm test                                # sidecar tests (reply stream, storage, pointing)
 npm run build                           # bundle the sidecar into dist/
 cd .. && ./build.sh dev                 # web files + sidecar + debug `cargo build`
 ./build.sh                              # release bundle for this OS (signs on macOS if a Developer ID is in the keychain)

@@ -224,7 +224,9 @@ case "capture":
     let file = args[1], target = args[2]
     if target == "screen" {
         guard run("/usr/sbin/screencapture", ["-x", "-t", "jpg", file]) == 0 else { fail("Screen capture failed. Roamies may need Screen Recording permission.") }
-        out(["ok": true, "file": file, "what": "screen"])
+        // screencapture with one file shoots the main display; its bounds (points) let the caller map pixels back.
+        let d = CGDisplayBounds(CGMainDisplayID())
+        out(["ok": true, "file": file, "what": "screen", "bounds": [Int(d.minX), Int(d.minY), Int(d.width), Int(d.height)]])
     }
     guard let w = resolve(target) else { fail("No matching window is open\(target.hasPrefix("app:") ? " for \(target.dropFirst(4))" : "").") }
     guard run("/usr/sbin/screencapture", ["-x", "-o", "-t", "jpg", "-l", String(w.id), file]) == 0 else { fail("Window capture failed. Roamies may need Screen Recording permission.") }
@@ -297,9 +299,10 @@ case "act":
             guard pressKey(s["key"] as? String ?? "") else { out(["ok": false, "error": "Step \(i + 1): unknown key \(s["key"] ?? "")", "done": done]) }
             done.append("pressed \(s["key"]!)")
         case "click_at":
-            // Coordinates are relative to the window's top-left, in points.
+            // Points relative to the window's top-left, or global screen points when "global" is set.
             guard let x = s["x"] as? Double, let y = s["y"] as? Double else { out(["ok": false, "error": "Step \(i + 1): click_at needs x and y", "done": done]) }
-            click(CGPoint(x: w.x + x, y: w.y + y)); done.append("clicked at \(Int(x)),\(Int(y))")
+            let global = s["global"] as? Bool ?? false
+            click(global ? CGPoint(x: x, y: y) : CGPoint(x: w.x + x, y: w.y + y)); done.append("clicked at \(Int(x)),\(Int(y))")
         case "wait":
             Thread.sleep(forTimeInterval: min(5, (s["seconds"] as? Double) ?? 0.5)); done.append("waited")
         default:

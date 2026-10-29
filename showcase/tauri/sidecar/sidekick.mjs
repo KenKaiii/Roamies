@@ -5,6 +5,7 @@
 // in:  {type:'menu', id} {type:'answer', id, text} {type:'ui_ready'}
 // out: {type:'menu', items} {type:'ui', msg} {type:'overlays', ids}
 import { Agent } from '@kenkaiiii/gg-agent';
+import { parseSipsSize, rematch, sameBounds, shotMap, toScreen } from './pointing.mjs';
 import {
   AUTH_PROVIDERS, AuthStorage, dualAuthProvider, getContextWindow, getDefaultModel, getModel, getModelsForProvider,
   loginAnthropic, loginGemini, loginKimi, loginOpenAI, loginXai,
@@ -98,6 +99,27 @@ const actionsOff = 'File edits and commands are switched off. Tell the user to t
 const HANDS = process.env.ROAMIES_HANDS || '';
 let axNudged = 0;
 const pointWaits = new Map(); // point_at call id → resolve, settled when the overlay has shown the step
+let lastShot = null; // how the latest screenshot's pixels map to screen points (see pointing.mjs)
+let lastRead = null; // { win, controls } from the latest read_window, to catch ids that went stale
+const STALE_ID = 'The page changed since read_window, so that id is out of date. Call read_window again and use the new ids.';
+async function shotPoint(x, y) {
+  if (!lastShot) throw new Error('Take a screenshot first, then give x, y in its pixels.');
+  if (lastShot.win != null) {
+    const now = await hands('locate', `window:${lastShot.win}`).catch(() => null);
+    if (!sameBounds(now?.window?.bounds, lastShot.bounds)) throw new Error('That window moved or closed since the screenshot. Take a new screenshot first.');
+  }
+  return toScreen(lastShot, x, y);
+}
+// The control that read_window listed at this id, wherever it is now.
+async function liveControls(spec) {
+  const fresh = await hands('ui', spec);
+  if (!lastRead || lastRead.win !== fresh.window.id) throw new Error('Call read_window on this window first, then use its ids.');
+  return (id) => {
+    const c = rematch(lastRead.controls[id - 1], fresh.controls, id);
+    if (!c) throw new Error(STALE_ID);
+    return c;
+  };
+}
 async function hands(...args) {
   if (!HANDS) throw new Error('This needs the Roamies app on macOS.');
   const r = await run(HANDS, args, { timeout: 120_000 });
@@ -135,9 +157,14 @@ async function screenshot({ target = 'screen' } = {}, ctx) {
       }
     }
     const res = await hands('capture', file, spec);
-    await run('sips', ['-Z', '1600', file]);
+    // 1568 px is Claude's own cap; a bigger image gets shrunk again and its coordinates drift.
+    await run('sips', ['-Z', '1568', file]);
+    const size = parseSipsSize((await run('sips', ['-g', 'pixelWidth', '-g', 'pixelHeight', file])).stdout);
+    const bounds = res.window?.bounds ?? res.bounds;
+    lastShot = size && bounds ? { ...shotMap(bounds, ...size), bounds, win: res.window?.id ?? null } : null;
     const what = res.window ? `the ${res.window.app} window${res.window.title ? ` "${res.window.title}"` : ''}` : 'the whole screen';
-    return { content: [{ type: 'text', text: `Screenshot of ${what}.` }, await imageBlock(file, 'image/jpeg')] };
+    const dims = size ? ` (${size[0]}×${size[1]} px; for point_at or click_at give x, y in this image's pixels)` : '';
+    return { content: [{ type: 'text', text: `Screenshot of ${what}${dims}.` }, await imageBlock(file, 'image/jpeg')] };
   } else if (process.platform === 'win32') {
     const ps = `Add-Type -AssemblyName System.Windows.Forms,System.Drawing;$b=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds;$i=New-Object System.Drawing.Bitmap $b.Width,$b.Height;[System.Drawing.Graphics]::FromImage($i).CopyFromScreen($b.Location,[System.Drawing.Point]::Empty,$b.Size);$i.Save('${file}',[System.Drawing.Imaging.ImageFormat]::Jpeg)`;
     const r = await run('powershell', ['-NoProfile', '-Command', ps]);
@@ -174,6 +201,7 @@ const tools = [
       execute: async ({ target = 'front' }) => {
         const t = String(target || 'front');
         const res = await hands('ui', t === 'front' ? 'front' : `app:${t}`);
+        lastRead = { win: res.window.id, controls: res.controls };
         const head = `${res.window.app}${res.window.title ? ` — ${res.window.title}` : ''}`;
         if (!res.controls.length) return `${head}\n${res.note}`;
         return `${head}\n` + res.controls.map((c) => `${c.id}. ${c.role}${c.label ? ` "${c.label}"` : ''}${c.value ? ` = "${c.value}"` : ''}${c.focused ? ' (focused)' : ''}`).join('\n');
@@ -181,7 +209,7 @@ const tools = [
     },
     {
       name: 'point_at',
-      description: "Teach by showing: fly to a control in another app and point at it while you explain one step. Use it to walk the user through how to do something (e.g. 'how do I add a layer mask'), one point_at per step, in order, with a short instruction each (under 12 words). Call read_window first and use its ids. For apps with no readable controls, take a screenshot and pass x, y (window points of the spot to point at). Set click true only if the user asked you to do it for them; otherwise just point and let them click. wait_for_user true pauses until they do the step (or 20 s), for multi-step lessons.",
+      description: "Teach by showing: fly to a control in another app and point at it while you explain one step. Use it to walk the user through how to do something (e.g. 'how do I add a layer mask'), one point_at per step, in order, with a short instruction each (under 12 words). Call read_window first and use its ids. For apps with no readable controls, take a screenshot and pass x, y (pixels in your latest screenshot). Set click true only if the user asked you to do it for them; otherwise just point and let them click. wait_for_user true pauses until they do the step (or 20 s), for multi-step lessons.",
       parameters: z.object({
         target: z.string().optional(),
         id: z.number().int().optional(), x: z.number().optional(), y: z.number().optional(),
@@ -192,14 +220,13 @@ const tools = [
       executionMode: 'sequential',
       execute: async ({ target = 'front', id, x, y, say: text, step, of: total, click, wait_for_user }, ctx) => {
         const t = String(target || 'front'), spec = t === 'front' ? 'front' : `app:${t}`;
-        let rect, label = '';
+        let rect, label = '', at, liveId;
         if (id != null) {
-          const res = await hands('locate-control', spec, String(id));
-          rect = res.control.bounds; label = res.control.label || res.control.role;
+          const c = (await liveControls(spec))(id);
+          rect = c.bounds; label = c.label || c.role; liveId = c.id;
         } else if (x != null && y != null) {
-          const res = await hands('locate', spec);
-          const [wx, wy] = res.window.bounds;
-          rect = [Math.round(wx + x - 14), Math.round(wy + y - 14), 28, 28];
+          at = await shotPoint(x, y);
+          rect = [at[0] - 14, at[1] - 14, 28, 28];
         } else throw new Error('Give an id from read_window, or x and y from a screenshot.');
         // The overlay flies there, points, shows the step and holds; this tool resolves once it's on screen.
         const done = new Promise((resolve) => pointWaits.set(ctx.toolCallId, resolve));
@@ -207,8 +234,8 @@ const tools = [
         await done;
         if (click) {
           if (!config.allowActions) throw new Error(actionsOff);
-          if (id != null) await hands('act', JSON.stringify({ steps: [{ do: 'click', id }], ...(t === 'front' ? {} : { app: t }) }));
-          else await hands('act', JSON.stringify({ steps: [{ do: 'click_at', x, y }], ...(t === 'front' ? {} : { app: t }) }));
+          if (id != null) await hands('act', JSON.stringify({ steps: [{ do: 'click', id: liveId }], ...(t === 'front' ? {} : { app: t }) }));
+          else await hands('act', JSON.stringify({ steps: [{ do: 'click_at', x: at[0], y: at[1], global: true }], ...(t === 'front' ? {} : { app: t }) }));
         } else if (wait_for_user) {
           // Give them time to do it themselves before the next step.
           await new Promise((r) => setTimeout(r, 6000));
@@ -218,7 +245,7 @@ const tools = [
     },
     {
       name: 'act_in_app',
-      description: "Do things in another app for the user: fill in forms, type, press keys, click buttons. Call read_window first and use its ids (they change after the page changes, so read again after navigating). Steps run in order: {do:'set', id, text} replaces a field's text; {do:'focus', id}; {do:'click', id}; {do:'type', text} types at the cursor; {do:'key', key} e.g. 'return', 'tab', 'cmd+a'; {do:'click_at', x, y} in window points from a screenshot, for apps with no readable controls; {do:'wait', seconds}. Never submit payments, send messages or delete things unless the user clearly asked for exactly that.",
+      description: "Do things in another app for the user: fill in forms, type, press keys, click buttons. Call read_window first and use its ids (they change after the page changes, so read again after navigating). Steps run in order: {do:'set', id, text} replaces a field's text; {do:'focus', id}; {do:'click', id}; {do:'type', text} types at the cursor; {do:'key', key} e.g. 'return', 'tab', 'cmd+a'; {do:'click_at', x, y} pixels in your latest screenshot, for apps with no readable controls; {do:'wait', seconds}. Never submit payments, send messages or delete things unless the user clearly asked for exactly that.",
       parameters: z.object({
         target: z.string().optional(),
         steps: z.array(z.object({
@@ -231,7 +258,17 @@ const tools = [
       execute: async ({ target = 'front', steps }) => {
         if (!config.allowActions) throw new Error(actionsOff);
         const t = String(target || 'front');
-        const plan = { steps, ...(t === 'front' ? {} : { app: t }) };
+        // Ids up to the first click come from read_window; after a click the helper re-reads the page itself.
+        const firstClick = steps.findIndex((s) => s.do === 'click');
+        const upTo = firstClick < 0 ? steps.length : firstClick + 1;
+        const live = steps.slice(0, upTo).some((s) => s.id != null) ? await liveControls(t === 'front' ? 'front' : `app:${t}`) : null;
+        const mapped = [];
+        for (const [i, s] of steps.entries()) {
+          if (s.do === 'click_at' && s.x != null && s.y != null) { const [x, y] = await shotPoint(s.x, s.y); mapped.push({ ...s, x, y, global: true }); }
+          else if (live && i < upTo && s.id != null) mapped.push({ ...s, id: live(s.id).id });
+          else mapped.push(s);
+        }
+        const plan = { steps: mapped, ...(t === 'front' ? {} : { app: t }) };
         const res = await hands('act', JSON.stringify(plan));
         return `In ${res.window.app}: ${res.done.join(', ')}.`;
       },
