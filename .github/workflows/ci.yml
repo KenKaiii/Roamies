@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: showcase/tauri
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: showcase/tauri/sidecar/package-lock.json
+
+      - name: Install sidecar dependencies
+        working-directory: showcase/tauri/sidecar
+        run: npm ci
+
+      - name: Test sidecar
+        working-directory: showcase/tauri/sidecar
+        run: npm test
+
+      # Tauri's Linux build dependencies (v2.tauri.app/start/prerequisites, Debian list).
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: showcase/tauri/src-tauri -> target
+
+      # Copies the web files into dist/, bundles the sidecar, then `cargo build` (debug).
+      - name: Build
+        run: ./build.sh dev
