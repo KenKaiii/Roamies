@@ -39,3 +39,8 @@ cd showcase/tauri/sidecar && npm ci && cd ..
 On macOS the app is ad-hoc signed, so macOS may ask for microphone access again after each rebuild.
 Voice works best on macOS 26+, which doesn't need Siri or Dictation turned on. Windows and Linux
 builds compile, but voice is macOS only for now.
+
+## License
+
+[AGPL-3.0](LICENSE). You can use, change and share Roamies, but if you distribute it or run a
+modified version as a network service, you have to release your source under the same license.

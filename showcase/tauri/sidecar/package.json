@@ -1,8 +1,11 @@
 {
   "name": "roamies-sidekick",
   "private": true,
+  "license": "AGPL-3.0-only",
   "type": "module",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "dependencies": {
     "@kenkaiiii/gg-agent": "5.86.3",
     "@kenkaiiii/gg-ai": "5.86.3",
