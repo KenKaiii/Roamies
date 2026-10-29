@@ -91,6 +91,8 @@ jobs:
       - name: Build, sign and notarize
         env:
           TAURI_BUNDLES: ${{ matrix.bundles }}
+          # Tauri skips the Finder layout step (background, icon spots) when CI=true; Actions runners can run it.
+          TAURI_BUNDLER_DMG_IGNORE_CI: 'true'
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -103,6 +105,15 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "$APP"
           xcrun stapler validate "$APP"
           spctl --assess --type execute --verbose "$APP"
+          # The installer window layout lives in .DS_Store; without it the DMG opens as a plain folder.
+          DMG=$(ls src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg | head -1)
+          MNT=$(mktemp -d)
+          hdiutil attach -nobrowse -readonly -noautoopen -mountpoint "$MNT" "$DMG" >/dev/null
+          ls -la "$MNT"
+          ok=1
+          for f in .DS_Store .background/background.tiff Applications; do [ -e "$MNT/$f" ] || { echo "::error::DMG is missing $f"; ok=0; }; done
+          hdiutil detach -quiet "$MNT"
+          [ $ok -eq 1 ]
 
       - name: Remove the signing keychain
         if: always() && runner.os == 'macOS'
