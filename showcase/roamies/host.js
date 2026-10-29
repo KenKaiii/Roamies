@@ -125,6 +125,14 @@
       case 'tool_end':
         settle(e.id, e.isError);
         break;
+      case 'point': {
+        // Teach mode: control bounds arrive in global screen points → this overlay's coordinates.
+        endTalk();
+        const o = Roamie.origin ?? { x: 0, y: 0 }, [x, y, w, h] = e.rect;
+        a.point({ rect: [x - o.x, y - o.y, w, h], say: e.say, step: e.step, of: e.of, label: e.label })
+          .then(() => send({ type: 'point_shown', id: e.id }));
+        break;
+      }
       case 'tool_target': {
         // The real window being captured, in global screen points → this overlay's coordinates.
         const job = current?.id === e.id ? current : jobs.find((j) => j.id === e.id);
@@ -141,6 +149,7 @@
         break;
       case 'done':
         endTalk();
+        setTimeout(() => a.endGuide?.(), 6000);
         break;
       case 'error':
         endTalk();

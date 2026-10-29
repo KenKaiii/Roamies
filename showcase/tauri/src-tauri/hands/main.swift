@@ -9,6 +9,7 @@
 //   roamies-hands ui front|app:<name>          the window's buttons, fields, etc. with ids
 //   roamies-hands act <json>                   {"app":"Brave","steps":[{"do":"focus","id":3},{"do":"type","text":"hi"}]}
 //   roamies-hands trusted [--prompt]           Accessibility permission status
+//   roamies-hands locate-control <target> <id>  where one control (from `ui`) is on screen, for pointing
 import AppKit
 import ApplicationServices
 import CoreGraphics
@@ -129,7 +130,8 @@ func walk(_ app: AXUIElement, limit: Int = 260) -> [(AXUIElement, [String: Any])
             if (attr(el, kAXEnabledAttribute) as? Bool) != false {
                 var label = str(el, kAXTitleAttribute) ?? str(el, kAXDescriptionAttribute) ?? str(el, "AXPlaceholderValue") ?? str(el, kAXHelpAttribute) ?? ""
                 if label.isEmpty, let t = attr(el, kAXTitleUIElementAttribute) { label = str(t as! AXUIElement, kAXValueAttribute) ?? "" }
-                var item: [String: Any] = ["id": found.count + 1, "role": ROLE_NAME[role] ?? role, "label": String(label.prefix(80))]
+                var item: [String: Any] = ["id": found.count + 1, "role": ROLE_NAME[role] ?? role, "label": String(label.prefix(80)),
+                                           "bounds": [Int(f.minX), Int(f.minY), Int(f.width), Int(f.height)]]
                 if role != "AXSecureTextField", let v = str(el, kAXValueAttribute), !v.isEmpty { item["value"] = String(v.prefix(80)) }
                 if (attr(el, kAXFocusedAttribute) as? Bool) == true { item["focused"] = true }
                 found.append((el, item))
@@ -240,6 +242,13 @@ case "ui":
     guard args.count >= 2, let w = resolve(args[1]) else { fail("No matching window is open.") }
     let items = walk(axApp(w)).map { $0.1 }
     out(["ok": true, "window": winInfo(w), "controls": items, "note": items.isEmpty ? "This app shares no controls. Use a screenshot plus click at coordinates instead." : ""])
+
+case "locate-control":
+    guard AXIsProcessTrusted() else { fail("Roamies needs Accessibility permission to read other apps.") }
+    guard args.count >= 3, let w = resolve(args[1]), let id = Int(args[2]) else { fail("usage: locate-control <target> <id>") }
+    let items = walk(axApp(w))
+    guard id >= 1, id <= items.count else { fail("No control \(id) in \(w.app). Read the window again.") }
+    out(["ok": true, "window": winInfo(w), "control": items[id - 1].1])
 
 case "act":
     guard AXIsProcessTrusted() else { fail("Roamies needs Accessibility permission to control other apps.") }
