@@ -732,6 +732,53 @@ fn handle_voice(app: &AppHandle, msg: Value) {
     }
 }
 
+/// Open at Login. Only an installed copy registers (in Applications on macOS, not a build folder or the DMG),
+/// so stray copies never end up starting at login. `set`: None just reports. Replies login_item_status.
+fn login_item(app: &AppHandle, set: Option<bool>) {
+    let exe = std::env::current_exe().unwrap_or_default();
+    let exe_s = exe.to_string_lossy().replace('\\', "/");
+    let installed = !exe_s.contains("/target/") && !exe_s.starts_with("/Volumes/") && !exe_s.contains("/AppTranslocation/");
+    #[cfg(target_os = "macos")]
+    let (supported, on, approval) = {
+        use objc2_service_management::{SMAppService, SMAppServiceStatus};
+        let in_apps = exe_s.starts_with("/Applications/") || exe_s.contains("/Applications/Roamies.app/");
+        if !objc2::available!(macos = 13.0) || !installed || !in_apps {
+            (false, false, false)
+        } else {
+            // SAFETY: ServiceManagement calls with no arguments beyond the shared main-app service.
+            unsafe {
+                let svc = SMAppService::mainAppService();
+                match set {
+                    Some(true) if svc.status() != SMAppServiceStatus::Enabled => { let _ = svc.registerAndReturnError(); }
+                    Some(false) if svc.status() != SMAppServiceStatus::NotRegistered => { let _ = svc.unregisterAndReturnError(); }
+                    _ => {}
+                }
+                let st = svc.status();
+                (true, st == SMAppServiceStatus::Enabled || st == SMAppServiceStatus::RequiresApproval, st == SMAppServiceStatus::RequiresApproval)
+            }
+        }
+    };
+    #[cfg(windows)]
+    let (supported, on, approval) = {
+        // The per-user Run key: what Task Manager's Startup apps lists and can switch off.
+        const KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
+        let reg = |args: &[&str]| Command::new("reg").args(args).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false);
+        if !installed {
+            (false, false, false)
+        } else {
+            match set {
+                Some(true) => { let v = format!("\"{}\"", exe.display()); reg(&["add", KEY, "/v", "Roamies", "/t", "REG_SZ", "/d", &v, "/f"]); }
+                Some(false) => { reg(&["delete", KEY, "/v", "Roamies", "/f"]); }
+                None => {}
+            }
+            (true, reg(&["query", KEY, "/v", "Roamies"]), false)
+        }
+    };
+    #[cfg(not(any(target_os = "macos", windows)))]
+    let (supported, on, approval) = { let _ = (set, installed); (false, false, false) };
+    to_sidecar(app, &json!({ "type": "login_item_status", "supported": supported, "on": on, "approval": approval }));
+}
+
 /// Checks the signed update feed (latest.json on the newest GitHub release). With `install`, downloads,
 /// verifies the signature, swaps the app in place and restarts. Progress goes to the sidecar as update_status.
 fn update(app: &AppHandle, install: bool) {
@@ -775,6 +822,7 @@ async fn tokio_sleep(d: Duration) {
 fn handle_sidecar(app: &AppHandle, msg: Value) {
     match msg.get("type").and_then(Value::as_str) {
         Some("update") => update(app, msg.get("install").and_then(Value::as_bool) == Some(true)),
+        Some("login_item") => login_item(app, msg.get("on").and_then(Value::as_bool)),
         Some("menu") => {
             if let Some(items) = msg.get("items").and_then(Value::as_array) {
                 set_menu(app, items);

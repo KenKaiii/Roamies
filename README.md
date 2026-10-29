@@ -46,6 +46,8 @@ your Dock.
   them on in setup or the menu bar ("Allow File Edits & Commands"). Even then, anything that changes things
   asks you first, and the dangerous stuff never runs: admin commands, wiping disks or your home folder,
   reading passwords and keys, startup scripts, downloaded scripts, and typing into terminals or password apps.
+- **Starts with your computer:** "Open at Login" is on by default (switch it in the menu bar or the setup
+  guide).
 - **Updates itself:** when a new version is out, Sidekick tells you, and "Install Update and Restart" in the
   menu bar does the rest. Updates are signed and checked before they install.
 - **Setup guide:** opens on first launch and walks through permissions (microphone, screen recording,

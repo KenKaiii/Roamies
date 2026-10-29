@@ -207,6 +207,15 @@
       sw.onclick = () => { const on = sw.getAttribute('aria-checked') !== 'true'; sw.setAttribute('aria-checked', String(on)); send({ type: 'set_actions', on }); if (on) { act('hype'); quip("I'll be careful!"); } };
       list.append(el('li', { className: 'px row' },
         el('div', {}, el('h2', { textContent: 'Edit files and run commands' }), el('p', { textContent: 'Off: I can look, never change.' })), sw));
+      // Only an installed copy can start at login, so the row is hidden otherwise (login is null).
+      if (state?.login != null) {
+        const ls = el('button', { className: 'px switch', type: 'button', role: 'switch' });
+        ls.setAttribute('aria-checked', String(!!state.login));
+        ls.setAttribute('aria-label', 'Open Roamies at login');
+        ls.onclick = () => { const on = ls.getAttribute('aria-checked') !== 'true'; ls.setAttribute('aria-checked', String(on)); send({ type: 'set_login', on }); if (on) quip("See you every morning!"); };
+        list.append(el('li', { className: 'px row' },
+          el('div', {}, el('h2', { textContent: 'Open at login' }), el('p', { textContent: 'Start with your computer.' })), ls));
+      }
 
       const screenStuck = isMac() && this.asked.screen && this.status('screen') !== 'granted';
       if (screenStuck && !this.hinted && this.waiting !== 'screen') { this.hinted = true; setTimeout(() => cur === 1 && quip('Switched me on? Hit Reopen', 5), 6000); }
@@ -527,7 +536,7 @@
     const old = q.get('speech') === '1', pre = q.get('granted') === '1' ? 'granted' : 'unknown';
     const sys = { type: 'perms', mic: pre, speech: old ? pre : 'granted', speechNeeded: old, screen: pre, accessibility: pre };
     const st = {
-      kind: 'state', platform: q.get('platform') || 'darwin', step: +(q.get('step') || 0), sound: true, voice: true, actions: false, filesAsked: false,
+      kind: 'state', platform: q.get('platform') || 'darwin', step: +(q.get('step') || 0), sound: true, voice: true, actions: false, login: true, filesAsked: false,
       keys: { talk: ['control', 'option'], summon: 'Control+Alt+KeyS', snap: 'Control+Alt+KeyA' }, connected: null,
       oauth: [['anthropic', 'Claude', 'Anthropic'], ['openai', 'ChatGPT', 'OpenAI'], ['gemini', 'Gemini', 'Google'], ['xai', 'Grok', 'xAI'], ['moonshot', 'Kimi', 'Moonshot']].map(([id, name, company]) => ({ id, name, company, connected: false })),
       apikey: [['openrouter', 'OpenRouter'], ['deepseek', 'DeepSeek'], ['glm', 'Z.AI (GLM)']].map(([id, name]) => ({ id, name, connected: false })),
@@ -547,6 +556,7 @@
         setTimeout(() => { st.connected = { provider: 'Anthropic', model: 'Claude Haiku 5.5' }; st.oauth[0].connected = true; reply({ kind: 'login', provider: m.provider, phase: 'done' }); reply({ ...st }); }, 1800);
       } else if (m.type === 'set_keys') { if (m.talk) st.keys.talk = m.talk; if (m.summon) st.keys.summon = m.summon; if (m.snap) st.keys.snap = m.snap; reply({ kind: 'keys', keys: st.keys }); }
       else if (m.type === 'set_actions') { st.actions = m.on; }
+      else if (m.type === 'set_login') { st.login = m.on; }
     };
   }
 })();

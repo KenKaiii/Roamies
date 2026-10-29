@@ -732,6 +732,21 @@ function openUrl(url) {
 }
 
 // ---------- updates ----------
+// Open at Login (Rust: login_item()). On by default the first time an installed copy runs; after that the
+// real setting wins, so switching it off in System Settings or Task Manager sticks.
+const login = { supported: false, on: false, asked: false };
+function onLoginStatus(m) {
+  login.supported = !!m.supported; login.on = !!m.on;
+  if (login.supported && config.openAtLogin === undefined) {
+    config.openAtLogin = true; saveConfig();
+    if (!m.on) return send({ type: 'login_item', on: true });
+  } else if (login.supported) { config.openAtLogin = login.on; saveConfig(); }
+  if (login.asked && m.approval) say('macOS wants your OK first: System Settings → General → Login Items, then switch Roamies on.', 'concerned');
+  login.asked = false;
+  menu(); if (onboarding) obState();
+}
+function setLogin(on) { login.asked = true; send({ type: 'login_item', on }); }
+
 // The app checks the signed feed and installs (Rust: update()); this side decides what to say and offers the menu item.
 const update = { available: null, told: null, manual: false, installing: false };
 function checkUpdates(manual = false) {
@@ -815,6 +830,7 @@ function menu() {
         ...(VOICE_OK ? [{ id: 'voice', label: `Voice Control (${talkSymbols()})`, checked: config.voice }] : []),
         ...(VOICE_OK ? [{ id: 'mutetalk', label: 'Mute Mac While Talking', checked: config.muteWhileTalking !== false }] : []),
         { id: 'sound', label: 'Sound Effects', checked: config.sound },
+        ...(login.supported ? [{ id: 'login', label: 'Open at Login', checked: login.on }] : []),
         { id: 'actions', label: 'Allow File Edits & Commands', checked: config.allowActions },
       ],
     },
@@ -897,6 +913,7 @@ async function onMenu(id) {
     say(config.allowActions ? 'File edits and commands are on. I promise to be careful.' : 'File edits and commands are off. Hands to myself!', config.allowActions ? 'determined' : 'happy');
   } else if (id === 'update') checkUpdates(true);
   else if (id === 'install_update') installUpdate();
+  else if (id === 'login') setLogin(!login.on);
   else if (id === 'setup') send({ type: 'onboarding' });
   else if (id === 'snap') areaSnap();
   else if (id === 'mutetalk') { config.muteWhileTalking = config.muteWhileTalking === false; saveConfig(); voiceConfig(); menu(); }
@@ -959,6 +976,7 @@ function obState() {
     connected: current && signedIn.get(config.provider) ? { provider: PROVIDER_LABELS[config.provider] ?? config.provider, model: current.name } : null,
     keys: keys(),
     actions: config.allowActions,
+    login: login.supported ? login.on : null,
     sound: config.sound,
     voice: VOICE_OK && config.voice,
     filesAsked: config.filesAsked,
@@ -989,6 +1007,7 @@ async function onGuide(m) {
   else if (m.type === 'ob_apikey') apiKeyLogin(m.provider, String(m.key ?? '')).catch((e) => ob({ kind: 'login', provider: m.provider, phase: 'error', error: String(e?.message ?? e).slice(0, 120) }));
   else if (m.type === 'ob_files') ob({ kind: 'files', status: await filesStatus(!!m.request) });
   else if (m.type === 'set_actions') { config.allowActions = !!m.on; saveConfig(); menu(); obState(); }
+  else if (m.type === 'set_login') setLogin(!!m.on);
   else if (m.type === 'set_keys') {
     const next = { ...keys() };
     if (m.talk !== undefined) { if (!validTalk(m.talk)) return ob({ kind: 'keys', keys: keys(), error: 'Pick two different modifier keys.' }); next.talk = m.talk; }
@@ -1020,11 +1039,12 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   else if (m.type === 'ui_ready') {
     ui({ kind: 'sound', on: config.sound });
     if (config.onboarded) ui({ kind: 'greet' });
-  } else if (m.type?.startsWith('ob_') || m.type === 'set_keys' || m.type === 'set_actions' || m.type === 'keybind_error') onGuide(m).catch((e) => console.error('guide', e));
+  } else if (m.type?.startsWith('ob_') || m.type === 'set_keys' || m.type === 'set_actions' || m.type === 'set_login' || m.type === 'keybind_error') onGuide(m).catch((e) => console.error('guide', e));
   else if (m.type?.startsWith('voice')) onVoice(m);
   else if (m.type === 'snap') areaSnap();
   else if (m.type === 'point_shown') { pointWaits.get(m.id)?.(); pointWaits.delete(m.id); }
   else if (m.type === 'update_status') onUpdateStatus(m);
+  else if (m.type === 'login_item_status') onLoginStatus(m);
 }).on('close', () => process.exit(0));
 
 await refreshAuth();
@@ -1064,6 +1084,7 @@ loadLatestSession().then((s) => { if (s && !isStale(s)) session = s; menu(); }).
 menu();
 overlays();
 sendKeys();
+send({ type: 'login_item' });
 // Look for updates shortly after launch, then every 6 hours.
 setTimeout(() => checkUpdates(), 20_000);
 setInterval(() => checkUpdates(), 6 * 3600_000);
