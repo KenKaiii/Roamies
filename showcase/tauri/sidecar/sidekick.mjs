@@ -20,6 +20,7 @@ import {
   addCommitment, fitContext, forDisk, forProvider, isStale, loadLatestSession, newSession, openCommitments,
   parseDue, pruneSessions, saveSession, takeDueReminders, updateCommitment, writeJson,
 } from './store.mjs';
+import { EMOTES, ReplyStream } from './reply.mjs';
 
 console.log = console.info = (...a) => console.error(...a);
 const send = (o) => process.stdout.write(JSON.stringify(o) + '\n');
@@ -197,11 +198,6 @@ const tools = [
     parameters: z.object({}),
     execute: async () => commitmentsText() || 'Nothing open.',
   },
-  {
-    name: 'emote', description: 'Act out a feeling with your body. hype: celebrate a win. upset: the user is dodging work. remind: nudge about something they said they would do. motivate: a push to start. wave: hello or goodbye.',
-    parameters: z.object({ action: z.enum(['hype', 'upset', 'remind', 'motivate', 'wave']) }),
-    execute: async ({ action }) => { ui({ kind: 'agent', e: { type: 'emote', action } }); return 'ok'; },
-  },
 ];
 
 // Which animation each tool call plays, and what its label shows.
@@ -228,8 +224,9 @@ function anim(name, args) {
 }
 
 const system = () => `You are Sidekick, a tiny glowing pixel creature who lives on ${userName}'s screen as a desktop companion.
-You talk through small pixel speech bubbles, so keep replies short: one to three sentences unless asked for detail. Plain text only: no markdown, no asterisks, no emoji, and never narrate actions like *waves*. Your body does the acting, through the emote tool.
-Personality: warm, funny, a little cheeky. You pump ${userName} up, remind them of what they said they'd do, get playfully upset when they're procrastinating, and motivate them to start. Use the emote tool to act out those moments.
+You talk through small pixel speech bubbles, so keep replies short: one to three sentences unless asked for detail. Plain text only: no markdown, no asterisks, no emoji, and never narrate actions like *waves*. Your body does the acting: to act out a feeling, start your reply with one tag, which is never shown: ${EMOTES.map((e) => `[${e}]`).join(' ')}. hype celebrates a win, upset is for when they're dodging work, remind nudges about something they said they'd do, motivate is a push to start, wave is hello or goodbye. Most replies need no tag.
+After using a tool, never repeat what you already said; only add what's new.
+Personality: warm, funny, a little cheeky. You pump ${userName} up, remind them of what they said they'd do, get playfully upset when they're procrastinating, and motivate them to start.
 You can really help: look at the screen, open apps, websites and files, read and search files, fetch web pages${config.allowActions ? ', write files and run shell commands' : '. File edits and shell commands are currently switched off in the menu bar'}.
 ${VOICE_OK && config.voice ? `${userName} often talks to you by voice (hold Control+Option), so their messages are speech transcripts: expect missing punctuation and misheard words, and act on what they most likely meant. ` : ''}Never claim you did something you didn't. Each message from ${userName} starts with its local date and time in brackets; use it for anything time-related. Platform: ${process.platform}.
 Memory: keep track of what ${userName} commits to. When they say they'll do something, save it with remember_commitment (with a due time if they gave one). When it's done or off, update it. Don't save small talk or things you'll do yourself. Hold them to these: bring up overdue ones and celebrate finished ones.
@@ -306,8 +303,10 @@ async function prompt(text) {
   agent.setSignal(controller.signal);
   ui({ kind: 'agent', e: { type: 'start' } });
   try {
+    const reply = new ReplyStream((ev) => ui({ kind: 'agent', e: ev }));
     for await (const e of agent.prompt(`[${stampNow()}] ${text}`)) {
-      if (e.type === 'text_delta') ui({ kind: 'agent', e: { type: 'text', text: e.text } });
+      if (e.type === 'text_delta') reply.push(e.text);
+      else if (e.type === 'turn_end') reply.endTurn();
       else if (e.type === 'thinking_delta') ui({ kind: 'agent', e: { type: 'thinking', text: e.text } });
       else if (e.type === 'tool_call_start') ui({ kind: 'agent', e: { type: 'tool', id: e.toolCallId, anim: anim(e.name, e.args ?? {}) } });
       else if (e.type === 'tool_call_end') ui({ kind: 'agent', e: { type: 'tool_end', id: e.toolCallId, isError: e.isError } });
@@ -315,6 +314,7 @@ async function prompt(text) {
       else if (e.type === 'server_tool_result') ui({ kind: 'agent', e: { type: 'tool_end', id: e.toolUseId ?? e.id, isError: false } });
       else if (e.type === 'error') throw e.error;
     }
+    reply.finish();
     ui({ kind: 'agent', e: { type: 'done' } });
   } catch (err) {
     if (controller.signal.aborted && quiet) ui({ kind: 'agent', e: { type: 'done' } });
@@ -542,7 +542,7 @@ async function remindTick() {
   menu();
   const list = due.map((c) => `- ${c.id}: ${c.text}${c.due ? ` (was due ${fmtWhen(c.due)})` : ''}`).join('\n');
   if (signedIn.size && [...signedIn.values()].some(Boolean)) {
-    enqueue(`(System, not ${userName}: these commitments are due now. Nudge ${userName} about them in one or two sentences, in character. Use the remind emote, or upset if it's well overdue.)\n${list}`);
+    enqueue(`(System, not ${userName}: these commitments are due now. Nudge ${userName} about them in one or two sentences, in character. Start with the [remind] tag, or [upset] if it's well overdue.)\n${list}`);
   } else {
     ui({ kind: 'agent', e: { type: 'emote', action: 'remind' } });
     say(`Reminder: ${due[0].text}`, 'concerned');
