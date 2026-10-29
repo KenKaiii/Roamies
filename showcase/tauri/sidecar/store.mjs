@@ -123,9 +123,17 @@ const approxChars = (m) => (m.role === 'tool' ? m.content.reduce((n, r) => n + t
  * budget, drop the oldest exchanges (cutting at a user message so tool calls stay paired).
  */
 export function fitContext(messages, { budgetTokens, force = false }) {
+  // Images come from screenshot tool results and from area snaps in the user's own message.
+  const hasImage = (m) => m.role === 'tool'
+    ? m.content.some((r) => Array.isArray(r.content) && r.content.some((p) => p?.type === 'image'))
+    : m.role === 'user' && Array.isArray(m.content) && m.content.some((p) => p?.type === 'image');
   let lastShot = -1;
-  messages.forEach((m, i) => { if (m.role === 'tool' && m.content.some((r) => Array.isArray(r.content) && r.content.some((p) => p?.type === 'image'))) lastShot = i; });
-  let out = messages.map((m, i) => (m.role === 'tool' && i !== lastShot ? { ...m, content: m.content.map((r) => ({ ...r, content: stripImages(r.content) })) } : m));
+  messages.forEach((m, i) => { if (hasImage(m)) lastShot = i; });
+  let out = messages.map((m, i) => {
+    if (i === lastShot || !hasImage(m)) return m;
+    if (m.role === 'tool') return { ...m, content: m.content.map((r) => ({ ...r, content: stripImages(r.content) })) };
+    return { ...m, content: stripImages(m.content) };
+  });
   const budget = (force ? 0.6 : 1) * budgetTokens * 3.6;
   let total = out.reduce((n, m) => n + approxChars(m), 0);
   if (total <= budget) return out;

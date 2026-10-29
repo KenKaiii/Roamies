@@ -74,7 +74,7 @@
       const job = jobs.shift(), a = getAgent();
       if (!a) break;
       current = job;
-      job.h = a.tool(job.anim.tool, { variant: job.anim.variant, detail: job.anim.detail, live: true });
+      job.h = a.tool(job.anim.tool, { variant: job.anim.variant, detail: job.anim.detail, live: true, rect: job.target, rectName: job.targetName });
       if (job.result !== undefined) job.h.done(!job.result);
       await job.h.closed;
       current = null;
@@ -125,6 +125,16 @@
       case 'tool_end':
         settle(e.id, e.isError);
         break;
+      case 'tool_target': {
+        // The real window being captured, in global screen points → this overlay's coordinates.
+        const job = current?.id === e.id ? current : jobs.find((j) => j.id === e.id);
+        if (!job || !e.window?.bounds) break;
+        const [x, y, w, h] = e.window.bounds, o = Roamie.origin ?? { x: 0, y: 0 };
+        const rect = [x - o.x, y - o.y, x - o.x + w, y - o.y + h];
+        job.target = rect; job.targetName = e.window.app;
+        job.h?.target(rect, e.window.app);
+        break;
+      }
       case 'emote':
         nextMood = MOODS[e.action] ?? null;
         a.act(e.action);
@@ -164,6 +174,8 @@
   window.__roamieHost = (m) => {
     if (m.kind === 'sound') { if (Roamie.sfx) Roamie.sfx.enabled = m.on; return; }
     if (!getAgent()) return;
+    if (m.kind === 'greet') { getAgent().act('wave'); return; }
+    if (m.kind === 'intro') { getAgent().intro(m.x, m.text); return; }
     if (m.kind === 'summon') {
       // ⌃⌥S toggles; the menu's Show Sidekick only ever shows.
       const a = getAgent();
@@ -178,13 +190,13 @@
     else if (m.kind === 'voice') onVoice(m);
   };
 
-  // Start hidden in auto mode, pop in once to say hi, then tell the brain we're listening.
+  // Start hidden in auto mode and tell the brain we're listening. It replies with the sound setting,
+  // and a greeting wave unless the setup guide is about to open.
   const ready = () => {
     const a = getAgent();
     if (!a) return setTimeout(ready, 150);
     a.setAuto(true);
     a.hide({ instant: true });
-    setTimeout(() => a.act('wave'), 700);
     send({ type: 'ui_ready' });
   };
   ready();

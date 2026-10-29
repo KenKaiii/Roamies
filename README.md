@@ -3,7 +3,8 @@
 Little creatures that live on your desktop. The main one, **Sidekick**, is a pixel-LED blob with an
 AI brain: it talks through animated speech bubbles, acts out tool calls (screenshots, reading files,
 running commands, web search), listens when you hold **Control+Option**, keeps track of what you said
-you'd do, and nudges you when it's due. It lives in the menu bar only, with no Dock icon and no windows.
+you'd do, and nudges you when it's due. It lives in the menu bar; it only shows a Dock icon while the
+setup guide is open.
 
 ## What's here
 
@@ -29,7 +30,10 @@ The HTML pages open straight in a browser, with no build step.
 - **Sessions:** a conversation resumes across restarts and starts fresh after two quiet hours or on a
   new day. Sessions are saved in `~/.gg/sidekick/sessions/` (newest 60 kept, screenshots never
   saved). Commitments live in `~/.gg/sidekick/memory.json`.
-- **Safety:** writing files and running commands are off until you turn them on in the menu bar.
+- **Setup guide:** opens on first launch and walks through permissions (microphone, screen recording,
+  files), connecting an AI account, shortcuts (both can be changed) and where to find the menu bar
+  icon. Reopen it any time from the menu bar icon → Setup Guide….
+- **Safety:** writing files and running commands are off until you turn them on in setup or the menu bar.
 
 ### Build
 
@@ -43,7 +47,9 @@ cd showcase/tauri/sidecar && npm ci && cd ..
 
 `sidecar/bundle.sh` needs `esbuild` on your `PATH`, or set `ESBUILD=/path/to/esbuild`.
 
-On macOS the app is ad-hoc signed, so macOS may ask for microphone access again after each rebuild.
+On macOS, `build.sh` signs with `APPLE_SIGNING_IDENTITY` if set, otherwise the first "Developer ID
+Application" certificate in your keychain, otherwise ad-hoc. Signing with a stable identity keeps macOS
+permissions (microphone, screen recording, accessibility) across rebuilds; ad-hoc builds re-ask each time.
 Voice works best on macOS 26+, which doesn't need Siri or Dictation turned on. Windows and Linux
 builds compile, but voice is macOS only for now.
 

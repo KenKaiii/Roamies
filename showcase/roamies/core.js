@@ -16,7 +16,8 @@
   R.unit = (env) => env.unit ?? Math.min(env.w, env.h);
   // Screen edges covered by the menu bar / Dock / taskbar, in CSS px. The desktop host keeps it current.
   R.safe = { top: 0, right: 0, bottom: 0, left: 0 };
-  R.setSafe = (s) => { for (const k of ['top', 'right', 'bottom', 'left']) R.safe[k] = Math.max(0, +s?.[k] || 0); };
+  R.setSafe = (s) => { for (const k of ['top', 'right', 'bottom', 'left']) R.safe[k] = Math.max(0, +s?.[k] || 0); R.origin = { x: +s?.ox || 0, y: +s?.oy || 0 }; };
+  R.origin = { x: 0, y: 0 };
 
   // Damped 1D spring, used for squash/pop.
   class Spring {

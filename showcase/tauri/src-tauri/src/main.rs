@@ -3,11 +3,12 @@
 // No Dock icon (LSUIElement + Accessory policy) and no taskbar entries on Windows/Linux.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::cell::RefCell;
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::{thread, time::Duration};
 
@@ -17,11 +18,25 @@ use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder, Wry};
 
 static GENERATION: AtomicUsize = AtomicUsize::new(0);
+/// The setup guide is open: voice events go to it (for the "try it" test) instead of the agent.
+static ONBOARDING: AtomicBool = AtomicBool::new(false);
+/// Id of the registered show/hide hotkey, read by the hotkey event handler.
+static SUMMON_ID: AtomicU32 = AtomicU32::new(0);
+/// Id of the registered "ask about an area" hotkey.
+static SNAP_ID: AtomicU32 = AtomicU32::new(0);
+const ONBOARDING_LABEL: &str = "onboarding";
 
 struct Sidecar(Mutex<Option<ChildStdin>>);
 struct Roster(Mutex<Vec<String>>);
 /// The voice helper (macOS) and how many times it has died on its own since it was last wanted.
 struct Voice(Mutex<Option<Child>>, AtomicUsize);
+/// Talk chord passed to the voice helper, e.g. ["control", "option"].
+struct TalkChord(Mutex<Vec<String>>);
+
+thread_local! {
+    // The hotkey manager must live on the main thread; it also owns the current show/hide hotkey.
+    static HOTKEYS: RefCell<Option<(global_hotkey::GlobalHotKeyManager, [Option<global_hotkey::hotkey::HotKey>; 2])>> = const { RefCell::new(None) };
+}
 
 fn is_overlay(label: &str) -> bool {
     label.starts_with("overlay-")
@@ -39,6 +54,12 @@ fn to_overlays(app: &AppHandle, msg: &Value) {
         if is_overlay(&label) {
             let _ = w.eval(&js);
         }
+    }
+}
+
+fn to_onboarding(app: &AppHandle, msg: &Value) {
+    if let Some(w) = app.get_webview_window(ONBOARDING_LABEL) {
+        let _ = w.eval(format!("window.__onboard&&__onboard({msg})"));
     }
 }
 
@@ -61,6 +82,20 @@ fn set_typing(app: AppHandle, window: WebviewWindow, on: bool) {
     let _ = window.set_focusable(on);
     if on {
         let _ = window.set_focus();
+        // Opened from a hotkey (e.g. after an area snap), Roamies isn't the active app and macOS 14+
+        // ignores plain focus requests, so make the overlay key directly, then ask to activate.
+        #[cfg(target_os = "macos")]
+        if let Ok(p) = window.ns_window() {
+            let p = p as usize;
+            let _ = app.run_on_main_thread(move || unsafe {
+                use objc2::runtime::{AnyObject, Bool};
+                use objc2::{class, msg_send};
+                let win = p as *mut AnyObject;
+                let _: () = msg_send![win, makeKeyAndOrderFront: std::ptr::null::<AnyObject>()];
+                let ns_app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
+                let _: () = msg_send![ns_app, activateIgnoringOtherApps: Bool::YES];
+            });
+        }
     } else {
         #[cfg(target_os = "macos")]
         let _ = app.run_on_main_thread(|| unsafe {
@@ -71,6 +106,251 @@ fn set_typing(app: AppHandle, window: WebviewWindow, on: bool) {
         });
     }
     let _ = &app;
+}
+
+/// Runs the voice helper in a one-shot permission mode and returns what it printed.
+fn helper_perms(args: &[&str]) -> Value {
+    let Some(bin) = voice_binary() else { return json!({ "type": "perms", "unsupported": true }) };
+    let out = Command::new(bin).args(args).stdin(Stdio::null()).stderr(Stdio::null()).output();
+    out.ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .and_then(|t| t.lines().rev().find_map(|l| serde_json::from_str::<Value>(l).ok()))
+        .unwrap_or_else(|| json!({ "type": "perms", "error": true }))
+}
+
+/// Accessibility (reading and controlling other apps) is checked by the hands helper.
+fn accessibility(prompt: bool) -> &'static str {
+    let Some(bin) = helper_binary("roamies-hands") else { return "unknown" };
+    let mut cmd = Command::new(bin);
+    cmd.arg("trusted");
+    if prompt {
+        cmd.arg("--prompt");
+    }
+    let ok = cmd.stdin(Stdio::null()).stderr(Stdio::null()).output().ok()
+        .and_then(|o| serde_json::from_slice::<Value>(&o.stdout).ok())
+        .and_then(|v| v.get("trusted").and_then(Value::as_bool))
+        .unwrap_or(false);
+    if ok { "granted" } else { "unknown" }
+}
+
+#[tauri::command]
+async fn perm_status() -> Value {
+    if !cfg!(target_os = "macos") {
+        return json!({ "type": "perms", "unsupported": true });
+    }
+    tauri::async_runtime::spawn_blocking(|| {
+        let mut v = helper_perms(&["--perms"]);
+        v["accessibility"] = json!(accessibility(false));
+        v
+    })
+    .await
+    .unwrap_or(Value::Null)
+}
+
+/// Shows the system prompt for one permission (mic waits for the answer), then returns the new state.
+#[tauri::command]
+async fn perm_request(kind: String) -> Value {
+    if !cfg!(target_os = "macos") || !["mic", "speech", "screen", "accessibility"].contains(&kind.as_str()) {
+        return json!({ "type": "perms", "unsupported": true });
+    }
+    if kind == "accessibility" {
+        // Shows macOS's "would like to control this computer" dialog; it opens Settings itself.
+        return tauri::async_runtime::spawn_blocking(|| {
+            let state = accessibility(true);
+            let mut v = helper_perms(&["--perms"]);
+            v["accessibility"] = json!(state);
+            v
+        })
+        .await
+        .unwrap_or(Value::Null);
+    }
+    tauri::async_runtime::spawn_blocking(move || helper_perms(&["--request", &kind])).await.unwrap_or(Value::Null)
+}
+
+/// Opens one Privacy & Security pane in System Settings.
+#[tauri::command]
+fn open_settings(pane: String) {
+    const PANES: [&str; 6] = ["Privacy_Microphone", "Privacy_SpeechRecognition", "Privacy_ScreenCapture", "Privacy_FilesAndFolders", "Privacy_AllFiles", "Privacy_Accessibility"];
+    if !cfg!(target_os = "macos") || !PANES.contains(&pane.as_str()) {
+        return;
+    }
+    let _ = Command::new("open").arg(format!("x-apple.systempreferences:com.apple.preference.security?{pane}")).spawn();
+}
+
+/// The guide calls this once its page has loaded: by then the window is really on screen, so
+/// putting it on top sticks (doing it at creation time loses to whatever app is frontmost).
+#[tauri::command]
+fn focus_guide(app: AppHandle) {
+    activate_app(&app);
+}
+
+/// The guide hides its title bar, so its top strip calls this to move the window.
+#[tauri::command]
+fn drag_window(window: WebviewWindow) {
+    let _ = window.start_dragging();
+}
+
+/// Screen Recording only takes effect after a relaunch. The guide reopens on the same step after.
+#[tauri::command]
+fn relaunch(app: AppHandle) {
+    app.restart();
+}
+
+/// Finishes the guide: closes it and has the Sidekick drop in right under the tray icon.
+#[tauri::command]
+fn onboarding_finish(app: AppHandle, text: String) {
+    if let Some(w) = app.get_webview_window(ONBOARDING_LABEL) {
+        let _ = w.close();
+    }
+    let tray = app.tray_by_id("roamies").and_then(|t| t.rect().ok().flatten());
+    let app2 = app.clone();
+    // Let the guide window finish closing first, so the drop-in is the only thing moving.
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(350));
+        let app3 = app2.clone();
+        let _ = app2.run_on_main_thread(move || intro_at_tray(&app3, tray, &text));
+    });
+}
+
+fn intro_at_tray(app: &AppHandle, tray: Option<tauri::Rect>, text: &str) {
+    let overlays: Vec<WebviewWindow> = app.webview_windows().into_iter().filter(|(l, _)| is_overlay(l)).map(|(_, w)| w).collect();
+    // Tray icon centre in physical px; without it, aim for the right end of the main screen's menu bar.
+    let point = tray.map(|r| {
+        let s = 1.0;
+        let p = r.position.to_physical::<f64>(s);
+        let z = r.size.to_physical::<f64>(s);
+        (p.x + z.width / 2.0, p.y + z.height / 2.0)
+    });
+    for w in &overlays {
+        let (Ok(pos), Ok(size), Ok(scale)) = (w.inner_position(), w.inner_size(), w.scale_factor()) else { continue };
+        let (x0, y0, x1) = (pos.x as f64, pos.y as f64, pos.x as f64 + size.width as f64);
+        let x = match point {
+            Some((px, py)) if px >= x0 && px < x1 && py >= y0 - 50.0 && py < y0 + size.height as f64 => (px - x0) / scale,
+            Some(_) => continue,
+            None => size.width as f64 / scale - 120.0,
+        };
+        let msg = json!({ "kind": "intro", "x": x, "text": text });
+        let _ = w.eval(format!("window.__roamieHost&&__roamieHost({msg})"));
+        return;
+    }
+}
+
+// ---------- menu bar icon ----------
+
+/// The "Wave" icon: the Sidekick waving a floating mitt, as a 12×12 LED grid.
+const TRAY_ART: [&str; 12] = [
+    "............",
+    "..........#.",
+    ".........###",
+    "..........#.",
+    "..####......",
+    ".######.....",
+    "##.##.##....",
+    "##.##.##....",
+    "########....",
+    ".######.....",
+    "..####......",
+    "............",
+];
+
+/// Renders the grid as LED dots (2 px on a 3 px pitch, 36 px = 18 pt at 2x). Black on transparent, used
+/// as a template image so macOS tints it for light, dark and highlighted menu bars.
+fn tray_image() -> tauri::image::Image<'static> {
+    const PITCH: usize = 3;
+    const DOT: usize = 2;
+    let n = TRAY_ART.len() * PITCH;
+    let mut rgba = vec![0u8; n * n * 4];
+    for (y, row) in TRAY_ART.iter().enumerate() {
+        for (x, c) in row.chars().enumerate() {
+            if c != '#' {
+                continue;
+            }
+            for dy in 0..DOT {
+                for dx in 0..DOT {
+                    let i = ((y * PITCH + dy) * n + x * PITCH + dx) * 4;
+                    rgba[i + 3] = 255;
+                }
+            }
+        }
+    }
+    tauri::image::Image::new_owned(rgba, n as u32, n as u32)
+}
+
+// ---------- setup guide window ----------
+
+/// While the setup guide is open Roamies is a normal app (Dock icon, ⌘Tab), so it's easy to get
+/// back to after a trip to System Settings. Otherwise it lives only in the menu bar.
+fn set_dock(app: &AppHandle, visible: bool) {
+    #[cfg(target_os = "macos")]
+    {
+        let policy = if visible { tauri::ActivationPolicy::Regular } else { tauri::ActivationPolicy::Accessory };
+        if let Err(e) = app.set_activation_policy(policy) {
+            eprintln!("dock icon {}: {e}", if visible { "on" } else { "off" });
+        }
+    }
+    let _ = (app, visible);
+}
+
+fn open_onboarding(app: &AppHandle) {
+    set_dock(app, true);
+    if let Some(w) = app.get_webview_window(ONBOARDING_LABEL) {
+        let _ = w.show();
+        let _ = w.set_focus();
+        activate_app(app);
+        return;
+    }
+    let mut b = WebviewWindowBuilder::new(app, ONBOARDING_LABEL, WebviewUrl::App("onboarding/index.html".into()))
+        .title("Welcome to Roamies")
+        .inner_size(780.0, 540.0)
+        .resizable(false)
+        .maximizable(false)
+        .minimizable(false)
+        .center()
+        .focused(true)
+        .background_color(tauri::window::Color(5, 16, 18, 255));
+    #[cfg(target_os = "macos")]
+    {
+        b = b.title_bar_style(tauri::TitleBarStyle::Overlay).hidden_title(true);
+    }
+    match b.build() {
+        Ok(w) => {
+            ONBOARDING.store(true, Ordering::Relaxed);
+            let app2 = app.clone();
+            w.on_window_event(move |e| {
+                if let tauri::WindowEvent::Destroyed = e {
+                    ONBOARDING.store(false, Ordering::Relaxed);
+                    set_dock(&app2, false);
+                    to_sidecar(&app2, &json!({ "type": "ob_closed" }));
+                }
+            });
+            activate_app(app);
+        }
+        Err(e) => {
+            set_dock(app, false);
+            eprintln!("setup guide failed to open: {e}");
+        }
+    }
+}
+
+/// A menu-bar-only app isn't frontmost, and macOS 14+ ignores requests to activate it from the
+/// background. So the guide window is put on top directly, then the app asks to become active.
+fn activate_app(app: &AppHandle) {
+    #[cfg(target_os = "macos")]
+    {
+        let ptr = app.get_webview_window(ONBOARDING_LABEL).and_then(|w| w.ns_window().ok()).map(|p| p as usize);
+        let _ = app.run_on_main_thread(move || unsafe {
+            use objc2::runtime::{AnyObject, Bool};
+            use objc2::{class, msg_send};
+            if let Some(p) = ptr {
+                let win = p as *mut AnyObject;
+                let _: () = msg_send![win, orderFrontRegardless];
+                let _: () = msg_send![win, makeKeyWindow];
+            }
+            let ns_app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
+            let _: () = msg_send![ns_app, activateIgnoringOtherApps: Bool::YES];
+        });
+    }
+    let _ = app;
 }
 
 // ---------- overlays ----------
@@ -122,7 +402,10 @@ fn safe_js(mon: &tauri::Monitor) -> String {
     let left = (wa.position.x - p.x).max(0) as f64 / s;
     let bottom = ((p.y + z.height as i32) - (wa.position.y + wa.size.height as i32)).max(0) as f64 / s;
     let right = ((p.x + z.width as i32) - (wa.position.x + wa.size.width as i32)).max(0) as f64 / s;
-    format!("window.__roamieSafe&&__roamieSafe({{top:{top:.0},left:{left:.0},bottom:{bottom:.0},right:{right:.0}}})")
+    // origin: this screen's top-left in global points, so the page can place things given in screen
+    // coordinates (like the window being captured).
+    let (ox, oy) = (p.x as f64 / s, p.y as f64 / s);
+    format!("window.__roamieSafe&&__roamieSafe({{top:{top:.0},left:{left:.0},bottom:{bottom:.0},right:{right:.0},ox:{ox:.0},oy:{oy:.0}}})")
 }
 
 // ~60 Hz: hand each overlay the cursor in its own CSS pixels. Every ~2 s, refresh the safe area
@@ -230,6 +513,7 @@ fn spawn_sidecar(app: &AppHandle) {
     let mut cmd = Command::new(node);
     cmd.arg(&script)
         .env("ROAMIES_VERSION", app.package_info().version.to_string())
+        .env("ROAMIES_HANDS", helper_binary("roamies-hands").map(|p| p.to_string_lossy().into_owned()).unwrap_or_default())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(stderr);
@@ -261,10 +545,15 @@ fn spawn_sidecar(app: &AppHandle) {
 
 // ---------- voice helper (macOS: ⌃⌥ + Apple speech) ----------
 
-fn voice_binary() -> Option<PathBuf> {
+/// A bundled helper next to the app binary (Contents/MacOS on macOS).
+fn helper_binary(name: &str) -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
-    let p = exe.parent()?.join(if cfg!(windows) { "roamies-voice.exe" } else { "roamies-voice" });
+    let p = exe.parent()?.join(if cfg!(windows) { format!("{name}.exe") } else { name.to_string() });
     p.is_file().then_some(p)
+}
+
+fn voice_binary() -> Option<PathBuf> {
+    helper_binary("roamies-voice")
 }
 
 fn log_stdio(name: &str) -> Stdio {
@@ -285,7 +574,8 @@ fn start_voice(app: &AppHandle) {
         eprintln!("voice helper not found next to the app binary");
         return;
     };
-    let mut child = match Command::new(bin).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(log_stdio("sidekick-voice.log")).spawn() {
+    let chord = app.state::<TalkChord>().0.lock().unwrap().join(",");
+    let mut child = match Command::new(bin).arg("--chord").arg(chord).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(log_stdio("sidekick-voice.log")).spawn() {
         Ok(c) => c,
         Err(e) => {
             eprintln!("voice helper failed to start: {e}");
@@ -332,48 +622,98 @@ fn stop_voice(app: &AppHandle) {
     to_overlays(app, &json!({ "kind": "voice", "type": "state", "state": "idle" }));
 }
 
-/// Tell the voice helper to drop a ⌃⌥ press that turned out to be the ⌃⌥S shortcut.
-fn cancel_voice(app: &AppHandle) {
+fn to_voice(app: &AppHandle, msg: &Value) {
     if let Some(child) = app.state::<Voice>().0.lock().unwrap().as_mut() {
         if let Some(stdin) = child.stdin.as_mut() {
-            let _ = writeln!(stdin, r#"{{"cmd":"cancel"}}"#);
+            let _ = writeln!(stdin, "{msg}");
         }
     }
 }
 
-/// ⌃⌥S: bring the sidekick forward, or send it away if it's already out.
-fn register_summon(app: &AppHandle) {
-    use global_hotkey::hotkey::{Code, HotKey, Modifiers};
+/// Tell the voice helper to drop a talk-chord press that turned out to be the show/hide shortcut.
+fn cancel_voice(app: &AppHandle) {
+    to_voice(app, &json!({ "cmd": "cancel" }));
+}
+
+/// Show/hide shortcut (default ⌃⌥S): brings the sidekick forward, or sends it away if it's out.
+/// Must run on the main thread.
+fn init_hotkeys(app: &AppHandle) {
     use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
-    let manager = match GlobalHotKeyManager::new() {
-        Ok(m) => m,
+    match GlobalHotKeyManager::new() {
+        Ok(m) => HOTKEYS.with(|h| *h.borrow_mut() = Some((m, [None, None]))),
         Err(e) => return eprintln!("hotkeys unavailable: {e}"),
-    };
-    let summon = HotKey::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyS);
-    if let Err(e) = manager.register(summon) {
-        return eprintln!("could not register ⌃⌥S: {e}");
     }
-    // Lives for the whole run; dropping it would unregister the shortcut.
-    Box::leak(Box::new(manager));
     let app = app.clone();
-    let id = summon.id();
     GlobalHotKeyEvent::set_event_handler(Some(move |e: GlobalHotKeyEvent| {
-        if e.id() != id || e.state() != HotKeyState::Pressed {
+        if e.state() != HotKeyState::Pressed {
+            return;
+        }
+        let summon = e.id() == SUMMON_ID.load(Ordering::Relaxed);
+        let snap = e.id() == SNAP_ID.load(Ordering::Relaxed);
+        if !summon && !snap {
             return;
         }
         let app2 = app.clone();
         let _ = app.run_on_main_thread(move || {
+            // Both shortcuts share modifiers with the talk chord; that press wasn't a request to talk.
             cancel_voice(&app2);
-            to_overlays(&app2, &json!({ "kind": "summon" }));
+            if summon {
+                to_overlays(&app2, &json!({ "kind": "summon" }));
+            } else {
+                to_sidecar(&app2, &json!({ "type": "snap" }));
+            }
         });
     }));
+}
+
+/// Swaps one global shortcut (0 = show/hide, 1 = ask about an area). On failure (bad format, or
+/// another app owns it) the old one stays.
+fn set_hotkey(slot: usize, accel: &str) -> Result<(), String> {
+    use global_hotkey::hotkey::HotKey;
+    let new: HotKey = accel.parse().map_err(|e| format!("{e}"))?;
+    let id_slot = if slot == 0 { &SUMMON_ID } else { &SNAP_ID };
+    HOTKEYS.with(|h| {
+        let mut h = h.borrow_mut();
+        let Some((manager, keys)) = h.as_mut() else { return Err("hotkeys unavailable".to_string()) };
+        let current = keys[slot];
+        if current.map(|c| c.id()) == Some(new.id()) {
+            return Ok(());
+        }
+        if keys[1 - slot].map(|c| c.id()) == Some(new.id()) {
+            return Err("already used by the other Roamies shortcut".to_string());
+        }
+        if let Some(old) = current {
+            let _ = manager.unregister(old);
+        }
+        match manager.register(new) {
+            Ok(()) => {
+                keys[slot] = Some(new);
+                id_slot.store(new.id(), Ordering::Relaxed);
+                Ok(())
+            }
+            Err(e) => {
+                if let Some(old) = current {
+                    let _ = manager.register(old);
+                }
+                Err(format!("{e}"))
+            }
+        }
+    })
 }
 
 fn handle_voice(app: &AppHandle, msg: Value) {
     let mut ui = msg.clone();
     ui["kind"] = json!("voice");
+    if msg.get("type").and_then(Value::as_str) == Some("ready") {
+        app.state::<Voice>().1.store(0, Ordering::Relaxed);
+        return;
+    }
+    // While the setup guide is open, talking is just the "try it" test: it never reaches the agent.
+    if ONBOARDING.load(Ordering::Relaxed) {
+        to_onboarding(app, &ui);
+        return;
+    }
     match msg.get("type").and_then(Value::as_str) {
-        Some("ready") => app.state::<Voice>().1.store(0, Ordering::Relaxed),
         Some("state") => {
             to_overlays(app, &ui);
             to_sidecar(app, &json!({ "type": "voice_state", "state": msg.get("state") }));
@@ -404,10 +744,40 @@ fn handle_sidecar(app: &AppHandle, msg: Value) {
                 to_overlays(app, m);
             }
         }
+        Some("onboard") => {
+            if let Some(m) = msg.get("msg") {
+                to_onboarding(app, m);
+            }
+        }
+        Some("onboarding") => open_onboarding(app),
+        Some("keybinds") => {
+            for (slot, which) in [(0usize, "summon"), (1, "snap")] {
+                if which == "snap" && !cfg!(target_os = "macos") {
+                    continue;
+                }
+                if let Some(accel) = msg.get(which).and_then(Value::as_str) {
+                    if let Err(e) = set_hotkey(slot, accel) {
+                        eprintln!("{which} shortcut {accel}: {e}");
+                        to_sidecar(app, &json!({ "type": "keybind_error", "which": which, "accel": accel, "error": e }));
+                    }
+                }
+            }
+            if let Some(mods) = msg.get("talk").and_then(Value::as_array) {
+                let mods: Vec<String> = mods.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect();
+                if mods.len() == 2 {
+                    *app.state::<TalkChord>().0.lock().unwrap() = mods.clone();
+                    to_voice(app, &json!({ "cmd": "chord", "mods": mods }));
+                }
+            }
+        }
+        // Listen right away, hands-free (after an area snap: snap, then just talk).
+        Some("listen") => to_voice(app, &json!({ "cmd": "listen" })),
         Some("voice_config") => {
             if msg.get("enabled").and_then(Value::as_bool) == Some(true) {
                 app.state::<Voice>().1.store(0, Ordering::Relaxed);
                 start_voice(app);
+                let mute = msg.get("mute").and_then(Value::as_bool).unwrap_or(true);
+                to_voice(app, &json!({ "cmd": "mute", "on": mute }));
             } else {
                 stop_voice(app);
             }
@@ -434,7 +804,8 @@ fn main() {
         .manage(Sidecar(Mutex::new(None)))
         .manage(Roster(Mutex::new(vec!["sidekick".into()])))
         .manage(Voice(Mutex::new(None), AtomicUsize::new(0)))
-        .invoke_handler(tauri::generate_handler![set_hot, sidecar_send, set_typing])
+        .manage(TalkChord(Mutex::new(vec!["control".into(), "option".into()])))
+        .invoke_handler(tauri::generate_handler![set_hot, sidecar_send, set_typing, perm_status, perm_request, open_settings, onboarding_finish, relaunch, focus_guide, drag_window])
         .on_menu_event(|app, e| match e.id.as_ref() {
             "quit" => app.exit(0),
             "restart" => spawn_sidecar(app),
@@ -454,7 +825,7 @@ fn main() {
             let mut tray = TrayIconBuilder::with_id("roamies").tooltip("Roamies").menu(&menu);
             #[cfg(target_os = "macos")]
             {
-                tray = tray.title("◉");
+                tray = tray.icon(tray_image()).icon_as_template(true);
             }
             #[cfg(not(target_os = "macos"))]
             if let Some(icon) = app.default_window_icon() {
@@ -462,7 +833,14 @@ fn main() {
             }
             tray.build(app)?;
 
-            register_summon(app.handle());
+            init_hotkeys(app.handle());
+            if let Err(e) = set_hotkey(0, "Control+Alt+KeyS") {
+                eprintln!("could not register the show/hide shortcut: {e}");
+            }
+            #[cfg(target_os = "macos")]
+            if let Err(e) = set_hotkey(1, "Control+Alt+KeyA") {
+                eprintln!("could not register the area shortcut: {e}");
+            }
             build_overlays(app.handle())?;
             pump_cursor(app.handle().clone());
             spawn_sidecar(app.handle());

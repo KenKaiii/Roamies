@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Welcome to Roamies</title>
+<link rel="stylesheet" href="onboarding.css">
+</head>
+<body>
+<div class="drag" id="drag" aria-hidden="true"></div>
+<div class="shell">
+  <aside class="stage" aria-hidden="true">
+    <div class="pad"></div>
+  </aside>
+
+  <main class="panel">
+    <header class="top">
+      <p class="sr-only" id="step-name" aria-live="polite"></p>
+      <ol class="progress" id="progress" aria-label="Setup progress"></ol>
+    </header>
+
+    <section class="step" id="step-0" data-name="Welcome" aria-labelledby="h-0">
+      <h1 id="h-0">Hi, I'm Sidekick.</h1>
+      <p class="lead">I live on your screen, help with your work and keep you on track. Setup takes about a minute.</p>
+    </section>
+
+    <section class="step" id="step-1" data-name="Permissions" aria-labelledby="h-1" hidden>
+      <h1 id="h-1">Let me help</h1>
+      <p class="lead" id="perm-lead">Only used when you ask me something.</p>
+      <ul class="rows" id="perm-rows" aria-live="polite"></ul>
+    </section>
+
+    <section class="step" id="step-2" data-name="Connect AI" aria-labelledby="h-2" hidden>
+      <h1 id="h-2">Give me a brain</h1>
+      <p class="lead">Sign in with an AI account you have. Using GG Coder? You're already in.</p>
+      <p class="connected" id="connected" role="status" hidden></p>
+      <div class="providers" id="providers"></div>
+      <form class="inline" id="code-form" hidden>
+        <label for="code-input" id="code-label">Paste the code from your browser</label>
+        <div class="field-row">
+          <span class="px field"><input id="code-input" autocomplete="off" spellcheck="false"></span>
+          <button class="px btn primary" type="submit">Submit</button>
+        </div>
+      </form>
+      <button class="link" type="button" id="key-toggle" aria-expanded="false" aria-controls="key-form">Use an API key instead</button>
+      <form class="inline" id="key-form" hidden>
+        <label for="key-provider" class="sr-only">Provider</label>
+        <div class="field-row">
+          <span class="px field select"><select id="key-provider"></select></span>
+          <label for="key-input" class="sr-only">API key</label>
+          <span class="px field"><input id="key-input" type="password" placeholder="Paste API key" autocomplete="off" spellcheck="false"></span>
+          <button class="px btn primary" type="submit">Save</button>
+        </div>
+      </form>
+      <p class="error" id="login-error" role="alert" hidden></p>
+    </section>
+
+    <section class="step" id="step-3" data-name="Shortcuts" aria-labelledby="h-3" hidden>
+      <h1 id="h-3">Your shortcuts</h1>
+      <p class="lead">These work from anywhere. Change them if you like.</p>
+      <div class="px keyrow" id="talk-row">
+        <div class="keyrow-head">
+          <h2>Talk to me</h2>
+          <p>Hold, talk, let go. A quick tap listens hands-free.</p>
+        </div>
+        <div class="chords" id="chords" role="radiogroup" aria-label="Talk shortcut"></div>
+        <div class="try" id="try">
+          <span class="try-label" id="try-label"></span>
+          <span class="meter" id="meter" aria-hidden="true"></span>
+          <span class="heard" id="heard" role="status"></span>
+        </div>
+      </div>
+      <div class="px keyrow">
+        <div class="kline">
+          <div><h2>Show or hide me</h2><p>Bring me back any time.</p></div>
+          <div class="summon">
+            <span class="caps" id="summon-caps"></span>
+            <button class="px btn ghost" type="button" id="summon-change" aria-label="Change the show or hide shortcut">Change</button>
+          </div>
+        </div>
+        <div class="kline" id="snap-line">
+          <div><h2>Ask about an area</h2><p>Drag a box, then ask.</p></div>
+          <div class="summon">
+            <span class="caps" id="snap-caps"></span>
+            <button class="px btn ghost" type="button" id="snap-change" aria-label="Change the ask about an area shortcut">Change</button>
+          </div>
+        </div>
+      </div>
+      <p class="error" id="keys-error" role="alert" hidden></p>
+    </section>
+
+    <section class="step" id="step-4" data-name="Find me" aria-labelledby="h-4" hidden>
+      <h1 id="h-4">Find me up here</h1>
+      <p class="lead">I live in your menu bar. Click <span class="glyph"><svg class="trayicon" viewBox="0 0 36 36" aria-hidden="true" fill="currentColor"><rect x="30" y="3" width="2" height="2"/><rect x="27" y="6" width="2" height="2"/><rect x="30" y="6" width="2" height="2"/><rect x="33" y="6" width="2" height="2"/><rect x="30" y="9" width="2" height="2"/><rect x="6" y="12" width="2" height="2"/><rect x="9" y="12" width="2" height="2"/><rect x="12" y="12" width="2" height="2"/><rect x="15" y="12" width="2" height="2"/><rect x="3" y="15" width="2" height="2"/><rect x="6" y="15" width="2" height="2"/><rect x="9" y="15" width="2" height="2"/><rect x="12" y="15" width="2" height="2"/><rect x="15" y="15" width="2" height="2"/><rect x="18" y="15" width="2" height="2"/><rect x="0" y="18" width="2" height="2"/><rect x="3" y="18" width="2" height="2"/><rect x="9" y="18" width="2" height="2"/><rect x="12" y="18" width="2" height="2"/><rect x="18" y="18" width="2" height="2"/><rect x="21" y="18" width="2" height="2"/><rect x="0" y="21" width="2" height="2"/><rect x="3" y="21" width="2" height="2"/><rect x="9" y="21" width="2" height="2"/><rect x="12" y="21" width="2" height="2"/><rect x="18" y="21" width="2" height="2"/><rect x="21" y="21" width="2" height="2"/><rect x="0" y="24" width="2" height="2"/><rect x="3" y="24" width="2" height="2"/><rect x="6" y="24" width="2" height="2"/><rect x="9" y="24" width="2" height="2"/><rect x="12" y="24" width="2" height="2"/><rect x="15" y="24" width="2" height="2"/><rect x="18" y="24" width="2" height="2"/><rect x="21" y="24" width="2" height="2"/><rect x="3" y="27" width="2" height="2"/><rect x="6" y="27" width="2" height="2"/><rect x="9" y="27" width="2" height="2"/><rect x="12" y="27" width="2" height="2"/><rect x="15" y="27" width="2" height="2"/><rect x="18" y="27" width="2" height="2"/><rect x="6" y="30" width="2" height="2"/><rect x="9" y="30" width="2" height="2"/><rect x="12" y="30" width="2" height="2"/><rect x="15" y="30" width="2" height="2"/></svg></span><span class="sr-only">the Roamies icon</span> for chats, settings, sign-ins and this guide.</p>
+      <div class="px menubar" aria-hidden="true">
+        <span class="mb-item"></span><span class="mb-item short"></span><span class="mb-item"></span>
+        <span class="mb-me"><svg class="trayicon" viewBox="0 0 36 36" aria-hidden="true" fill="currentColor"><rect x="30" y="3" width="2" height="2"/><rect x="27" y="6" width="2" height="2"/><rect x="30" y="6" width="2" height="2"/><rect x="33" y="6" width="2" height="2"/><rect x="30" y="9" width="2" height="2"/><rect x="6" y="12" width="2" height="2"/><rect x="9" y="12" width="2" height="2"/><rect x="12" y="12" width="2" height="2"/><rect x="15" y="12" width="2" height="2"/><rect x="3" y="15" width="2" height="2"/><rect x="6" y="15" width="2" height="2"/><rect x="9" y="15" width="2" height="2"/><rect x="12" y="15" width="2" height="2"/><rect x="15" y="15" width="2" height="2"/><rect x="18" y="15" width="2" height="2"/><rect x="0" y="18" width="2" height="2"/><rect x="3" y="18" width="2" height="2"/><rect x="9" y="18" width="2" height="2"/><rect x="12" y="18" width="2" height="2"/><rect x="18" y="18" width="2" height="2"/><rect x="21" y="18" width="2" height="2"/><rect x="0" y="21" width="2" height="2"/><rect x="3" y="21" width="2" height="2"/><rect x="9" y="21" width="2" height="2"/><rect x="12" y="21" width="2" height="2"/><rect x="18" y="21" width="2" height="2"/><rect x="21" y="21" width="2" height="2"/><rect x="0" y="24" width="2" height="2"/><rect x="3" y="24" width="2" height="2"/><rect x="6" y="24" width="2" height="2"/><rect x="9" y="24" width="2" height="2"/><rect x="12" y="24" width="2" height="2"/><rect x="15" y="24" width="2" height="2"/><rect x="18" y="24" width="2" height="2"/><rect x="21" y="24" width="2" height="2"/><rect x="3" y="27" width="2" height="2"/><rect x="6" y="27" width="2" height="2"/><rect x="9" y="27" width="2" height="2"/><rect x="12" y="27" width="2" height="2"/><rect x="15" y="27" width="2" height="2"/><rect x="18" y="27" width="2" height="2"/><rect x="6" y="30" width="2" height="2"/><rect x="9" y="30" width="2" height="2"/><rect x="12" y="30" width="2" height="2"/><rect x="15" y="30" width="2" height="2"/></svg></span>
+        <span class="mb-clock">9:41</span>
+      </div>
+      <dl class="recap" id="recap"></dl>
+    </section>
+
+    <footer class="nav">
+      <button class="btn text" type="button" id="back">Back</button>
+      <span class="spacer"></span>
+      <button class="link" type="button" id="skip" hidden>Skip for now</button>
+      <button class="px btn primary" type="button" id="next">Let's go</button>
+    </footer>
+  </main>
+</div>
+
+<p class="px quip" id="quip" aria-hidden="true"></p>
+<span class="quip-tail" id="quip-tail" aria-hidden="true"></span>
+<canvas class="roamie" id="roamie" aria-hidden="true"></canvas>
+
+<script>window.ROAMIE_AUTOSOUND = true;</script>
+<script src="../roamies/core.js"></script>
+<script src="../roamies/sfx.js"></script>
+<script src="../roamies/10-dither.js"></script>
+<script src="onboarding.js"></script>
+</body>
+</html>

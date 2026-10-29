@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Roamies menu bar icon options</title>
+<style>
+  @font-face { font-family: "Doto"; src: url("../onboarding/fonts/doto.woff2") format("woff2"); font-weight: 100 900; }
+  @font-face { font-family: "Martian Mono"; src: url("../onboarding/fonts/martian-mono.woff2") format("woff2"); font-weight: 100 800; font-stretch: 75% 112.5%; }
+  :root { --bg: #051214; --ink: #e8fffa; --ink-2: #b4d8d1; --ink-3: #8ab8b0; --accent: #78ffe2; --line: #1d4a48; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 36px 40px 48px; color: var(--ink);
+    background: radial-gradient(circle at 50% 50%, rgba(80, 210, 190, 0.08) 0.9px, transparent 1.3px) 0 0 / 8px 8px, var(--bg);
+    font: 400 12px/1.55 "Martian Mono", ui-monospace, monospace; font-stretch: 87.5%;
+  }
+  h1 { margin: 0 0 4px; font: 900 34px/1.1 "Doto", monospace; text-shadow: 0 0 14px rgba(120, 255, 226, 0.35); }
+  .lead { margin: 0 0 28px; color: var(--ink-2); }
+  .grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 16px; }
+  .card { border: 2px solid var(--line); padding: 16px 14px 14px; display: grid; gap: 12px; align-content: start; }
+  .card h2 { margin: 0; display: flex; align-items: baseline; gap: 10px; font: 700 13px/1.3 "Martian Mono", monospace; }
+  .card h2 b { font: 900 22px/1 "Doto", monospace; color: var(--accent); }
+  .card p { margin: 0; min-height: 4.4em; color: var(--ink-3); font-size: 11px; line-height: 1.45; }
+  .big { display: grid; place-items: center; height: 170px; background: #030c0d; border: 2px solid #12302f; }
+  .bars { display: grid; gap: 8px; }
+  /* Menu bar mocks at true size (24 pt tall, icons 18 pt). */
+  .mb { display: flex; align-items: center; justify-content: flex-end; gap: 14px; height: 24px; padding: 0 10px; border-radius: 6px; font: 500 13px/1 -apple-system, "SF Pro Text", system-ui, sans-serif; }
+  .mb.dark { background: linear-gradient(#2a2d33, #1f2226); color: #fff; }
+  .mb.light { background: linear-gradient(#eceef1, #dfe2e6); color: #111; }
+  .mb canvas { display: block; }
+  .mb .g { opacity: 0.9; }
+  .chip { display: inline-block; width: 22px; height: 11px; border: 1.5px solid currentColor; border-radius: 3px; position: relative; opacity: 0.9; }
+  .chip::after { content: ""; position: absolute; inset: 1.5px 6px 1.5px 1.5px; background: currentColor; border-radius: 1px; }
+  .wifi { display: inline-block; width: 15px; height: 11px; border: 2.5px solid currentColor; border-color: currentColor transparent transparent transparent; border-radius: 50% 50% 0 0 / 100% 100% 0 0; opacity: 0.9; }
+</style>
+</head>
+<body>
+<h1>Menu bar icon</h1>
+<p class="lead">Five options. Each is shown big, then at real size in a dark and a light menu bar, where macOS tints it to match like any other menu bar icon.</p>
+<div class="grid" id="grid"></div>
+
+<script>
+// 12×12 LED grids ('#' = lit). At 2x each LED is a 2 px dot on a 3 px pitch, so the icon is 36 px = 18 pt
+// tall, exactly what the tray draws. Art spans rows 1–10, so it sits like other icons (about 15 pt of ink).
+const ICONS = [
+  {
+    id: 'A', name: 'Face', note: 'The Sidekick itself: a solid LED blob with two eyes.',
+    rows: [
+      '............',
+      '....####....',
+      '..########..',
+      '.##########.',
+      '.###.##.###.',
+      '.###.##.###.',
+      '.##########.',
+      '.##########.',
+      '..########..',
+      '....####....',
+      '............',
+      '............',
+    ],
+  },
+  {
+    id: 'B', name: 'Outline', note: 'An LED ring with two eyes. Lighter, closer to Apple\u2019s own icons.',
+    rows: [
+      '............',
+      '....####....',
+      '..##....##..',
+      '.#........#.',
+      '.#..#..#..#.',
+      '.#..#..#..#.',
+      '.#........#.',
+      '.#........#.',
+      '..##....##..',
+      '....####....',
+      '............',
+      '............',
+    ],
+  },
+  {
+    id: 'C', name: 'Talk', note: 'An LED speech bubble with eyes: the Sidekick mid-sentence.',
+    rows: [
+      '............',
+      '............',
+      '.##########.',
+      '#..........#',
+      '#...#..#...#',
+      '#...#..#...#',
+      '#..........#',
+      '.##########.',
+      '..##........',
+      '..#.........',
+      '............',
+      '............',
+    ],
+  },
+  {
+    id: 'D', name: 'Wave', note: 'A smaller blob waving one floating mitt, like it does on screen.',
+    rows: [
+      '............',
+      '..........#.',
+      '.........###',
+      '..........#.',
+      '..####......',
+      '.######.....',
+      '##.##.##....',
+      '##.##.##....',
+      '########....',
+      '.######.....',
+      '..####......',
+      '............',
+    ],
+  },
+  {
+    id: 'E', name: 'Signal', note: 'Today\u2019s \u25c9 rebuilt in LEDs: a ring with a lit core.',
+    rows: [
+      '............',
+      '....####....',
+      '..##....##..',
+      '.#........#.',
+      '.#...##...#.',
+      '.#..####..#.',
+      '.#..####..#.',
+      '.#...##...#.',
+      '..##....##..',
+      '....####....',
+      '............',
+      '............',
+    ],
+  },
+];
+
+const lit = (icon) => { const pts = []; icon.rows.forEach((r, y) => [...r].forEach((c, x) => c === '#' && pts.push([x, y]))); return pts; };
+
+// Real size: 2 px dots on a 3 px pitch at 2x, drawn in the menu bar's tint.
+function small(icon, color) {
+  const dpr = 2, pitch = 3, dot = 2, w = icon.rows[0].length * pitch, h = icon.rows.length * pitch;
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h; c.style.width = `${w / dpr}px`; c.style.height = `${h / dpr}px`;
+  const x = c.getContext('2d');
+  x.fillStyle = color;
+  for (const [cx, cy] of lit(icon)) x.fillRect(cx * pitch, cy * pitch, dot, dot);
+  return c;
+}
+
+// Big: each cell as a glowing LED, unlit cells faintly visible like a real panel.
+function big(icon) {
+  const cell = 12, pad = 10, n = icon.rows.length, w = icon.rows[0].length * cell + pad * 2, h = n * cell + pad * 2;
+  const c = document.createElement('canvas'), dpr = 2;
+  c.width = w * dpr; c.height = h * dpr; c.style.width = `${w}px`; c.style.height = `${h}px`;
+  const x = c.getContext('2d'); x.scale(dpr, dpr);
+  const d = cell * 0.74, o = (cell - d) / 2;
+  icon.rows.forEach((r, cy) => [...r].forEach((ch, cx) => {
+    const px = pad + cx * cell, py = pad + cy * cell;
+    if (ch !== '#') { x.fillStyle = 'rgba(40,110,100,0.22)'; x.fillRect(px + o, py + o, d, d); return; }
+    const g = x.createRadialGradient(px + cell / 2, py + cell / 2, 0, px + cell / 2, py + cell / 2, cell * 1.4);
+    g.addColorStop(0, 'rgba(120,255,226,0.35)'); g.addColorStop(1, 'rgba(120,255,226,0)');
+    x.fillStyle = g; x.fillRect(px - cell, py - cell, cell * 3, cell * 3);
+  }));
+  icon.rows.forEach((r, cy) => [...r].forEach((ch, cx) => {
+    if (ch !== '#') return;
+    const px = pad + cx * cell, py = pad + cy * cell;
+    x.fillStyle = '#78ffe2'; x.fillRect(px + o, py + o, d, d);
+    x.fillStyle = 'rgba(230,255,250,0.9)'; x.fillRect(px + o + d * 0.2, py + o + d * 0.2, d * 0.45, d * 0.45);
+  }));
+  return c;
+}
+
+function bar(icon, mode) {
+  const b = document.createElement('div');
+  b.className = `mb ${mode}`;
+  const tint = mode === 'dark' ? '#ffffff' : '#111111';
+  const wifi = document.createElement('span'); wifi.className = 'wifi';
+  const batt = document.createElement('span'); batt.className = 'chip';
+  const clock = document.createElement('span'); clock.className = 'g'; clock.textContent = '1:05 PM';
+  b.append(small(icon, tint), wifi, batt, clock);
+  return b;
+}
+
+const grid = document.getElementById('grid');
+for (const icon of ICONS) {
+  const card = document.createElement('section');
+  card.className = 'card';
+  card.innerHTML = `<h2><b>${icon.id}</b>${icon.name}</h2><p>${icon.note}</p>`;
+  const bigWrap = document.createElement('div'); bigWrap.className = 'big'; bigWrap.append(big(icon));
+  const bars = document.createElement('div'); bars.className = 'bars'; bars.append(bar(icon, 'dark'), bar(icon, 'light'));
+  card.append(bigWrap, bars);
+  grid.append(card);
+}
+</script>
+</body>
+</html>

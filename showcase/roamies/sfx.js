@@ -98,6 +98,7 @@
     error: (X, t) => { tone(X, t, { wave: 'p25', f0: 392, dur: 0.09, vol: 0.18 }); tone(X, t + 0.1, { wave: 'p25', f0: 311, dur: 0.16, vol: 0.18 }); },
     focus: (X, t) => { for (let i = 0; i < 3; i++) tone(X, t + i * 0.09, { wave: 'sine', f0: 2200, dur: 0.02, vol: 0.08 }); },
     shutter: (X, t) => { hiss(X, t, { dur: 0.05, vol: 0.3, type: 'highpass', f0: 2500 }); tone(X, t, { f0: 1600, f1: 700, dur: 0.05, vol: 0.18 }); hiss(X, t + 0.07, { dur: 0.04, vol: 0.2, type: 'highpass', f0: 3000 }); },
+    scan: (X, t) => { tone(X, t, { wave: 'sine', f0: 620, f1: 1500, dur: 0.5, vol: 0.05, attack: 0.03 }); tone(X, t + 0.02, { wave: 'p12', f0: 1240, f1: 3000, dur: 0.45, vol: 0.02, attack: 0.03 }); },
     gulp: (X, t) => tone(X, t, { wave: 'sine', f0: 300, f1: 620, dur: 0.09, vol: 0.28 }),
     page: (X, t) => hiss(X, t, { dur: 0.12, vol: 0.18, f0: 4200, f1: 1800, q: 0.7 }),
     scribble: (X, t) => hiss(X, t, { dur: 0.05, vol: 0.07, f0: 5000, q: 2 }),

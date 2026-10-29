@@ -6,7 +6,13 @@ set -euo pipefail
 cd "$(dirname "$0")"
 rm -rf dist && mkdir -p dist
 cp ../desktop.html ../demo.js dist/
-cp -R ../roamies dist/
+cp -R ../roamies ../onboarding dist/
 ../tauri/sidecar/bundle.sh
 cd src-tauri
+# macOS signing: APPLE_SIGNING_IDENTITY if set, else the first Developer ID Application certificate in
+# the keychain, else ad-hoc. A stable identity keeps macOS permissions across rebuilds.
+if [ "$(uname)" = "Darwin" ] && [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
+  APPLE_SIGNING_IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null | sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -1)"
+  export APPLE_SIGNING_IDENTITY="${APPLE_SIGNING_IDENTITY:--}"
+fi
 if [ "${1:-}" = "dev" ]; then cargo build; else cargo tauri build ${TAURI_BUNDLES:+--bundles $TAURI_BUNDLES}; fi

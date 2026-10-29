@@ -150,74 +150,239 @@
   };
 
   // ===== SCREENSHOT =====  variants: screen | region | window
+  // aim:  a dotted laser sight runs from the lens to the target while the corner brackets spring out,
+  //       overshoot a touch and lock on; the frame lights up with chasing LEDs and a crosshair.
+  // scan: an LED scanline sweeps down the target.
+  // snap: flash, a shutter blink across the frame, sparks off the flash bulb.
+  // then: the shot shrinks into a little pixel photo that arcs back into the camera.
+  // In live mode a window shot waits (brackets breathing around the lens) until the real window is
+  // located, then frames exactly that window.
+  const SHOT = { aim: 0.62, scan: 0.62, blink: 0.24, eject: 0.3, fly: 0.55 };
+  const springTo = (d, tgt, dt, k = 150, damp = 13) => {
+    for (let i = 0; i < 4; i++) {
+      d.vel[i] += ((tgt[i] - d.cur[i]) * k - d.vel[i] * damp) * dt;
+      d.cur[i] += d.vel[i] * dt;
+    }
+  };
   T.screenshot = {
     variants: ['screen', 'region', 'window'], label: 'screenshot', sound: 'focus',
-    start(st, c) {
+    lens(c) { return [c.bx, c.by + c.R * 0.42 + c.P]; },
+    guess(st, c) {
       const pad = 14;
-      let r;
-      if (st.variant === 'screen') r = [pad, pad, c.W - pad, c.H - pad];
-      else if (st.variant === 'window') { const w = c.W * 0.46, h = c.H * 0.42, x = c.bx < c.W / 2 ? c.W * 0.48 : c.W * 0.06; r = [x, c.H * 0.1, x + w, c.H * 0.1 + h]; }
-      else { const w = c.W * 0.28, h = c.H * 0.24, x = c.bx < c.W / 2 ? c.W * 0.62 : c.W * 0.1; r = [x, c.H * 0.16, x + w, c.H * 0.16 + h]; }
-      st.d.rect = r;
-      st.d.cur = [c.bx - c.R, c.by - c.R, c.bx + c.R, c.by + c.R];
-      st.d.snapAt = st.variant === 'region' ? 1.6 : 1.25;
+      if (st.variant === 'screen') return [pad, pad, c.W - pad, c.H - pad];
+      if (st.variant === 'window') { const w = c.W * 0.46, h = c.H * 0.42, x = c.bx < c.W / 2 ? c.W * 0.48 : c.W * 0.06; return [x, c.H * 0.1, x + w, c.H * 0.1 + h]; }
+      const w = c.W * 0.28, h = c.H * 0.24, x = c.bx < c.W / 2 ? c.W * 0.62 : c.W * 0.1;
+      return [x, c.H * 0.16, x + w, c.H * 0.16 + h];
+    },
+    // Window rect from the screen → frame it on this overlay (clamped to what's visible here).
+    fit(t, c) { const m = 4; return [Math.max(m, t[0]), Math.max(m, t[1]), Math.min(c.W - m, t[2]), Math.min(c.H - m, t[3])]; },
+    start(st, c) {
+      const d = st.d, [lx, ly] = T.screenshot.lens(c);
+      d.cur = [lx - c.R * 0.5, ly - c.R * 0.4, lx + c.R * 0.5, ly + c.R * 0.4];
+      d.vel = [0, 0, 0, 0];
+      d.rect = st.target ? T.screenshot.fit(st.target, c) : st.live && st.variant === 'window' ? null : T.screenshot.guess(st, c);
+      d.searching = !d.rect;
+      d.aimAt = d.searching ? Infinity : 0.12;
+    },
+    retarget(st, c) {
+      const d = st.d, r = T.screenshot.fit(st.target, c);
+      if (r[2] - r[0] < 20 || r[3] - r[1] < 20) return; // on another display: keep the guess
+      d.rect = r;
+      if (d.searching) { d.searching = false; d.aimAt = st.age; }
     },
     update(st, c, dt) {
-      const a = st.age, d = st.d, r = d.rect;
-      const k = st.variant === 'window' ? 9 : 6;
-      if (st.variant === 'region' && a < d.snapAt) {
-        // region: the marquee is dragged out from one corner
-        const u = ease(clamp((a - 0.35) / 0.9, 0, 1));
-        const tgt = [r[0], r[1], lerp(r[0] + 8, r[2], u), lerp(r[1] + 8, r[3], u)];
-        for (let i = 0; i < 4; i++) d.cur[i] = R.damp(d.cur[i], tgt[i], 10, dt);
-      } else for (let i = 0; i < 4; i++) d.cur[i] = R.damp(d.cur[i], r[i], k, dt);
-      if (a > d.snapAt - 0.45 && !d.focus) { d.focus = 1; c.S('focus'); }
-      if (a >= d.snapAt && !d.snapped) {
-        d.snapped = 1; d.flash = 1; c.S('shutter'); c.sq.kick(7);
-        d.fly = { x: (r[0] + r[2]) / 2, y: (r[1] + r[3]) / 2, u: 0 };
+      const d = st.d, a = st.age, [lx, ly] = T.screenshot.lens(c);
+      if (d.searching) {
+        const p = 0.5 + 0.5 * Math.sin(a * 6), s = c.R * (0.5 + 0.16 * p);
+        springTo(d, [lx - s * 1.25, ly - s, lx + s * 1.25, ly + s], dt, 90, 14);
+        if (a > 4) { d.rect = T.screenshot.guess({ variant: 'window' }, c); d.searching = false; d.aimAt = a; }
+        return;
       }
-      if (d.flash) d.flash = Math.max(0, d.flash - dt * 3.2);
-      if (d.fly) {
-        d.fly.u += dt / 0.6;
-        if (d.fly.u >= 1 && !d.gulped) { d.gulped = 1; c.sq.kick(9); c.S('gulp'); st.finish(true); }
+      const t = a - d.aimAt, r = d.rect;
+      if (t < 0) return;
+      // aim
+      if (st.variant === 'region' && t < SHOT.aim) {
+        const u = ease(clamp(t / SHOT.aim, 0, 1));
+        springTo(d, [r[0], r[1], lerp(r[0] + 10, r[2], u), lerp(r[1] + 10, r[3], u)], dt, 200, 16);
+      } else springTo(d, r, dt);
+      if (t > SHOT.aim * 0.78 && !d.locked) { d.locked = a; c.S('focus'); for (let i = 0; i < 4; i++) d.vel[i] += (i < 2 ? 1 : -1) * 160; }
+      // scan, then snap
+      const snapT = SHOT.aim + SHOT.scan;
+      if (t > SHOT.aim && !d.scanning) { d.scanning = 1; c.S('scan'); }
+      if (t >= snapT && !d.snapped) {
+        d.snapped = a; d.flash = 1; c.S('shutter'); c.sq.kick(8);
+        const bx = c.bx + c.P * 6, by = c.by + c.R * 0.42 - c.P * 4;
+        for (let i = 0; i < 14; i++) { const ang = (i / 14) * Math.PI * 2, sp = 140 + hash(st.seed + i) * 160; c.spawn(bx, by, Math.cos(ang) * sp, Math.sin(ang) * sp - 40, 260, c.L, 0, 2.2); }
+      }
+      if (d.flash) d.flash = Math.max(0, d.flash - dt * 2.6);
+      // the photo pops out of the frame, then flies home
+      if (d.snapped) {
+        const since = a - d.snapped;
+        if (since > SHOT.blink + SHOT.eject + SHOT.fly && !d.gulped) { d.gulped = 1; c.sq.kick(10); c.S('gulp'); st.finish(true); }
+        const fu = (since - SHOT.blink - SHOT.eject) / SHOT.fly;
+        if (fu > 0 && fu < 1 && Math.random() < dt * 40) {
+          const ph = T.screenshot.photo(st, c);
+          if (ph) c.spawn(ph.cx + (Math.random() - 0.5) * ph.w * 0.6, ph.cy + (Math.random() - 0.5) * ph.h * 0.4, (Math.random() - 0.5) * 50, -20 - Math.random() * 40, 30, Math.random() < 0.5 ? c.L : c.L - 1, 0, 2.6);
+        }
       }
     },
+    // Where the little photo is right now (px), or null.
+    photo(st, c) {
+      const d = st.d;
+      if (!d.snapped || d.gulped || !d.rect) return null;
+      const since = st.age - d.snapped - SHOT.blink;
+      if (since < 0) return null;
+      const r = d.rect, [lx, ly] = T.screenshot.lens(c);
+      const aspect = clamp((r[3] - r[1]) / Math.max(1, r[2] - r[0]), 0.45, 1.3);
+      const pw = clamp(c.R * 1.5, 54, 110), ph = pw * aspect;
+      const fcx = (r[0] + r[2]) / 2, fcy = (r[1] + r[3]) / 2;
+      if (since < SHOT.eject) {
+        // the shot pops out of the frame as a polaroid: it starts at half the frame and settles, bouncing
+        const u = ease(since / SHOT.eject), pop = 1 + Math.sin(u * Math.PI) * 0.12;
+        const w0 = Math.max(pw, (r[2] - r[0]) * 0.42), h0 = Math.max(ph, (r[3] - r[1]) * 0.42);
+        return { cx: fcx, cy: fcy, w: lerp(w0, pw, u) * pop, h: lerp(h0, ph, u) * pop };
+      }
+      const u = ease(clamp((since - SHOT.eject) / SHOT.fly, 0, 1));
+      const x = lerp(fcx, lx, u), y = lerp(fcy, ly, u) - Math.sin(u * Math.PI) * c.R * 1.6, s = lerp(1, 0.22, u);
+      return { cx: x, cy: y, w: pw * s, h: ph * s };
+    },
     pose(st, c) {
-      const d = st.d, rec = d.snapped && st.age - d.snapAt < 0.25 ? 0.1 : 0;
-      const tx = (d.rect[0] + d.rect[2]) / 2, ty = (d.rect[1] + d.rect[3]) / 2;
+      const d = st.d, rec = d.snapped && st.age - d.snapped < 0.25 ? 0.12 : 0;
+      const r = d.rect ?? d.cur, tx = (r[0] + r[2]) / 2, ty = (r[1] + r[3]) / 2;
       c.look(tx, ty);
-      return { arms: 1, tl: [-0.72, 0.42 + rec], tr: [0.72, 0.42 + rec], oy: rec * c.R, mouth: d.snapped ? 'grin' : 'flat', brow: d.focus && !d.snapped ? 'determined' : null };
+      const aiming = d.rect && !d.snapped;
+      return {
+        arms: 1, tl: [-0.72, 0.42 + rec], tr: [0.72, 0.42 + rec], oy: rec * c.R,
+        mouth: d.snapped ? 'grin' : d.searching ? 'o' : 'flat', brow: aiming ? 'determined' : d.searching ? 'raised' : null,
+      };
     },
     grid(st, c) {
       if (st.out > 0.4) return;
-      camera(c, Math.round(c.bx / c.P), Math.round((c.by + c.R * 0.42) / c.P), st, st.d.flash);
+      const d = st.d, P = c.P, cx = Math.round(c.bx / P), cy = Math.round((c.by + c.R * 0.42) / P);
+      camera(c, cx, cy, st, d.flash);
+      // flash bulb starburst
+      if (d.flash > 0.25) {
+        const n = Math.round(d.flash * 6), fx = cx + 6, fy = cy - 5;
+        for (let k = 2; k <= n; k++) for (const [dx, dy] of [[1, 0], [-1, 0], [0, -1], [1, -1], [-1, -1]]) c.put(fx + dx * k, fy + dy * k, k === n ? c.L - 1 : c.L);
+      }
     },
     top(st, c) {
-      const d = st.d, P = c.P;
-      if (!d.snapped || d.flash > 0.4) {
-        const blink = d.focus && !d.snapped ? Math.sin(c.now * 30) > 0 : true;
-        if (blink) brackets(c, Math.round(d.cur[0] / P), Math.round(d.cur[1] / P), Math.round(d.cur[2] / P), Math.round(d.cur[3] / P), c.L, st.variant === 'screen' ? 7 : 4);
-        if (st.variant === 'region' && !d.snapped) {
-          const x0 = Math.round(d.cur[0] / P), y0 = Math.round(d.cur[1] / P), x1 = Math.round(d.cur[2] / P), y1 = Math.round(d.cur[3] / P);
-          for (let x = x0; x <= x1; x += 2) { c.put(x, y0, c.L - 2); c.put(x, y1, c.L - 2); }
-          for (let y = y0; y <= y1; y += 2) { c.put(x0, y, c.L - 2); c.put(x1, y, c.L - 2); }
+      const d = st.d, P = c.P, L = c.L, a = st.age;
+      const g = (v) => Math.round(v / P);
+      const [x0, y0, x1, y1] = d.cur.map(g);
+      const t = a - d.aimAt;
+      const done = d.snapped && a - d.snapped > SHOT.blink;
+      if (!done) {
+        // corner brackets: thick pixel L's that scale with the target
+        const span = Math.min(x1 - x0, y1 - y0);
+        const len = Math.max(3, Math.min(14, Math.round(span * 0.14)));
+        const blink = d.locked && !d.snapped && a - d.locked < 0.3 ? Math.sin(a * 40) > 0 : true;
+        if (blink) brackets(c, x0, y0, x1, y1, L, len);
+      }
+      if (d.searching || !d.rect || done) { T.screenshot.drawPhoto(st, c); return; }
+      const [lx, ly] = T.screenshot.lens(c);
+      const [r0, r1, r2, r3] = d.rect.map(g);
+      const tcx = (r0 + r2) / 2, tcy = (r1 + r3) / 2;
+      // laser sight: marching dots from the lens to the target centre, fading once locked
+      const sight = d.locked ? 1 - clamp((a - d.locked) / 0.4, 0, 1) : clamp(t / 0.15, 0, 1);
+      if (sight > 0.05) {
+        const sx = g(lx), sy = g(ly), n = Math.max(1, Math.ceil(Math.hypot(tcx - sx, tcy - sy)));
+        const skip = Math.ceil((c.R * 1.1) / P);
+        for (let i = skip; i < n; i += 2) {
+          if (c.th(i, 7) > sight) continue;
+          const x = Math.round(lerp(sx, tcx, i / n)), y = Math.round(lerp(sy, tcy, i / n));
+          c.put(x, y, (i - Math.floor(a * 24)) % 8 < 2 ? L : L - 2);
         }
       }
-      if (d.fly && d.fly.u < 1) {
-        const u = ease(d.fly.u), sx = d.fly.x, sy = d.fly.y, ex = c.bx, ey = c.by;
-        const x = lerp(sx, ex, u), y = lerp(sy, ey, u) - Math.sin(u * Math.PI) * c.R * 1.2;
-        const s = lerp(1, 0.35, u), w = Math.max(3, Math.round(11 * s)), h = Math.max(3, Math.round(10 * s));
-        const gx = Math.round(x / P - w / 2), gy = Math.round(y / P - h / 2);
-        box(c, gx, gy, w, h, c.L, c.L, false);
-        for (let yy = 1; yy < h - Math.max(2, Math.round(3 * s)); yy++) for (let xx = 1; xx < w - 1; xx++) c.put(gx + xx, gy + yy, c.th(gx + xx, gy + yy) < 0.5 ? 1 : 2);
+      if (d.locked) {
+        // chasing LED perimeter
+        const off = Math.floor(a * 14);
+        for (let x = r0 + 1; x < r2; x++) { if ((x + off) % 4 === 0) c.put(x, r1, L - 1); if ((x - off) % 4 === 0) c.put(x, r3, L - 1); }
+        for (let y = r1 + 1; y < r3; y++) { if ((y - off) % 4 === 0) c.put(r0, y, L - 1); if ((y + off) % 4 === 0) c.put(r2, y, L - 1); }
+        // crosshair
+        if (!d.snapped) {
+          const cxg = Math.round(tcx), cyg = Math.round(tcy);
+          for (const k of [2, 3, 4]) { c.put(cxg + k, cyg, L); c.put(cxg - k, cyg, L); c.put(cxg, cyg + k, L); c.put(cxg, cyg - k, L); }
+          c.put(cxg, cyg, L - 1);
+        }
+      }
+      // scanline with a dithered trail
+      if (d.scanning && !d.snapped) {
+        const u = clamp((t - SHOT.aim) / SHOT.scan, 0, 1), sy = Math.round(lerp(r1 + 1, r3 - 1, ease(u)));
+        for (let x = r0 + 1; x < r2; x++) {
+          c.put(x, sy, L);
+          for (let k = 1; k <= 5; k++) if (sy - k > r1 && c.th(x, sy - k) < 1 - k / 6) c.put(x, sy - k, k < 3 ? L - 1 : L - 2);
+        }
+      }
+      // region marquee
+      if (st.variant === 'region' && !d.snapped) {
+        for (let x = x0; x <= x1; x += 2) { c.put(x, y0, L - 2); c.put(x, y1, L - 2); }
+        for (let y = y0; y <= y1; y += 2) { c.put(x0, y, L - 2); c.put(x1, y, L - 2); }
+      }
+      T.screenshot.drawPhoto(st, c);
+    },
+    // The shot as a little LED polaroid: bright border, a thicker strip at the bottom, dithered picture.
+    drawPhoto(st, c) {
+      const ph = T.screenshot.photo(st, c);
+      if (!ph) return;
+      const P = c.P, L = c.L;
+      const w = Math.max(4, Math.round(ph.w / P)), h = Math.max(4, Math.round(ph.h / P));
+      const gx = Math.round(ph.cx / P - w / 2), gy = Math.round(ph.cy / P - h / 2);
+      const strip = Math.max(1, Math.round(h * 0.16));
+      for (let y = -1; y <= h + strip; y++) for (let x = -1; x <= w; x++) {
+        const edge = x === -1 || x === w || y === -1 || y === h + strip;
+        if (edge) { c.put(gx + x, gy + y, 0); continue; }
+        const border = x === 0 || x === w - 1 || y === 0 || y >= h - 1;
+        if (border) c.put(gx + x, gy + y, L);
+        else c.put(gx + x, gy + y, c.th(gx + x, gy + y) < 0.12 + 0.3 * (y / h) ? 2 : 1);
+      }
+      // a tiny "sun" and horizon in the picture so it reads as a photo
+      if (w > 9 && h > 8) {
+        c.put(gx + w - 4, gy + 2, L); c.put(gx + w - 3, gy + 2, L); c.put(gx + w - 4, gy + 3, L); c.put(gx + w - 3, gy + 3, L);
+        for (let x = 1; x < w - 1; x++) c.put(gx + x, gy + Math.round(h * 0.62) + (x % 5 < 2 ? 0 : 1), L - 1);
       }
     },
     over(st, c, ctx) {
       const d = st.d;
-      if (!d.flash) return;
-      const r = d.rect;
-      ctx.fillStyle = c.css(c.PAL[c.L], d.flash * 0.32);
-      ctx.fillRect(r[0], r[1], r[2] - r[0], r[3] - r[1]);
+      if (!d.rect || d.searching) return;
+      const [x0, y0, x1, y1] = d.cur, a = st.age;
+      // soft tint + app-name tag on the real window while aiming
+      if (st.target && st.targetName && !(d.snapped && a - d.snapped > SHOT.blink)) {
+        const land = clamp(1 - Math.abs(d.cur[0] - d.rect[0]) / 60, 0, 1);
+        if (land > 0.02) {
+          ctx.save();
+          ctx.fillStyle = c.css(c.PAL[c.L], 0.05 * land); ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
+          ctx.font = '700 12px "Martian Mono", ui-monospace, monospace';
+          const name = st.targetName.toUpperCase();
+          const tw = Math.ceil(ctx.measureText(name).width) + 20, th = 22, tx = Math.round(x0), ty = Math.round(y0 >= th + 6 ? y0 - th - 6 : y0 + 6);
+          ctx.globalAlpha = land;
+          ctx.fillStyle = c.css(c.PAL[0], 0.94); ctx.fillRect(tx, ty, tw, th);
+          ctx.fillStyle = c.css(c.PAL[c.L], 1); ctx.fillRect(tx, ty, 3, th);
+          ctx.strokeStyle = c.css(c.PAL[c.L], 0.8); ctx.lineWidth = 1; ctx.strokeRect(tx + 0.5, ty + 0.5, tw - 1, th - 1);
+          ctx.fillStyle = c.css(c.PAL[c.L], 1); ctx.textBaseline = 'middle'; ctx.fillText(name, tx + 11, ty + th / 2 + 1);
+          ctx.restore();
+        }
+      }
+      // scanline glow band
+      if (d.scanning && !d.snapped) {
+        const u = clamp((a - d.aimAt - SHOT.aim) / SHOT.scan, 0, 1), sy = lerp(d.rect[1], d.rect[3], ease(u));
+        const gr = ctx.createLinearGradient(0, sy - 40, 0, sy + 6);
+        gr.addColorStop(0, c.css(c.PAL[c.L], 0)); gr.addColorStop(0.85, c.css(c.PAL[c.L], 0.16)); gr.addColorStop(1, c.css(c.PAL[c.L], 0));
+        ctx.fillStyle = gr; ctx.fillRect(d.rect[0], sy - 40, d.rect[2] - d.rect[0], 46);
+      }
+      if (!d.snapped) return;
+      const since = a - d.snapped, r = d.rect;
+      // flash
+      if (d.flash > 0) { ctx.fillStyle = c.css(c.PAL[c.L], d.flash * 0.42); ctx.fillRect(r[0], r[1], r[2] - r[0], r[3] - r[1]); }
+      // shutter blink: dark bars close from top and bottom, then open again
+      if (since < SHOT.blink) {
+        const u = since / SHOT.blink, close = Math.sin(u * Math.PI), half = ((r[3] - r[1]) / 2) * close;
+        const P = c.P, hh = Math.round(half / P) * P;
+        ctx.fillStyle = c.css(c.PAL[0], 0.9);
+        ctx.fillRect(r[0], r[1], r[2] - r[0], hh); ctx.fillRect(r[0], r[3] - hh, r[2] - r[0], hh);
+        ctx.fillStyle = c.css(c.PAL[c.L], 0.9);
+        ctx.fillRect(r[0], r[1] + hh - 2, r[2] - r[0], 2); ctx.fillRect(r[0], r[3] - hh, r[2] - r[0], 2);
+      }
     },
   };
 
