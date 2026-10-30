@@ -10,10 +10,11 @@ use std::sync::atomic::AtomicU32;
 static SUMMON_ID: AtomicU32 = AtomicU32::new(0);
 /// Id of the registered "ask about an area" hotkey.
 static SNAP_ID: AtomicU32 = AtomicU32::new(0);
+static LIST_ID: AtomicU32 = AtomicU32::new(0);
 
 thread_local! {
     // The hotkey manager must live on the main thread; it also owns the current show/hide hotkey.
-    static HOTKEYS: RefCell<Option<(global_hotkey::GlobalHotKeyManager, [Option<global_hotkey::hotkey::HotKey>; 2])>> = const { RefCell::new(None) };
+    static HOTKEYS: RefCell<Option<(global_hotkey::GlobalHotKeyManager, [Option<global_hotkey::hotkey::HotKey>; 3])>> = const { RefCell::new(None) };
 }
 
 pub(crate) fn voice_binary() -> Option<PathBuf> {
@@ -100,7 +101,7 @@ fn cancel_voice(app: &AppHandle) {
 pub(crate) fn init_hotkeys(app: &AppHandle) {
     use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
     match GlobalHotKeyManager::new() {
-        Ok(m) => HOTKEYS.with(|h| *h.borrow_mut() = Some((m, [None, None]))),
+        Ok(m) => HOTKEYS.with(|h| *h.borrow_mut() = Some((m, [None, None, None]))),
         Err(e) => return eprintln!("hotkeys unavailable: {e}"),
     }
     let app = app.clone();
@@ -110,7 +111,8 @@ pub(crate) fn init_hotkeys(app: &AppHandle) {
         }
         let summon = e.id() == SUMMON_ID.load(Ordering::Relaxed);
         let snap = e.id() == SNAP_ID.load(Ordering::Relaxed);
-        if !summon && !snap {
+        let list = e.id() == LIST_ID.load(Ordering::Relaxed);
+        if !summon && !snap && !list {
             return;
         }
         let app2 = app.clone();
@@ -119,6 +121,8 @@ pub(crate) fn init_hotkeys(app: &AppHandle) {
             cancel_voice(&app2);
             if summon {
                 to_overlays(&app2, &json!({ "kind": "summon" }));
+            } else if list {
+                to_sidecar(&app2, &json!({ "type": "show_list" }));
             } else {
                 to_sidecar(&app2, &json!({ "type": "snap" }));
             }
@@ -126,12 +130,12 @@ pub(crate) fn init_hotkeys(app: &AppHandle) {
     }));
 }
 
-/// Swaps one global shortcut (0 = show/hide, 1 = ask about an area). On failure (bad format, or
+/// Swaps one global shortcut (0 = show/hide, 1 = ask about an area, 2 = show the list). On failure (bad format, or
 /// another app owns it) the old one stays.
 pub(crate) fn set_hotkey(slot: usize, accel: &str) -> Result<(), String> {
     use global_hotkey::hotkey::HotKey;
     let new: HotKey = accel.parse().map_err(|e| format!("{e}"))?;
-    let id_slot = if slot == 0 { &SUMMON_ID } else { &SNAP_ID };
+    let id_slot = [&SUMMON_ID, &SNAP_ID, &LIST_ID][slot];
     HOTKEYS.with(|h| {
         let mut h = h.borrow_mut();
         let Some((manager, keys)) = h.as_mut() else { return Err("hotkeys unavailable".to_string()) };
@@ -139,7 +143,7 @@ pub(crate) fn set_hotkey(slot: usize, accel: &str) -> Result<(), String> {
         if current.map(|c| c.id()) == Some(new.id()) {
             return Ok(());
         }
-        if keys[1 - slot].map(|c| c.id()) == Some(new.id()) {
+        if keys.iter().enumerate().any(|(i, k)| i != slot && k.map(|c| c.id()) == Some(new.id())) {
             return Err("already used by the other Roamies shortcut".to_string());
         }
         if let Some(old) = current {

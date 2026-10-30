@@ -1,6 +1,7 @@
 // The agent's tools: screen capture, reading and working other apps (macOS "hands" helper), files, commands,
 // web pages and memory. Every file, command, URL and open goes through safety.mjs first.
 import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -55,7 +56,7 @@ export const imageBlock = async (file, mediaType) => {
 };
 
 // deps: what the tools need from the app (settings, overlay, input bubble, menu). State lives per instance.
-export function createTools({ allowActions, ui, ask, openUrl, onCommitments, fmtWhen, commitmentsText, userName }) {
+export function createTools({ allowActions, ui, ask, openUrl, onCommitments, showList, fmtWhen, commitmentsText, userName }) {
   let axNudged = 0;
   const pointWaits = new Map(); // point_at call id → resolve, settled when the overlay has shown the step
   let lastShot = null; // how the latest screenshot's pixels map to screen points (see pointing.mjs)
@@ -171,7 +172,7 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, fmt
       },
       {
         name: 'read_window',
-        description: "List the buttons, links, fields, checkboxes and other controls in an app's front window (id, role, label, value), plus the text on screen, so you can read a page without a screenshot. Needed before act_in_app steps that use ids. To point at or click something by its visible words you don't need this: use point_at or click_text with text. target: 'front', an app name, or 'browser'.",
+        description: "List the buttons, links, fields, checkboxes and other controls in an app's front window (id, role, label, value), plus the text on screen and the text scrolled out of view above and below it, so you can read a whole page without scrolling or a screenshot. Needed before act_in_app steps that use ids. To point at or click something by its visible words you don't need this: use point_at or click_text with text. target: 'front', an app name, or 'browser'.",
         parameters: z.object({ target: z.string().optional() }),
         execute: async ({ target = 'front' }) => {
           const t = String(target || 'front');
@@ -180,7 +181,7 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, fmt
           const others = (all?.windows ?? []).filter((w) => w.app === res.window.app && w.id !== res.window.id).length;
           const head = `${res.window.app}${res.window.title ? ` — ${res.window.title}` : ''}${others ? ` (front window; ${res.window.app} has ${others} more, which point_at with text also searches)` : ''}`;
           if (!res.controls.length) return `${head}\n${res.note}`;
-          return `${head}\n${controlList(res.controls, res.texts)}`;
+          return `${head}\n${controlList(res.controls, res.texts)}${res.elsewhere?.length ? `\nElsewhere on the page (scrolled out of view): ${res.elsewhere.join(' | ')}` : ''}`;
         },
       },
       {
@@ -233,13 +234,13 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, fmt
       },
       {
         name: 'act_in_app',
-        description: "Do things in another app for the user: click, fill in forms, pick from dropdowns and date pickers, scroll, press keys. Steps run in order; put a whole task in one call. {do:'click_text', text} clicks a link, button or tab by its visible words (no read_window needed). {do:'fill', field, text} fills one text field: field is its label or placeholder as shown (or id), it replaces the text and checks it took; use one fill per field, never click a label and type. {do:'choose', field, option} picks an option in a dropdown, select menu, combo box or picker (opens it, scrolls the list, picks; field is its label or id). {do:'scroll', direction:'down'|'up'|'left'|'right', amount, text or id} scrolls the page, or the list or panel under that text or control. {do:'click', id}; {do:'key', key} e.g. 'return', 'tab', 'escape', 'cmd+l'; {do:'type', text} only when the cursor is already in a text field; {do:'click_at', x, y} pixels in your latest screenshot, last resort; {do:'wait', seconds}. Dates: fill the date field with the date as the page shows dates (e.g. 10/30/2026); if a calendar opens instead, choose the month and year, then click_text the day (its label often reads like 'Choose Friday, October 30th, 2026'). After the steps the result lists the window's controls and text as they are now, with fresh ids and field values, so check them there instead of reading again. Never submit payments, send messages or delete things unless the user clearly asked for exactly that; showing or pointing at a button is not a request to click it. Clicks on delete, pay, send or sign-out buttons always ask the user first.",
+        description: "Do things in another app for the user: click, fill in forms, pick from dropdowns and date pickers, scroll, press keys. Steps run in order; put a whole task in one call. {do:'click_text', text} clicks a link, button or tab by its visible words (no read_window needed). {do:'fill', field, text} fills one text field: field is its label or placeholder as shown (or id), it replaces the text and checks it took; use one fill per field, never click a label and type. {do:'choose', field, option} picks an option in a dropdown, select menu, type-to-search box or picker: it opens it, types or scrolls through the list (hundreds of options, even lists that only load rows as they scroll) and picks; field is its label or id. Never scroll a dropdown list yourself. Many identical buttons or fields (a Reply under every post): add near, words from that item (author or first words of the post), to click_text or fill and it uses the one belonging to that item, scrolling to it. {do:'scroll', direction:'down'|'up'|'left'|'right', amount, text or id} scrolls the page, or the list or panel under that text or control; needed only for content that loads as you scroll: {do:'scroll', direction:'down', to_end:true} keeps going until the feed stops loading more, in one step; then read_window lists everything that loaded. Things already on the page don't need scrolling: click_text, fill and point_at find them anywhere on it and scroll there themselves. {do:'click', id}; {do:'key', key} e.g. 'return', 'tab', 'escape', 'cmd+l'; {do:'type', text} only when the cursor is already in a text field; {do:'click_at', x, y} pixels in your latest screenshot, last resort; {do:'wait', seconds}. Dates: fill the date field with the date as the page shows dates (e.g. 10/30/2026); if a calendar opens instead, choose the month and year, then click_text the day (its label often reads like 'Choose Friday, October 30th, 2026'). After the steps the result lists the window's controls and text as they are now (after scrolls too), with fresh ids and field values, so check them there instead of calling read_window again. Never submit payments, send messages or delete things unless the user clearly asked for exactly that; showing or pointing at a button is not a request to click it. Clicks on delete, pay, send or sign-out buttons always ask the user first, so when they asked you to click one, call act_in_app right away instead of asking in your reply; the app asks them.",
         parameters: z.object({
           target: z.string().optional(),
           steps: z.array(z.object({
             do: z.enum(['click_text', 'fill', 'choose', 'scroll', 'set', 'focus', 'click', 'type', 'key', 'click_at', 'wait']),
-            id: z.number().int().optional(), field: z.string().optional(), text: z.string().optional(), option: z.string().optional(),
-            key: z.string().optional(), direction: z.enum(['down', 'up', 'left', 'right']).optional(), amount: z.number().int().optional(),
+            id: z.number().int().optional(), field: z.string().optional(), text: z.string().optional(), option: z.string().optional(), near: z.string().optional(),
+            key: z.string().optional(), direction: z.enum(['down', 'up', 'left', 'right']).optional(), amount: z.number().int().optional(), to_end: z.boolean().optional(),
             x: z.number().optional(), y: z.number().optional(), seconds: z.number().optional(),
           })).min(1).max(40),
         }),
@@ -315,7 +316,7 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, fmt
       },
     },
     {
-      name: 'write_file', description: 'Create or overwrite a text file with the given content.',
+      name: 'write_file', description: 'Create or overwrite a text file with the given content (missing folders are made). Use this, not run_command, to create or change files: a new file needs no yes from the user; overwriting asks them.',
       parameters: z.object({ path: z.string(), content: z.string() }), executionMode: 'sequential',
       execute: async ({ path: p, content }, ctx) => {
         if (!allowActions()) throw new Error(actionsOff);
@@ -329,11 +330,11 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, fmt
       },
     },
     {
-      name: 'run_command', description: "Run a shell command in the user's home folder and return its output.",
+      name: 'run_command', description: "Run a shell command in the user's home folder and return its output. Use it for what the other tools can't do (counting, sorting, wc, mdfind, git, moving or copying); to open a file, folder, app or link use the open tool, which needs no yes. Prefer write_file for creating or editing files; never edit with sed -i or tee. A > redirect into a new file is fine; overwriting an existing file, and commands that change things, make the user confirm first, which is slow.",
       parameters: z.object({ command: z.string() }), executionMode: 'sequential', timeoutMs: 190_000, // up to 2 min to answer, then the 60 s run
       execute: async ({ command }, ctx) => {
         if (!allowActions()) throw new Error(actionsOff);
-        const v = classifyCommand(command, HOME);
+        const v = classifyCommand(command, HOME, { exists: existsSync });
         if (v.level === BLOCK) throw new Error(`Blocked for safety: ${v.reason} Don't try to get around this; tell ${userName} what you wanted to do instead.`);
         if (v.level === ASK && !(await confirm(`Run \`${command.length > 70 ? command.slice(0, 67) + '…' : command}\`?${v.reason ? ' ' + v.reason : ''} Type y to run it.`, ctx))) {
           throw new Error(`${userName} said no, so the command didn't run.`);
@@ -385,13 +386,14 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, fmt
     },
     {
       name: 'remember_commitment',
-      description: `Save something ${userName} has committed to doing, or anything they ask to be reminded about, so you can remind them at the right moment. Use it whenever they say they will do something or say "remind me". due: a relative time like "in 90s", "in 5m", "in 1h30m" or "in 2 days" (best for short timers), or a local time YYYY-MM-DDTHH:mm:ss, YYYY-MM-DDTHH:mm, or YYYY-MM-DD if only the day is known; omit if there's no time at all. Resolve words like "Thursday", "at 2" or "tonight" from the timestamp on their message.`,
-      parameters: z.object({ text: z.string().min(2).max(200), due: z.string().optional() }),
-      execute: async ({ text, due }) => {
+      description: `Save something ${userName} has committed to doing, or anything they ask to be reminded about, so you can remind them at the right moment. Use it whenever they say they will do something or say "remind me". kind: 'reminder' for a plain "remind me to X at/in …" (it clears itself once the nudge is given), 'commitment' (default) for something they say they'll do or finish ("I'll finish the slides by Friday"), which stays open until they say it's done. due: a relative time like "in 90s", "in 5m", "in 1h30m" or "in 2 days" (best for short timers), or a local time YYYY-MM-DDTHH:mm:ss, YYYY-MM-DDTHH:mm, or YYYY-MM-DD if only the day is known; omit if there's no time at all. Resolve words like "Thursday", "at 2" or "tonight" from the timestamp on their message.`,
+      parameters: z.object({ text: z.string().min(2).max(200), due: z.string().optional(), kind: z.enum(['reminder', 'commitment']).optional() }),
+      execute: async ({ text, due, kind }) => {
         const ms = parseDue(due);
         if (ms === undefined) throw new Error(`Couldn't read the time "${due}". Use YYYY-MM-DDTHH:mm or YYYY-MM-DD.`);
-        const c = await addCommitment(text, ms);
-        onCommitments();
+        // A plain reminder with no time has nothing to fire, so it's kept like a commitment.
+        const c = await addCommitment(text, ms, ms ? kind : 'commitment');
+        onCommitments(c);
         return `Saved as ${c.id}${ms ? `, due ${fmtWhen(ms)}` : ''}. I'll remind them${ms ? ' when it is due' : ''}.`;
       },
     },
@@ -404,7 +406,7 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, fmt
         if (ms === undefined && due !== undefined) throw new Error(`Couldn't read the time "${due}".`);
         const c = await updateCommitment(id, { status, dueMs: ms });
         if (!c) throw new Error(`No commitment with id ${id}. Call list_commitments to see the ids.`);
-        onCommitments();
+        onCommitments(c);
         return `${c.id} is now ${c.status}${c.due ? `, due ${fmtWhen(c.due)}` : ''}.`;
       },
     },
@@ -418,6 +420,11 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, fmt
       name: 'forget_fact', description: 'Delete a saved fact that is wrong or that the user asks you to forget. Ids are in the memory list in your instructions.',
       parameters: z.object({ id: z.string() }),
       execute: async ({ id }) => { const f = await forgetFact(id); if (!f) throw new Error(`No fact with id ${id}.`); return `Forgot: ${f.text}`; },
+    },
+    {
+      name: 'show_list', description: "Show the user their list on screen (reminders and commitments, Today and Later). Use when they ask to see their list, to-dos or reminders; then answer in a few words, don't read it all out.",
+      parameters: z.object({}),
+      execute: async () => { showList(); return 'The list is on screen.'; },
     },
     {
       name: 'list_commitments', description: "List the open commitments you're keeping track of.",

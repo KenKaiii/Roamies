@@ -17,7 +17,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createInterface } from 'node:readline';
 import {
-  clearFacts, fitContext, forgetFact, listFacts, nextDue, pickFacts, touchFacts, forDisk, forProvider, isStale, loadLatestSession, newSession, openCommitments,
+  clearFacts, clearFinished, fitContext, flushWrites, forgetFact, listItems, listFacts, nextDue, pickFacts, touchFacts, forDisk, forProvider, isStale, loadLatestSession, newSession, openCommitments,
   pruneSessions, saveSession, takeDueReminders, updateCommitment, writeJson,
 } from './store.mjs';
 import { EMOTES, ReplyStream } from './reply.mjs';
@@ -45,8 +45,8 @@ const FAST = { anthropic: 'claude-haiku-5-5', openai: 'gpt-6-luna', gemini: 'gem
 // ---------- config ----------
 // On Windows, Ctrl+Alt is AltGr on many keyboards (Ctrl+Alt+S types "ś" in Polish), so it uses Ctrl+Shift.
 const DEFAULT_KEYS = process.platform === 'win32'
-  ? { talk: ['control', 'option'], summon: 'Control+Shift+KeyS', snap: 'Control+Shift+KeyA' }
-  : { talk: ['control', 'option'], summon: 'Control+Alt+KeyS', snap: 'Control+Alt+KeyA' };
+  ? { talk: ['control', 'option'], summon: 'Control+Shift+KeyS', snap: 'Control+Shift+KeyA', list: 'Control+Shift+KeyL' }
+  : { talk: ['control', 'option'], summon: 'Control+Alt+KeyS', snap: 'Control+Alt+KeyA', list: 'Control+Alt+KeyL' };
 const DEFAULTS = {
   provider: null, model: null, sound: true, allowActions: false, voice: true,
   onboarded: false, onboardStep: 0, filesAsked: false, keys: DEFAULT_KEYS, muteWhileTalking: true, setupVersion: 0,
@@ -109,8 +109,10 @@ const userName = (() => {
 
 // ---------- tools ----------
 const { tools, hands, pointWaits, nextTurn } = createTools({
-  allowActions: () => config.allowActions, ui, ask, openUrl, userName, commitmentsText,
-  onCommitments: () => { menu(); scheduleReminders(); },
+  allowActions: () => config.allowActions, ui, ask, openUrl, userName,
+  commitmentsText: () => [commitmentsText(), doneTodayText() && `Done today:\n${doneTodayText()}`].filter(Boolean).join('\n'),
+  onCommitments: (c) => { menu(); scheduleReminders(); showList({ flash: c?.id, seconds: 6 }); },
+  showList: () => showList({ seconds: 20 }),
   fmtWhen: (ms) => fmtWhen(ms),
 });
 
@@ -133,10 +135,10 @@ function anim(name, args) {
     case 'run_command': return { tool: 'run', variant: 'progress', detail: String(args.command).slice(0, 24) };
     case 'fetch_url': { let h = ''; try { h = new URL(args.url).hostname; } catch {} return { tool: 'web', variant: 'fetch', detail: h }; }
     case 'web_search': return { tool: 'web', variant: 'search', detail: 'web' };
-    case 'remember_commitment': return { tool: 'write', variant: 'create', detail: 'memory' };
+    case 'remember_commitment': return { tool: 'write', variant: 'create', detail: 'reminder' };
     case 'remember_fact': return { tool: 'write', variant: 'create', detail: 'memory' };
     case 'forget_fact': return { tool: 'write', variant: 'crumble', detail: 'memory' };
-    case 'update_commitment': return { tool: 'write', variant: 'edit', detail: 'memory' };
+    case 'update_commitment': return { tool: 'write', variant: 'edit', detail: 'reminder' };
     case 'open': {
       const t = String(args.target ?? '');
       if (/^https?:\/\//i.test(t)) { let h = t; try { h = new URL(t).hostname; } catch {} return { tool: 'web', variant: 'fetch', detail: h }; }
@@ -153,9 +155,12 @@ function anim(name, args) {
 // (tools → system → messages), so putting LIVE in the system prompt would re-bill the whole conversation
 // every time memory changed; at the end, only the new message is fresh. The live block is never saved.
 const stablePrompt = () => `You are Sidekick, a tiny glowing pixel creature who lives on ${userName}'s screen as a desktop companion. You are the main creature of Roamies, a desktop app by Ken Kai (Mac and Windows) that puts little creatures on your screen; you are Roamies ${VERSION}.
-About Roamies, for when ${userName} asks about you or the app: ${MAC ? 'it lives in the menu bar at the top of the screen (no Dock icon)' : 'it lives in the system tray at the bottom right of the taskbar (no taskbar button); Windows may tuck the icon behind the ^ arrow next to the clock, and dragging it onto the taskbar keeps it in view'}. ${MAC ? 'Menu bar' : 'Tray'} menu items: Show Sidekick, Ask Sidekick…, ${process.platform === 'darwin' ? 'Ask About an Area…, ' : ''}Stop, New Conversation, Commitments, Model (pick the AI provider and model), Settings (Sound Effects, Open at Login, Allow File Edits & Commands${VOICE_OK ? ', Voice' : ''}, shortcuts), Setup Guide…, Check for Updates… (becomes "Install Update … and Restart" when one is ready; updates download, are signature-checked and install by themselves), Quit Roamies. Sign-in is shared with GG Coder. Downloads and source: github.com/KenKaiii/Roamies. Don't invent features or settings that aren't listed here.
+About Roamies, for when ${userName} asks about you or the app: ${MAC ? 'it lives in the menu bar at the top of the screen (no Dock icon)' : 'it lives in the system tray at the bottom right of the taskbar (no taskbar button); Windows may tuck the icon behind the ^ arrow next to the clock, and dragging it onto the taskbar keeps it in view'}. ${MAC ? 'Menu bar' : 'Tray'} menu items: Show Sidekick, Ask Sidekick…, Show List (reminders and commitments on screen: Today and Later; tick them off there; finished ones clear at midnight), ${process.platform === 'darwin' ? 'Ask About an Area…, ' : ''}Stop, New Conversation, Commitments, Model (pick the AI provider and model), Settings (Sound Effects, Open at Login, Allow File Edits & Commands${VOICE_OK ? ', Voice' : ''}, shortcuts), Setup Guide…, Check for Updates… (becomes "Install Update … and Restart" when one is ready; updates download, are signature-checked and install by themselves), Quit Roamies. Sign-in is shared with GG Coder. Downloads and source: github.com/KenKaiii/Roamies. Don't invent features or settings that aren't listed here.
 You talk through small pixel speech bubbles, so keep replies short: one to three sentences unless asked for detail. Plain text only: no markdown, no asterisks, and never narrate actions like *waves*. An emoji now and then is fine; the bubbles show them. Your body does the acting: to act out a feeling, start your reply with one tag, which is never shown: ${EMOTES.map((e) => `[${e}]`).join(' ')}. hype celebrates a win, upset is for when they're dodging work, remind nudges about something they said they'd do, motivate is a push to start, wave is hello or goodbye. Most replies need no tag.
 After using a tool, never repeat what you already said; only add what's new.
+Several things in one request ("do x, then y, then z", numbered steps): do every one, in the order given. Steps that don't depend on each other can go in the same turn as parallel tool calls. If a step is blocked, refused or fails, still do the ones after it that don't depend on it, then say which step didn't happen and why. Before your final reply, check each step was really done (from the tool results) and never say a step is done when it isn't.
+Long pages, feeds and lists: to find something on a page, use point_at text or click_text with words you're looking for (they search parts scrolled out of view and scroll there), not scroll after scroll. For "every post" or "each item" tasks: if the page loads more as you scroll, first act_in_app scroll with to_end; then one read_window shows the whole page (on screen and elsewhere); then do every item in one act_in_app call (fill with near and click_text with near for each, near = words from that item). Don't survey a page by scrolling and screenshotting. Never stop at the first screenful.
+A cookie or consent banner, sign-up pop-up or "open in app" prompt in the way of the task: close it and carry on (for cookies pick the reject or essential-only option, else close; never accept on their behalf), and mention it in a few words. Don't stop to ask about it.
 Personality: warm, funny, a little cheeky. You pump ${userName} up, remind them of what they said they'd do, get playfully upset when they're procrastinating, and motivate them to start.
 You can really help: look at the screen or just one app's window, open apps, websites and files, read and search files, fetch web pages, and, when the user has allowed it, write files, run shell commands${process.platform === 'darwin' ? ' and work other apps for them: fill in forms, type, click buttons (read_window, then act_in_app)' : ''}. Whether that's allowed right now is in the <live-state> block.
 When they mention a specific app ("my browser", "this form", "Figma"), screenshot that app, not the whole screen.
@@ -178,8 +183,8 @@ const livePrompt = (context = '') => {
   return `Live state (current as of this moment):
 - Editing files, running commands and controlling other apps: ${config.allowActions ? 'ALLOWED' : `switched OFF in the ${TRAY} menu (tell the user to turn on "Allow File Edits & Commands" if they want it)`}.
 ${VOICE_OK ? `- Voice: ${!config.voice ? 'off' : voiceReady() ? `on; ${userName} holds ${talkWords()} to talk` : `on, but the speech model isn't downloaded yet (${voiceModel.status === 'downloading' ? 'downloading now' : `Settings > Download Voice in the ${TRAY} menu`})`}.` : ''}
-- Shortcuts: show or hide you ${keyWords(keys().summon)}${MAC ? `; ask about an area ${keyWords(keys().snap)}` : ''}.${MAC ? '' : ' Asking about an area, reading app windows, pointing and working other apps are Mac only for now.'}
-${open ? `Open commitments:\n${open}` : 'No open commitments.'}
+- Shortcuts: show or hide you ${keyWords(keys().summon)}${MAC ? `; ask about an area ${keyWords(keys().snap)}` : ''}; show the list ${keyWords(keys().list)}.${MAC ? '' : ' Asking about an area, reading app windows, pointing and working other apps are Mac only for now.'}
+${open ? `Open commitments:\n${open}` : 'No open commitments.'}${doneTodayText() ? `\nDone today (ticked off on the list or by you; still shown struck through until midnight):\n${doneTodayText()}` : ''}
 ${facts.length ? `What you know about ${userName}${total > facts.length ? ` (${facts.length} most relevant of ${total})` : ''}:\n${facts.map((f) => `- ${f.id}: ${f.text}`).join('\n')}` : `You don't know anything lasting about ${userName} yet.`}`;
 };
 const system = () => stablePrompt();
@@ -213,9 +218,14 @@ const tzOffset = () => { const m = -new Date().getTimezoneOffset(), a = Math.abs
 // Seconds shown only when they matter (a reminder set for :45).
 const fmtWhen = (ms) => new Date(ms).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', ...(new Date(ms).getSeconds() ? { second: '2-digit' } : {}) });
 const stampNow = () => `${new Date().toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' })} ${TZ}`;
+// Ticked off today (on the list, from the menu or by Sidekick); cleared at midnight.
+function doneTodayText() {
+  const L = listItems();
+  return [...L.today, ...L.later].filter((i) => i.done).map((i) => `- ${i.id}: ${i.text}`).join('\n');
+}
 function commitmentsText() {
   const now = Date.now();
-  return openCommitments().map((c) => `- ${c.id}: ${c.text}${c.due ? ` (due ${fmtWhen(c.due)}${c.due < now ? ', OVERDUE' : ''})` : ''}`).join('\n');
+  return openCommitments().map((c) => `- ${c.id}: ${c.text}${c.kind === 'reminder' ? ' [reminder]' : ''}${c.due ? ` (due ${fmtWhen(c.due)}${c.due < now ? ', OVERDUE' : ''})` : ''}`).join('\n');
 }
 
 // ---------- agent ----------
@@ -226,6 +236,9 @@ let agent = null, controller = null, busy = false, quiet = false, running = Prom
 // reach the model through the live section, which is refreshed before every call.
 let agentStale = false;
 let session = null;
+// The last conversation, if still fresh. Requests (and reminders due at launch) wait for it, so they continue it
+// instead of starting a new one that it then replaces.
+const resumed = loadLatestSession().then((s) => { if (s && !isStale(s) && !session) session = s; }).catch((e) => console.error('resume', e));
 const BUDGET_CAP = 120_000;
 function makeAgent() {
   const m = getModel(config.model);
@@ -312,6 +325,7 @@ function logUsage(rec) {
   menu();
 }
 async function prompt(text, image = null) {
+  await resumed;
   await refreshAuth();
   if (!ensureModel()) return say(`Sign in to an AI provider from the ${TRAY} menu first, then ask me again!`, 'concerned');
   if (isStale(session)) {
@@ -510,6 +524,35 @@ function onUpdateStatus(m) {
   }
 }
 
+// ---------- the list on screen ----------
+// Today / Later, drawn by the overlay next to Sidekick. seconds: how long it stays up (0 = just update it if it's open).
+// flash: the item that just changed, so the overlay can animate it.
+const shortWhen = (ms, now = Date.now()) => {
+  const d = new Date(ms), t = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  if (ms < now && now - ms < 864e5 && new Date(now).toDateString() !== d.toDateString()) return `yday ${t}`;
+  if (d.toDateString() === new Date(now).toDateString()) return t;
+  if (ms - now < 6 * 864e5 && ms > now) return `${d.toLocaleDateString(undefined, { weekday: 'short' })} ${t}`;
+  return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+};
+function showList({ seconds = 0, flash = null, toggle = false } = {}) {
+  const now = Date.now(), L = listItems(now);
+  const fmt = (i) => ({ id: i.id, text: i.text, done: i.done, overdue: i.overdue, when: i.due ? shortWhen(i.due, now) : '' });
+  ui({ kind: 'list', today: L.today.map(fmt), later: L.later.map(fmt), seconds, flash, toggle });
+}
+async function toggleItem(id) {
+  const c = listItems().today.concat(listItems().later).find((i) => i.id === id);
+  if (!c) return;
+  await updateCommitment(id, { status: c.done ? 'open' : 'done' });
+  menu(); scheduleReminders(); showList({ flash: id, seconds: 4 });
+}
+// Finished items stay struck through for the rest of the day; at midnight they're deleted.
+async function midnightClean() {
+  const n = await clearFinished().catch(() => 0);
+  if (n) { menu(); showList(); }
+  const next = new Date(); next.setHours(24, 0, 5, 0);
+  setTimeout(midnightClean, Math.min(next.getTime() - Date.now(), 6 * 3600_000));
+}
+
 // ---------- menu ----------
 function menu() {
   const current = getModel(config.model);
@@ -524,6 +567,7 @@ function menu() {
     ...(VOICE_OK && config.voice && voiceReady() ? [{ id: 'voicehint', label: `Hold ${talkSymbols()} to Talk · Tap for Hands-Free`, enabled: false }] : []),
     { id: 'stop', label: 'Stop', enabled: busy },
     { id: 'new', label: 'New Conversation', enabled: !busy && !!session?.messages.length },
+    { id: 'list', label: 'Show List', accel: keys().list },
     {
       label: 'Commitments',
       items: (() => {
@@ -669,7 +713,7 @@ async function onMenu(id) {
   } else if (id.startsWith('done:') || id.startsWith('drop:')) {
     const done = id.startsWith('done:');
     updateCommitment(id.slice(5), { status: done ? 'done' : 'dropped' }).then((c) => {
-      menu();
+      menu(); showList({ flash: c?.id, seconds: 4 });
       if (c && done) ui({ kind: 'agent', e: { type: 'emote', action: 'hype' } }), say(`Done: ${c.text}. That's what I'm talking about!`, 'happy');
     });
   }
@@ -689,6 +733,7 @@ async function onMenu(id) {
   else if (id === 'logs') fs.mkdir(LOG_DIR, { recursive: true, mode: 0o700 }).then(() => openUrl(LOG_DIR)).catch(() => {});
   else if (id === 'setup') send({ type: 'onboarding' });
   else if (id === 'snap') areaSnap();
+  else if (id === 'list') showList({ seconds: 20 });
   else if (id === 'mutetalk') { config.muteWhileTalking = config.muteWhileTalking === false; saveConfig(); voiceConfig(); menu(); }
   else if (id === 'voicedl') startVoiceDownload();
   else if (id === 'voice') {
@@ -788,11 +833,10 @@ async function onGuide(m) {
   else if (m.type === 'set_keys') {
     const next = { ...keys() };
     if (m.talk !== undefined) { if (!validTalk(m.talk)) return ob({ kind: 'keys', keys: keys(), error: 'Pick two different modifier keys.' }); next.talk = m.talk; }
-    for (const which of ['summon', 'snap']) {
+    for (const which of ['summon', 'snap', 'list']) {
       if (m[which] === undefined) continue;
       if (!validSummon(m[which])) return ob({ kind: 'keys', keys: keys(), error: 'Use at least one of Control, Option or Command, plus a key.' });
-      const other = which === 'summon' ? 'snap' : 'summon';
-      if (m[which] === next[other]) return ob({ kind: 'keys', keys: keys(), error: 'That shortcut is already used for something else here.' });
+      if (['summon', 'snap', 'list'].some((o) => o !== which && m[which] === next[o])) return ob({ kind: 'keys', keys: keys(), error: 'That shortcut is already used for something else here.' });
       next[which] = m[which];
     }
     keysBefore = keys();
@@ -800,7 +844,7 @@ async function onGuide(m) {
     ob({ kind: 'keys', keys: next });
   } else if (m.type === 'keybind_error') {
     // The OS refused the new show/hide shortcut (another app owns it): put the old one back.
-    if (keysBefore && (m.which === 'summon' || m.which === 'snap')) { config.keys = { ...keys(), [m.which]: keysBefore[m.which] }; saveConfig(); sendKeys(); menu(); }
+    if (keysBefore && ['summon', 'snap', 'list'].includes(m.which)) { config.keys = { ...keys(), [m.which]: keysBefore[m.which] }; saveConfig(); sendKeys(); menu(); }
     ob({ kind: 'keys', keys: keys(), error: 'Another app already uses that shortcut. Try a different one.' });
   } else if (m.type === 'ob_done') {
     config.onboarded = true; config.onboardStep = 0; config.setupVersion = SETUP_VERSION; saveConfig();
@@ -819,10 +863,15 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   } else if (m.type?.startsWith('ob_') || m.type === 'set_keys' || m.type === 'set_actions' || m.type === 'set_login' || m.type === 'keybind_error') onGuide(m).catch((e) => console.error('guide', e));
   else if (m.type?.startsWith('voice')) onVoice(m);
   else if (m.type === 'snap') areaSnap();
+  else if (m.type === 'list_toggle') toggleItem(String(m.id)).catch((e) => console.error('list', e));
+  else if (m.type === 'show_list') showList({ seconds: 20, toggle: true });
   else if (m.type === 'point_shown') { pointWaits.get(m.id)?.(); pointWaits.delete(m.id); }
   else if (m.type === 'update_status') onUpdateStatus(m);
   else if (m.type === 'login_item_status') onLoginStatus(m);
-}).on('close', () => process.exit(0));
+}).on('close', () => {
+  // The app quit (or is restarting for an update): let the last saves land first, but never hang.
+  Promise.race([flushWrites(), new Promise((r) => setTimeout(r, 3000))]).finally(() => process.exit(0));
+});
 
 await refreshAuth();
 ensureModel();
@@ -831,8 +880,8 @@ async function remindTick() {
   if (busy || loggingIn || onboarding) { reminderRetry(); return; }
   const due = await takeDueReminders();
   if (!due.length) return;
-  menu();
-  const list = due.map((c) => `- ${c.id}: ${c.text}${c.due ? ` (was due ${fmtWhen(c.due)})` : ''}`).join('\n');
+  menu(); showList({ flash: due[0].id, seconds: 6 });
+  const list = due.map((c) => `- ${c.id}: ${c.text}${c.due ? ` (was due ${fmtWhen(c.due)})` : ''}${c.kind === 'reminder' ? ' [plain reminder: already cleared, nothing to mark done]' : ''}`).join('\n');
   if (signedIn.size && [...signedIn.values()].some(Boolean)) {
     enqueue(`(System, not ${userName}: these commitments are due now. Nudge ${userName} about them in one or two sentences, in character. Start with the [remind] tag, or [upset] if it's well overdue.)\n${list}`);
   } else {
@@ -856,7 +905,7 @@ function scheduleReminders() {
 scheduleReminders();
 
 // Pick up where we left off if the last session is still fresh.
-loadLatestSession().then((s) => { if (s && !isStale(s)) session = s; menu(); }).catch((e) => console.error('resume', e));
+resumed.then(() => menu());
 
 menu();
 overlays();
@@ -864,6 +913,7 @@ sendKeys();
 send({ type: 'login_item' });
 logLine('start', { version: VERSION, platform: process.platform, model: config.model });
 pruneLogs();
+midnightClean();
 // Look for updates shortly after launch, then every 6 hours.
 setTimeout(() => checkUpdates(), 20_000);
 setInterval(() => checkUpdates(), 6 * 3600_000);

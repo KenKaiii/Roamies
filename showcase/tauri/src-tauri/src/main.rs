@@ -625,7 +625,7 @@ fn handle_sidecar(app: &AppHandle, msg: Value) {
         }
         Some("onboarding") => open_onboarding(app),
         Some("keybinds") => {
-            for (slot, which) in [(0usize, "summon"), (1, "snap")] {
+            for (slot, which) in [(0usize, "summon"), (1, "snap"), (2, "list")] {
                 if which == "snap" && !cfg!(target_os = "macos") {
                     continue;
                 }

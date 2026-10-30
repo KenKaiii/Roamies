@@ -197,6 +197,7 @@
     else if (m.kind === 'cancel_ask') { if (ask?.id === m.id) { ask.id = null; finishAsk(null); } }
     else if (m.kind === 'agent') onAgent(m.e);
     else if (m.kind === 'voice') onVoice(m);
+    else if (m.kind === 'list') getAgent().list(m);
   };
 
   // Start hidden in auto mode and tell the brain we're listening. It replies with the sound setting,
@@ -205,6 +206,7 @@
     const a = getAgent();
     if (!a) return setTimeout(ready, 150);
     a.setAuto(true);
+    a.onListToggle = (id) => send({ type: 'list_toggle', id });
     a.hide({ instant: true });
     send({ type: 'ui_ready' });
   };
