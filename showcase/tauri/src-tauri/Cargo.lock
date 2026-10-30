@@ -2949,7 +2949,7 @@ dependencies = [
 
 [[package]]
 name = "roamies"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "global-hotkey",
  "objc2",
