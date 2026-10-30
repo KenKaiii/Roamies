@@ -3,12 +3,14 @@
 // No Dock icon (LSUIElement + Accessory policy) and no taskbar entries on Windows/Linux.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::cell::RefCell;
+mod sidecar;
+mod voice;
+
 use std::fs::OpenOptions;
-use std::io::{BufRead, BufReader, Write};
+use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::{thread, time::Duration};
 
@@ -17,13 +19,12 @@ use tauri::menu::{CheckMenuItem, IsMenuItem, Menu, MenuItem, PredefinedMenuItem,
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder, Wry};
 
+use sidecar::spawn_sidecar;
+use voice::{init_hotkeys, set_hotkey, start_voice, stop_voice, to_voice, voice_binary};
+
 static GENERATION: AtomicUsize = AtomicUsize::new(0);
 /// The setup guide is open: voice events go to it (for the "try it" test) instead of the agent.
 static ONBOARDING: AtomicBool = AtomicBool::new(false);
-/// Id of the registered show/hide hotkey, read by the hotkey event handler.
-static SUMMON_ID: AtomicU32 = AtomicU32::new(0);
-/// Id of the registered "ask about an area" hotkey.
-static SNAP_ID: AtomicU32 = AtomicU32::new(0);
 const ONBOARDING_LABEL: &str = "onboarding";
 
 struct Sidecar(Mutex<Option<ChildStdin>>);
@@ -45,10 +46,6 @@ fn hide_console(cmd: &mut Command) -> &mut Command {
     cmd
 }
 
-thread_local! {
-    // The hotkey manager must live on the main thread; it also owns the current show/hide hotkey.
-    static HOTKEYS: RefCell<Option<(global_hotkey::GlobalHotKeyManager, [Option<global_hotkey::hotkey::HotKey>; 2])>> = const { RefCell::new(None) };
-}
 
 fn is_overlay(label: &str) -> bool {
     label.starts_with("overlay-")
@@ -501,85 +498,13 @@ fn fallback_menu(app: &AppHandle, status: &str) {
     ]);
 }
 
-// ---------- sidecar ----------
-
-fn find_node() -> Option<PathBuf> {
-    if let Ok(p) = std::env::var("ROAMIES_NODE") {
-        return Some(PathBuf::from(p));
-    }
-    // The Node.js shipped inside the app (bundle.externalBin), so users don't need Node installed.
-    if let Some(p) = helper_binary("node") {
-        return Some(p);
-    }
-    // GUI apps don't get the shell's PATH on macOS, so check the usual installs too.
-    let exe = if cfg!(windows) { "node.exe" } else { "node" };
-    let mut dirs: Vec<PathBuf> = std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
-    for d in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "C:\\Program Files\\nodejs"] {
-        dirs.push(PathBuf::from(d));
-    }
-    dirs.into_iter().map(|d| d.join(exe)).find(|p| p.is_file())
-}
-
-fn sidecar_script(app: &AppHandle) -> PathBuf {
-    let bundled = app.path().resource_dir().map(|d| d.join("sidecar").join("sidekick.mjs"));
-    match bundled {
-        Ok(p) if p.is_file() => p,
-        _ => PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../sidecar/sidekick.mjs")),
-    }
-}
-
-fn spawn_sidecar(app: &AppHandle) {
-    let Some(node) = find_node() else {
-        fallback_menu(app, "Sidekick's runtime is missing; reinstall Roamies");
-        return;
-    };
-    let script = sidecar_script(app);
-    let stderr = log_stdio("sidekick.log");
-    let mut cmd = Command::new(node);
-    hide_console(&mut cmd);
-    cmd.arg(&script)
-        .env("ROAMIES_VERSION", app.package_info().version.to_string())
-        .env("ROAMIES_HANDS", helper_binary("roamies-hands").map(|p| p.to_string_lossy().into_owned()).unwrap_or_default())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(stderr);
-    if let Some(dir) = script.parent() {
-        cmd.current_dir(dir);
-    }
-    let mut child = match cmd.spawn() {
-        Ok(c) => c,
-        Err(e) => {
-            fallback_menu(app, &format!("Sidekick failed to start: {e}"));
-            return;
-        }
-    };
-    *app.state::<Sidecar>().0.lock().unwrap() = child.stdin.take();
-    let stdout = child.stdout.take().expect("piped stdout");
-    let app = app.clone();
-    thread::spawn(move || {
-        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-            let Ok(msg) = serde_json::from_str::<Value>(&line) else { continue };
-            let app2 = app.clone();
-            let _ = app.run_on_main_thread(move || handle_sidecar(&app2, msg));
-        }
-        let _ = child.wait();
-        *app.state::<Sidecar>().0.lock().unwrap() = None;
-        let app2 = app.clone();
-        let _ = app.run_on_main_thread(move || fallback_menu(&app2, "Sidekick stopped"));
-    });
-}
-
-// ---------- voice helper (macOS: Apple speech; Windows: Parakeet on the PC) ----------
+// ---------- bundled helpers ----------
 
 /// A bundled helper next to the app binary (Contents/MacOS on macOS).
 fn helper_binary(name: &str) -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let p = exe.parent()?.join(if cfg!(windows) { format!("{name}.exe") } else { name.to_string() });
     p.is_file().then_some(p)
-}
-
-fn voice_binary() -> Option<PathBuf> {
-    helper_binary("roamies-voice")
 }
 
 fn log_stdio(name: &str) -> Stdio {
@@ -589,178 +514,6 @@ fn log_stdio(name: &str) -> Stdio {
         .and_then(|p| OpenOptions::new().create(true).append(true).open(p).ok())
         .map(Stdio::from)
         .unwrap_or_else(Stdio::null)
-}
-
-fn start_voice(app: &AppHandle) {
-    let state = app.state::<Voice>();
-    if state.0.lock().unwrap().is_some() {
-        return;
-    }
-    let Some(bin) = voice_binary() else {
-        eprintln!("voice helper not found next to the app binary");
-        return;
-    };
-    let chord = app.state::<TalkChord>().0.lock().unwrap().join(",");
-    let mut cmd = Command::new(bin);
-    cmd.arg("--chord").arg(chord);
-    if let Some(dir) = app.state::<VoiceModel>().0.lock().unwrap().clone() {
-        cmd.arg("--model").arg(dir);
-    }
-    let mut child = match hide_console(&mut cmd).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(log_stdio("sidekick-voice.log")).spawn() {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("voice helper failed to start: {e}");
-            return;
-        }
-    };
-    let stdout = child.stdout.take().expect("piped stdout");
-    let pid = child.id();
-    *state.0.lock().unwrap() = Some(child);
-    let app = app.clone();
-    thread::spawn(move || {
-        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-            let Ok(msg) = serde_json::from_str::<Value>(&line) else { continue };
-            let app2 = app.clone();
-            let _ = app.run_on_main_thread(move || handle_voice(&app2, msg));
-        }
-        // Exited. If it is still the wanted helper, it died on its own: retry a few times.
-        let state = app.state::<Voice>();
-        let ours = {
-            let mut slot = state.0.lock().unwrap();
-            let ours = slot.as_ref().map(Child::id) == Some(pid);
-            if ours {
-                if let Some(mut c) = slot.take() {
-                    let _ = c.wait();
-                }
-            }
-            ours
-        };
-        if ours && state.1.fetch_add(1, Ordering::Relaxed) < 3 {
-            thread::sleep(Duration::from_secs(1));
-            let app2 = app.clone();
-            let _ = app.run_on_main_thread(move || start_voice(&app2));
-        }
-    });
-}
-
-fn stop_voice(app: &AppHandle) {
-    let state = app.state::<Voice>();
-    let child = state.0.lock().unwrap().take();
-    if let Some(mut c) = child {
-        let _ = c.kill();
-        let _ = c.wait();
-    }
-    to_overlays(app, &json!({ "kind": "voice", "type": "state", "state": "idle" }));
-}
-
-fn to_voice(app: &AppHandle, msg: &Value) {
-    if let Some(child) = app.state::<Voice>().0.lock().unwrap().as_mut() {
-        if let Some(stdin) = child.stdin.as_mut() {
-            let _ = writeln!(stdin, "{msg}");
-        }
-    }
-}
-
-/// Tell the voice helper to drop a talk-chord press that turned out to be the show/hide shortcut.
-fn cancel_voice(app: &AppHandle) {
-    to_voice(app, &json!({ "cmd": "cancel" }));
-}
-
-/// Show/hide shortcut (default ⌃⌥S): brings the sidekick forward, or sends it away if it's out.
-/// Must run on the main thread.
-fn init_hotkeys(app: &AppHandle) {
-    use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
-    match GlobalHotKeyManager::new() {
-        Ok(m) => HOTKEYS.with(|h| *h.borrow_mut() = Some((m, [None, None]))),
-        Err(e) => return eprintln!("hotkeys unavailable: {e}"),
-    }
-    let app = app.clone();
-    GlobalHotKeyEvent::set_event_handler(Some(move |e: GlobalHotKeyEvent| {
-        if e.state() != HotKeyState::Pressed {
-            return;
-        }
-        let summon = e.id() == SUMMON_ID.load(Ordering::Relaxed);
-        let snap = e.id() == SNAP_ID.load(Ordering::Relaxed);
-        if !summon && !snap {
-            return;
-        }
-        let app2 = app.clone();
-        let _ = app.run_on_main_thread(move || {
-            // Both shortcuts share modifiers with the talk chord; that press wasn't a request to talk.
-            cancel_voice(&app2);
-            if summon {
-                to_overlays(&app2, &json!({ "kind": "summon" }));
-            } else {
-                to_sidecar(&app2, &json!({ "type": "snap" }));
-            }
-        });
-    }));
-}
-
-/// Swaps one global shortcut (0 = show/hide, 1 = ask about an area). On failure (bad format, or
-/// another app owns it) the old one stays.
-fn set_hotkey(slot: usize, accel: &str) -> Result<(), String> {
-    use global_hotkey::hotkey::HotKey;
-    let new: HotKey = accel.parse().map_err(|e| format!("{e}"))?;
-    let id_slot = if slot == 0 { &SUMMON_ID } else { &SNAP_ID };
-    HOTKEYS.with(|h| {
-        let mut h = h.borrow_mut();
-        let Some((manager, keys)) = h.as_mut() else { return Err("hotkeys unavailable".to_string()) };
-        let current = keys[slot];
-        if current.map(|c| c.id()) == Some(new.id()) {
-            return Ok(());
-        }
-        if keys[1 - slot].map(|c| c.id()) == Some(new.id()) {
-            return Err("already used by the other Roamies shortcut".to_string());
-        }
-        if let Some(old) = current {
-            let _ = manager.unregister(old);
-        }
-        match manager.register(new) {
-            Ok(()) => {
-                keys[slot] = Some(new);
-                id_slot.store(new.id(), Ordering::Relaxed);
-                Ok(())
-            }
-            Err(e) => {
-                if let Some(old) = current {
-                    let _ = manager.register(old);
-                }
-                Err(format!("{e}"))
-            }
-        }
-    })
-}
-
-fn handle_voice(app: &AppHandle, msg: Value) {
-    let mut ui = msg.clone();
-    ui["kind"] = json!("voice");
-    if msg.get("type").and_then(Value::as_str) == Some("ready") {
-        app.state::<Voice>().1.store(0, Ordering::Relaxed);
-        return;
-    }
-    // While the setup guide is open, talking is just the "try it" test: it never reaches the agent.
-    if ONBOARDING.load(Ordering::Relaxed) {
-        to_onboarding(app, &ui);
-        return;
-    }
-    match msg.get("type").and_then(Value::as_str) {
-        Some("state") => {
-            to_overlays(app, &ui);
-            to_sidecar(app, &json!({ "type": "voice_state", "state": msg.get("state") }));
-        }
-        Some("partial") | Some("level") => to_overlays(app, &ui),
-        Some("final") => {
-            to_overlays(app, &ui);
-            to_sidecar(app, &json!({ "type": "voice", "text": msg.get("text") }));
-        }
-        Some("error") => {
-            let mut m = msg.clone();
-            m["type"] = json!("voice_error");
-            to_sidecar(app, &m);
-        }
-        _ => {}
-    }
 }
 
 /// Open at Login. Only an installed copy registers (in Applications on macOS, not a build folder or the DMG),
