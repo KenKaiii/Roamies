@@ -8,6 +8,18 @@ rm -rf dist && mkdir -p dist
 cp ../desktop.html dist/
 cp -R ../roamies ../onboarding dist/
 ../tauri/sidecar/bundle.sh
+# Ship a Node.js runtime with the app, for the target being built (--target <triple>, else this machine).
+TARGET=""; prev=""; for a in "$@"; do [ "$prev" = "--target" ] && TARGET="$a"; prev="$a"; done
+../tauri/sidecar/fetch-node.sh ${TARGET:+"$TARGET"}
+# Windows voice helper (Parakeet speech on the PC; macOS uses voice/main.swift, built by build.rs). Always
+# an optimised build: a debug one is far too slow at reading speech.
+TRIPLE="${TARGET:-$(rustc -vV | sed -n 's/^host: //p')}"
+case "$TRIPLE" in
+  *-windows-*)
+    cargo build --release --locked --manifest-path src-tauri/voice-win/Cargo.toml --target "$TRIPLE"
+    mkdir -p src-tauri/binaries
+    cp "src-tauri/voice-win/target/$TRIPLE/release/roamies-voice.exe" "src-tauri/binaries/roamies-voice-$TRIPLE.exe" ;;
+esac
 cd src-tauri
 # macOS signing: APPLE_SIGNING_IDENTITY if set, else the first Developer ID Application certificate in
 # the keychain, else ad-hoc. A stable identity keeps macOS permissions across rebuilds.

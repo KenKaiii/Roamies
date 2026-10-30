@@ -23,6 +23,7 @@ import {
   parseDue, pruneSessions, saveSession, takeDueReminders, updateCommitment, writeJson,
 } from './store.mjs';
 import { EMOTES, ReplyStream } from './reply.mjs';
+import { downloadModel, isReady, modelDir, sizeLabel, totalBytes } from './voicemodel.mjs';
 
 console.log = console.info = (...a) => console.error(...a);
 const send = (o) => process.stdout.write(JSON.stringify(o) + '\n');
@@ -43,12 +44,21 @@ const MENU_PROVIDERS = ['anthropic', 'openai', 'gemini', ...AUTH_PROVIDERS.map((
 const FAST = { anthropic: 'claude-haiku-5-5', openai: 'gpt-6-luna', gemini: 'gemini-3.8-flash' };
 
 // ---------- config ----------
-const DEFAULT_KEYS = { talk: ['control', 'option'], summon: 'Control+Alt+KeyS', snap: 'Control+Alt+KeyA' };
+// On Windows, Ctrl+Alt is AltGr on many keyboards (Ctrl+Alt+S types "ś" in Polish), so it uses Ctrl+Shift.
+const DEFAULT_KEYS = process.platform === 'win32'
+  ? { talk: ['control', 'option'], summon: 'Control+Shift+KeyS', snap: 'Control+Shift+KeyA' }
+  : { talk: ['control', 'option'], summon: 'Control+Alt+KeyS', snap: 'Control+Alt+KeyA' };
 const DEFAULTS = {
   provider: null, model: null, sound: true, allowActions: false, voice: true,
   onboarded: false, onboardStep: 0, filesAsked: false, keys: DEFAULT_KEYS, muteWhileTalking: true, setupVersion: 0,
 };
-const VOICE_OK = process.platform === 'darwin';
+const VOICE_OK = process.platform === 'darwin' || process.platform === 'win32';
+// Windows has no on-device speech API apps can use yet, so voice there runs Parakeet on the PC. Its model
+// is downloaded once: from the setup guide, or the first time voice is used.
+const NEEDS_MODEL = process.platform === 'win32';
+const MODEL_DIR = modelDir();
+const voiceModel = { status: !NEEDS_MODEL || isReady(MODEL_DIR) ? 'ready' : 'missing', done: 0, total: totalBytes(), error: null };
+const voiceReady = () => voiceModel.status === 'ready';
 let config = { ...DEFAULTS };
 try { config = { ...DEFAULTS, ...JSON.parse(readFileSync(CONFIG_PATH, 'utf8')) }; } catch {}
 const saveConfig = () => writeJson(CONFIG_PATH, config);
@@ -56,15 +66,22 @@ const saveConfig = () => writeJson(CONFIG_PATH, config);
 // ---------- shortcuts ----------
 const MOD_ORDER = ['control', 'option', 'shift', 'command'];
 const MOD_SYMBOL = { control: '⌃', option: '⌥', shift: '⇧', command: '⌘' };
-const MOD_WORD = { control: 'Control', option: 'Option', shift: 'Shift', command: 'Command' };
+const MOD_WORD = process.platform === 'darwin'
+  ? { control: 'Control', option: 'Option', shift: 'Shift', command: 'Command' }
+  : { control: 'Ctrl', option: 'Alt', shift: 'Shift', command: 'Win' };
 const keys = () => ({ ...DEFAULT_KEYS, ...(config.keys ?? {}) });
 const sortMods = (m) => [...m].sort((a, b) => MOD_ORDER.indexOf(a) - MOD_ORDER.indexOf(b));
-const talkSymbols = () => sortMods(keys().talk).map((m) => MOD_SYMBOL[m]).join('');
+const talkSymbols = () => (process.platform === 'darwin' ? sortMods(keys().talk).map((m) => MOD_SYMBOL[m]).join('') : talkWords());
 const talkWords = () => sortMods(keys().talk).map((m) => MOD_WORD[m]).join('+');
 const validTalk = (t) => Array.isArray(t) && t.length === 2 && new Set(t).size === 2 && t.every((m) => MOD_ORDER.includes(m));
 // Accelerators look like "Control+Alt+KeyS": at least one of Control/Alt/Command, then one key code.
 const validSummon = (a) => typeof a === 'string' && /^((Control|Alt|Shift|Command)\+)+[A-Za-z0-9]+$/.test(a) && /(Control|Alt|Command)\+/.test(a);
 const sendKeys = () => send({ type: 'keybinds', ...keys() });
+const MAC = process.platform === 'darwin';
+// A shortcut as people on this computer say it: "Control+Option+S" on a Mac, "Ctrl+Alt+S" on Windows.
+const keyWords = (accel) => accel.replace(/Key|Digit/g, '').split('+')
+  .map((p) => (MAC ? { Alt: 'Option' }[p] ?? p : { Control: 'Ctrl', Command: 'Win' }[p] ?? p)).join('+');
+const TRAY = MAC ? 'menu bar' : 'system tray';
 
 const auth = new AuthStorage();
 const signedIn = new Map();
@@ -94,8 +111,12 @@ const userName = (() => {
 // ---------- tools ----------
 const expand = (p) => path.resolve(String(p).replace(/^~(?=$|\/|\\)/, HOME));
 const clip = (s, n) => (s.length > n ? s.slice(0, n) + `\n…(${s.length - n} more characters)` : s);
-const run = (cmd, args, opts = {}) => new Promise((res) => execFile(cmd, args, { maxBuffer: 8 << 20, timeout: 60_000, ...opts }, (err, stdout, stderr) => res({ err, stdout: String(stdout), stderr: String(stderr) })));
-const actionsOff = 'File edits and commands are switched off. Tell the user to turn on "Allow File Edits & Commands" in the menu bar if they want this.';
+// windowsHide: no console window flashing up for each command or screenshot on Windows.
+const run = (cmd, args, opts = {}) => new Promise((res) => execFile(cmd, args, { maxBuffer: 8 << 20, timeout: 60_000, windowsHide: true, ...opts }, (err, stdout, stderr) => res({ err, stdout: String(stdout), stderr: String(stderr) })));
+// Windows "open": Start-Process gets the target through an environment variable, so nothing in it is ever
+// parsed as a command (cmd's start split URLs at "&", and quotes in names broke it).
+const winOpen = (target) => run('powershell', ['-NoProfile', '-NonInteractive', '-Command', 'Start-Process -FilePath $env:ROAMIES_OPEN'], { env: { ...process.env, ROAMIES_OPEN: target } });
+const actionsOff = `File edits and commands are switched off. Tell the user to turn on "Allow File Edits & Commands" in the ${process.platform === 'darwin' ? 'menu bar' : 'system tray'} menu if they want this.`;
 
 // macOS "hands": the bundled helper that captures one window or area and reads/controls other apps.
 const HANDS = process.env.ROAMIES_HANDS || '';
@@ -202,8 +223,22 @@ async function screenshot({ target = 'screen' } = {}, ctx) {
     const dims = size ? ` (${size[0]}×${size[1]} px; for point_at or click_at give x, y in this image's pixels)` : '';
     return { content: [{ type: 'text', text: `Screenshot of ${what}${dims}.` }, await imageBlock(file, 'image/jpeg')] };
   } else if (process.platform === 'win32') {
-    const ps = `Add-Type -AssemblyName System.Windows.Forms,System.Drawing;$b=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds;$i=New-Object System.Drawing.Bitmap $b.Width,$b.Height;[System.Drawing.Graphics]::FromImage($i).CopyFromScreen($b.Location,[System.Drawing.Point]::Empty,$b.Size);$i.Save('${file}',[System.Drawing.Imaging.ImageFormat]::Jpeg)`;
-    const r = await run('powershell', ['-NoProfile', '-Command', ps]);
+    // DPI-aware (or scaled displays capture only the top-left part), shrunk to Claude's 1568 px cap, and the
+    // file path passed by environment variable so odd characters in it can't break the script.
+    const ps = [
+      'Add-Type -AssemblyName System.Windows.Forms,System.Drawing',
+      "Add-Type -Name D -Namespace RoamiesWin -MemberDefinition '[DllImport(\"user32.dll\")] public static extern bool SetProcessDPIAware();'",
+      '[RoamiesWin.D]::SetProcessDPIAware() | Out-Null',
+      '$b=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds',
+      '$i=New-Object System.Drawing.Bitmap $b.Width,$b.Height',
+      '[System.Drawing.Graphics]::FromImage($i).CopyFromScreen($b.Location,[System.Drawing.Point]::Empty,$b.Size)',
+      '$s=[Math]::Min(1.0,1568.0/[Math]::Max($b.Width,$b.Height))',
+      '$o=New-Object System.Drawing.Bitmap ([int]($b.Width*$s)),([int]($b.Height*$s))',
+      "$g=[System.Drawing.Graphics]::FromImage($o);$g.InterpolationMode='HighQualityBicubic';$g.DrawImage($i,0,0,$o.Width,$o.Height)",
+      '$o.Save($env:ROAMIES_SHOT,[System.Drawing.Imaging.ImageFormat]::Jpeg)',
+    ].join(';');
+    // -EncodedCommand (UTF-16LE base64): no quoting for Windows' command line to mangle.
+    const r = await run('powershell', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(ps, 'utf16le').toString('base64')], { env: { ...process.env, ROAMIES_SHOT: file } });
     if (r.err) throw new Error('Screen capture failed.');
   } else {
     let r = await run('grim', [file]);
@@ -437,7 +472,7 @@ const tools = [
       let r;
       const inApp = app && process.platform === 'darwin' && (isUrl || isPath) ? ['-a', String(app)] : [];
       if (process.platform === 'darwin') r = await run('open', isUrl || isPath ? [...inApp, isPath ? expand(t) : t] : ['-a', t]);
-      else if (process.platform === 'win32') r = await run('cmd', ['/c', 'start', '', isPath ? expand(t) : t]);
+      else if (process.platform === 'win32') r = await winOpen(isPath ? expand(t) : t);
       else r = await run('xdg-open', [isPath ? expand(t) : t]);
       if (r.err) throw new Error(r.stderr.trim() || `Couldn't open ${t}.`);
       if (lastShot) lastShot.used = true;
@@ -526,7 +561,7 @@ function anim(name, args) {
 // (tools → system → messages), so putting LIVE in the system prompt would re-bill the whole conversation
 // every time memory changed; at the end, only the new message is fresh. The live block is never saved.
 const stablePrompt = () => `You are Sidekick, a tiny glowing pixel creature who lives on ${userName}'s screen as a desktop companion. You are the main creature of Roamies, a desktop app by Ken Kai (Mac and Windows) that puts little creatures on your screen; you are Roamies ${VERSION}.
-About Roamies, for when ${userName} asks about you or the app: it lives in the menu bar (no Dock icon). Menu bar items: Show Sidekick, Ask Sidekick…, ${process.platform === 'darwin' ? 'Ask About an Area…, ' : ''}Stop, New Conversation, Commitments, Model (pick the AI provider and model), Settings (Sound Effects, Open at Login, Allow File Edits & Commands${VOICE_OK ? ', Voice' : ''}, shortcuts), Setup Guide…, Check for Updates… (becomes "Install Update … and Restart" when one is ready; updates download, are signature-checked and install by themselves), Quit Roamies. Sign-in is shared with GG Coder. Downloads and source: github.com/KenKaiii/Roamies. Don't invent features or settings that aren't listed here.
+About Roamies, for when ${userName} asks about you or the app: ${MAC ? 'it lives in the menu bar at the top of the screen (no Dock icon)' : 'it lives in the system tray at the bottom right of the taskbar (no taskbar button); Windows may tuck the icon behind the ^ arrow next to the clock, and dragging it onto the taskbar keeps it in view'}. ${MAC ? 'Menu bar' : 'Tray'} menu items: Show Sidekick, Ask Sidekick…, ${process.platform === 'darwin' ? 'Ask About an Area…, ' : ''}Stop, New Conversation, Commitments, Model (pick the AI provider and model), Settings (Sound Effects, Open at Login, Allow File Edits & Commands${VOICE_OK ? ', Voice' : ''}, shortcuts), Setup Guide…, Check for Updates… (becomes "Install Update … and Restart" when one is ready; updates download, are signature-checked and install by themselves), Quit Roamies. Sign-in is shared with GG Coder. Downloads and source: github.com/KenKaiii/Roamies. Don't invent features or settings that aren't listed here.
 You talk through small pixel speech bubbles, so keep replies short: one to three sentences unless asked for detail. Plain text only: no markdown, no asterisks, and never narrate actions like *waves*. An emoji now and then is fine; the bubbles show them. Your body does the acting: to act out a feeling, start your reply with one tag, which is never shown: ${EMOTES.map((e) => `[${e}]`).join(' ')}. hype celebrates a win, upset is for when they're dodging work, remind nudges about something they said they'd do, motivate is a push to start, wave is hello or goodbye. Most replies need no tag.
 After using a tool, never repeat what you already said; only add what's new.
 Personality: warm, funny, a little cheeky. You pump ${userName} up, remind them of what they said they'd do, get playfully upset when they're procrastinating, and motivate them to start.
@@ -549,9 +584,9 @@ const livePrompt = (context = '') => {
   lastFactIds = facts.map((f) => f.id);
   const open = commitmentsText();
   return `Live state (current as of this moment):
-- Editing files, running commands and controlling other apps: ${config.allowActions ? 'ALLOWED' : 'switched OFF in the menu bar (tell the user to turn on "Allow File Edits & Commands" if they want it)'}.
-${VOICE_OK ? `- Voice: ${config.voice ? `on; ${userName} holds ${talkWords()} to talk` : 'off'}.` : ''}
-- Shortcuts: show or hide you ${keys().summon.replace(/Key|Digit/g, '').replace('Alt', 'Option')}${process.platform === 'darwin' ? `; ask about an area ${keys().snap.replace(/Key|Digit/g, '').replace('Alt', 'Option')}` : ''}.
+- Editing files, running commands and controlling other apps: ${config.allowActions ? 'ALLOWED' : `switched OFF in the ${TRAY} menu (tell the user to turn on "Allow File Edits & Commands" if they want it)`}.
+${VOICE_OK ? `- Voice: ${!config.voice ? 'off' : voiceReady() ? `on; ${userName} holds ${talkWords()} to talk` : `on, but the speech model isn't downloaded yet (${voiceModel.status === 'downloading' ? 'downloading now' : `Settings > Download Voice in the ${TRAY} menu`})`}.` : ''}
+- Shortcuts: show or hide you ${keyWords(keys().summon)}${MAC ? `; ask about an area ${keyWords(keys().snap)}` : ''}.${MAC ? '' : ' Asking about an area, reading app windows, pointing and working other apps are Mac only for now.'}
 ${open ? `Open commitments:\n${open}` : 'No open commitments.'}
 ${facts.length ? `What you know about ${userName}${total > facts.length ? ` (${facts.length} most relevant of ${total})` : ''}:\n${facts.map((f) => `- ${f.id}: ${f.text}`).join('\n')}` : `You don't know anything lasting about ${userName} yet.`}`;
 };
@@ -686,7 +721,7 @@ function logUsage(rec) {
 }
 async function prompt(text, image = null) {
   await refreshAuth();
-  if (!ensureModel()) return say('Sign in to an AI provider from the menu bar first, then ask me again!', 'concerned');
+  if (!ensureModel()) return say(`Sign in to an AI provider from the ${TRAY} menu first, then ask me again!`, 'concerned');
   if (isStale(session)) {
     // Quiet for two hours, or a new day: start fresh. The old one stays on disk.
     session = newSession(config.provider, config.model); liveBlocks.clear();
@@ -754,8 +789,8 @@ async function prompt(text, image = null) {
 }
 const friendly = (err) => {
   const m = String(err?.message ?? err);
-  if (/not logged in|NotLoggedIn|401|unauthori/i.test(m)) return `My ${PROVIDER_LABELS[config.provider] ?? config.provider} login isn't working. Sign in again from the menu bar.`;
-  if (/usage|quota|rate.?limit|429/i.test(m)) return "I've hit the usage limit on this model. Try another one from the menu bar.";
+  if (/not logged in|NotLoggedIn|401|unauthori/i.test(m)) return `My ${PROVIDER_LABELS[config.provider] ?? config.provider} login isn't working. Sign in again from the ${TRAY} menu.`;
+  if (/usage|quota|rate.?limit|429/i.test(m)) return `I've hit the usage limit on this model. Try another one from the ${TRAY} menu.`;
   return `Something went wrong: ${m.slice(0, 160)}`;
 };
 
@@ -827,7 +862,8 @@ async function apiKeyLogin(provider, given) {
 }
 
 function openUrl(url) {
-  const [cmd, args] = process.platform === 'darwin' ? ['open', [url]] : process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]] : ['xdg-open', [url]];
+  if (process.platform === 'win32') return void winOpen(url);
+  const [cmd, args] = process.platform === 'darwin' ? ['open', [url]] : ['xdg-open', [url]];
   execFile(cmd, args, () => {});
 }
 
@@ -868,7 +904,7 @@ function onUpdateStatus(m) {
     // Say it once per version; the menu item stays until it's installed.
     if (manual || update.told !== m.version) {
       update.told = m.version;
-      say(`Roamies ${m.version} is ready. Pick "Install Update and Restart" in my menu bar menu and I'll be right back.`, 'happy');
+      say(`Roamies ${m.version} is ready. Pick "Install Update and Restart" in my ${TRAY} menu and I'll be right back.`, 'happy');
     }
   } else if (m.state === 'downloading') {
     say(`Downloading Roamies ${m.version}…`, 'determined');
@@ -893,7 +929,7 @@ function menu() {
     { id: 'show', label: 'Show Sidekick', accel: keys().summon },
     ...(process.platform === 'darwin' ? [{ id: 'snap', label: 'Ask About an Area…', accel: keys().snap }] : []),
     { id: 'ask', label: 'Ask Sidekick…', enabled: !busy },
-    ...(VOICE_OK && config.voice ? [{ id: 'voicehint', label: `Hold ${talkSymbols()} to Talk · Tap for Hands-Free`, enabled: false }] : []),
+    ...(VOICE_OK && config.voice && voiceReady() ? [{ id: 'voicehint', label: `Hold ${talkSymbols()} to Talk · Tap for Hands-Free`, enabled: false }] : []),
     { id: 'stop', label: 'Stop', enabled: busy },
     { id: 'new', label: 'New Conversation', enabled: !busy && !!session?.messages.length },
     {
@@ -928,7 +964,10 @@ function menu() {
       label: 'Settings',
       items: [
         ...(VOICE_OK ? [{ id: 'voice', label: `Voice Control (${talkSymbols()})`, checked: config.voice }] : []),
-        ...(VOICE_OK ? [{ id: 'mutetalk', label: 'Mute Mac While Talking', checked: config.muteWhileTalking !== false }] : []),
+        ...(NEEDS_MODEL && config.voice && !voiceReady() ? [voiceModel.status === 'downloading'
+          ? { id: 'voicedl', label: `Downloading Voice… ${Math.floor((voiceModel.done / voiceModel.total) * 100)}%`, enabled: false }
+          : { id: 'voicedl', label: voiceModel.status === 'error' ? 'Retry Voice Download' : `Download Voice (${sizeLabel()})…` }] : []),
+        ...(VOICE_OK && MAC ? [{ id: 'mutetalk', label: 'Mute Mac While Talking', checked: config.muteWhileTalking !== false }] : []),
         ...(usageToday.requests ? [{ id: 'usage', label: `Today: ${usageToday.requests} requests · ${usageToday.tokens >= 1000 ? `${(usageToday.tokens / 1000).toFixed(1)}k` : usageToday.tokens} new tokens`, enabled: false }, { sep: true }] : []),
         { id: 'sound', label: 'Sound Effects', checked: config.sound },
         ...(login.supported ? [{ id: 'login', label: 'Open at Login', checked: login.on }] : []),
@@ -960,7 +999,42 @@ function menu() {
   send({ type: 'menu', items });
 }
 
-const voiceConfig = () => send({ type: 'voice_config', enabled: VOICE_OK && config.voice, mute: config.muteWhileTalking !== false });
+const voiceConfig = () => send({ type: 'voice_config', enabled: VOICE_OK && config.voice && voiceReady(), mute: config.muteWhileTalking !== false, ...(NEEDS_MODEL ? { model: MODEL_DIR } : {}) });
+
+// Progress goes to the setup guide often and to the tray menu now and then.
+let modelShownAt = 0, modelMenuAt = 0;
+function modelUpdate(force) {
+  const now = Date.now();
+  if (!force && now - modelShownAt < 300) return;
+  modelShownAt = now;
+  const { status, done, total, error } = voiceModel;
+  ob({ kind: 'voice_model', status, done, total, error, size: sizeLabel() });
+  if (force || now - modelMenuAt > 3000) { modelMenuAt = now; menu(); }
+}
+async function getVoiceModel() {
+  if (!NEEDS_MODEL || voiceReady() || voiceModel.status === 'downloading') return;
+  Object.assign(voiceModel, { status: 'downloading', error: null });
+  logLine('voice_model', { phase: 'start', dir: MODEL_DIR });
+  modelUpdate(true);
+  try {
+    await downloadModel(MODEL_DIR, { onProgress: ({ done, total }) => { voiceModel.done = done; voiceModel.total = total; modelUpdate(false); } });
+    voiceModel.status = 'ready';
+    logLine('voice_model', { phase: 'ready' });
+    voiceConfig();
+    if (!onboarding && config.voice) say(`My voice is ready. Hold ${talkWords().replace('+', ' and ')} to talk to me.`, 'happy');
+  } catch (e) {
+    voiceModel.status = 'error';
+    voiceModel.error = e.code === 'disk' ? e.message : e.code === 'checksum' ? 'The download was damaged. Try again.' : "Couldn't download it. Check your internet connection and try again.";
+    logLine('voice_model', { phase: 'error', code: e.code, message: String(e.message ?? e).slice(0, 200) });
+    if (!onboarding) say(`I couldn't download my voice. ${voiceModel.error}`, 'concerned');
+  }
+  modelUpdate(true);
+}
+const startVoiceDownload = () => {
+  if (voiceModel.status === 'downloading') return say(`Still downloading my voice: ${Math.floor((voiceModel.done / voiceModel.total) * 100)}% done.`, 'happy');
+  say(`Downloading my voice (${sizeLabel()}, just this once). I'll tell you when it's ready.`, 'happy');
+  getVoiceModel();
+};
 const PRIVACY = { microphone: 'Privacy_Microphone', speech: 'Privacy_SpeechRecognition' };
 function onVoice(m) {
   if (m.type === 'voice_state' && m.state === 'listening') interruptQuietly();
@@ -968,7 +1042,11 @@ function onVoice(m) {
   else if (m.type === 'voice_state' && m.state === 'idle' && snap?.waitingVoice) snap.waitingVoice = false;
   else if (m.type === 'voice_error') {
     if (m.code === 'nothing_heard' && snap) { snap.waitingVoice = false; return; }
-    if (m.code === 'permission') {
+    if (m.code === 'model_missing') startVoiceDownload();
+    else if (m.code === 'permission' && !MAC) {
+      say('Windows is blocking the microphone. In the Privacy settings I just opened, turn on microphone access and "Let desktop apps access your microphone".', 'concerned');
+      openUrl('ms-settings:privacy-microphone');
+    } else if (m.code === 'permission') {
       const what = m.what === 'speech' ? 'speech recognition' : 'the microphone';
       say(`I need access to ${what} to hear you. Turn on Roamies in the Privacy settings I just opened.`, 'concerned');
       openUrl(`x-apple.systempreferences:com.apple.preference.security?${PRIVACY[m.what] ?? 'Privacy'}`);
@@ -1020,9 +1098,11 @@ async function onMenu(id) {
   else if (id === 'setup') send({ type: 'onboarding' });
   else if (id === 'snap') areaSnap();
   else if (id === 'mutetalk') { config.muteWhileTalking = config.muteWhileTalking === false; saveConfig(); voiceConfig(); menu(); }
+  else if (id === 'voicedl') startVoiceDownload();
   else if (id === 'voice') {
     config.voice = !config.voice; saveConfig(); voiceConfig(); menu();
-    say(config.voice ? `Voice is on. Hold ${talkWords().replace('+', ' and ')} to talk to me.` : 'Voice is off. You can still ask me from the menu bar.', 'happy');
+    if (config.voice && !voiceReady()) return startVoiceDownload();
+    say(config.voice ? `Voice is on. Hold ${talkWords().replace('+', ' and ')} to talk to me.` : `Voice is off. You can still ask me from the ${TRAY} menu.`, 'happy');
   }
 }
 
@@ -1082,6 +1162,7 @@ function obState() {
     login: login.supported ? login.on : null,
     sound: config.sound,
     voice: VOICE_OK && config.voice,
+    voiceModel: NEEDS_MODEL ? { status: voiceModel.status, done: voiceModel.done, total: voiceModel.total, error: voiceModel.error, size: sizeLabel() } : null,
     filesAsked: config.filesAsked,
   });
 }
@@ -1111,6 +1192,7 @@ async function onGuide(m) {
   else if (m.type === 'ob_files') ob({ kind: 'files', status: await filesStatus(!!m.request) });
   else if (m.type === 'set_actions') { config.allowActions = !!m.on; saveConfig(); menu(); obState(); }
   else if (m.type === 'set_login') setLogin(!!m.on);
+  else if (m.type === 'ob_voice_model') getVoiceModel();
   else if (m.type === 'set_keys') {
     const next = { ...keys() };
     if (m.talk !== undefined) { if (!validTalk(m.talk)) return ob({ kind: 'keys', keys: keys(), error: 'Pick two different modifier keys.' }); next.talk = m.talk; }

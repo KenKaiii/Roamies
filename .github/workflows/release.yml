@@ -43,7 +43,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
           cache-dependency-path: showcase/tauri/sidecar/package-lock.json
 
@@ -61,7 +61,9 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: showcase/tauri/src-tauri -> target
+          workspaces: |
+            showcase/tauri/src-tauri -> target
+            showcase/tauri/src-tauri/voice-win -> target
           key: ${{ matrix.target }}
 
       - name: Install the Tauri CLI

@@ -28,10 +28,22 @@ const ONBOARDING_LABEL: &str = "onboarding";
 
 struct Sidecar(Mutex<Option<ChildStdin>>);
 struct Roster(Mutex<Vec<String>>);
-/// The voice helper (macOS) and how many times it has died on its own since it was last wanted.
+/// The voice helper and how many times it has died on its own since it was last wanted.
 struct Voice(Mutex<Option<Child>>, AtomicUsize);
 /// Talk chord passed to the voice helper, e.g. ["control", "option"].
 struct TalkChord(Mutex<Vec<String>>);
+/// Windows: the downloaded speech model's folder (the sidecar owns the download and says where it is).
+struct VoiceModel(Mutex<Option<String>>);
+
+/// Windows: helpers are console programs, so without this each one opens a console window.
+fn hide_console(cmd: &mut Command) -> &mut Command {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    cmd
+}
 
 thread_local! {
     // The hotkey manager must live on the main thread; it also owns the current show/hide hotkey.
@@ -111,7 +123,7 @@ fn set_typing(app: AppHandle, window: WebviewWindow, on: bool) {
 /// Runs the voice helper in a one-shot permission mode and returns what it printed.
 fn helper_perms(args: &[&str]) -> Value {
     let Some(bin) = voice_binary() else { return json!({ "type": "perms", "unsupported": true }) };
-    let out = Command::new(bin).args(args).stdin(Stdio::null()).stderr(Stdio::null()).output();
+    let out = hide_console(&mut Command::new(bin)).args(args).stdin(Stdio::null()).stderr(Stdio::null()).output();
     out.ok()
         .and_then(|o| String::from_utf8(o.stdout).ok())
         .and_then(|t| t.lines().rev().find_map(|l| serde_json::from_str::<Value>(l).ok()))
@@ -135,6 +147,10 @@ fn accessibility(prompt: bool) -> &'static str {
 
 #[tauri::command]
 async fn perm_status() -> Value {
+    // Windows: only the microphone privacy switch, read by the voice helper.
+    if cfg!(windows) {
+        return tauri::async_runtime::spawn_blocking(|| helper_perms(&["--perms"])).await.unwrap_or(Value::Null);
+    }
     if !cfg!(target_os = "macos") {
         return json!({ "type": "perms", "unsupported": true });
     }
@@ -171,6 +187,11 @@ async fn perm_request(kind: String) -> Value {
 #[tauri::command]
 fn open_settings(pane: String) {
     const PANES: [&str; 6] = ["Privacy_Microphone", "Privacy_SpeechRecognition", "Privacy_ScreenCapture", "Privacy_FilesAndFolders", "Privacy_AllFiles", "Privacy_Accessibility"];
+    if cfg!(windows) && pane == "privacy-microphone" {
+        // explorer hands ms-settings: links to the Settings app.
+        let _ = hide_console(&mut Command::new("explorer")).arg("ms-settings:privacy-microphone").spawn();
+        return;
+    }
     if !cfg!(target_os = "macos") || !PANES.contains(&pane.as_str()) {
         return;
     }
@@ -486,6 +507,10 @@ fn find_node() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("ROAMIES_NODE") {
         return Some(PathBuf::from(p));
     }
+    // The Node.js shipped inside the app (bundle.externalBin), so users don't need Node installed.
+    if let Some(p) = helper_binary("node") {
+        return Some(p);
+    }
     // GUI apps don't get the shell's PATH on macOS, so check the usual installs too.
     let exe = if cfg!(windows) { "node.exe" } else { "node" };
     let mut dirs: Vec<PathBuf> = std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
@@ -505,12 +530,13 @@ fn sidecar_script(app: &AppHandle) -> PathBuf {
 
 fn spawn_sidecar(app: &AppHandle) {
     let Some(node) = find_node() else {
-        fallback_menu(app, "Node.js 22+ not found");
+        fallback_menu(app, "Sidekick's runtime is missing; reinstall Roamies");
         return;
     };
     let script = sidecar_script(app);
     let stderr = log_stdio("sidekick.log");
     let mut cmd = Command::new(node);
+    hide_console(&mut cmd);
     cmd.arg(&script)
         .env("ROAMIES_VERSION", app.package_info().version.to_string())
         .env("ROAMIES_HANDS", helper_binary("roamies-hands").map(|p| p.to_string_lossy().into_owned()).unwrap_or_default())
@@ -543,7 +569,7 @@ fn spawn_sidecar(app: &AppHandle) {
     });
 }
 
-// ---------- voice helper (macOS: ⌃⌥ + Apple speech) ----------
+// ---------- voice helper (macOS: Apple speech; Windows: Parakeet on the PC) ----------
 
 /// A bundled helper next to the app binary (Contents/MacOS on macOS).
 fn helper_binary(name: &str) -> Option<PathBuf> {
@@ -575,7 +601,12 @@ fn start_voice(app: &AppHandle) {
         return;
     };
     let chord = app.state::<TalkChord>().0.lock().unwrap().join(",");
-    let mut child = match Command::new(bin).arg("--chord").arg(chord).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(log_stdio("sidekick-voice.log")).spawn() {
+    let mut cmd = Command::new(bin);
+    cmd.arg("--chord").arg(chord);
+    if let Some(dir) = app.state::<VoiceModel>().0.lock().unwrap().clone() {
+        cmd.arg("--model").arg(dir);
+    }
+    let mut child = match hide_console(&mut cmd).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(log_stdio("sidekick-voice.log")).spawn() {
         Ok(c) => c,
         Err(e) => {
             eprintln!("voice helper failed to start: {e}");
@@ -762,7 +793,8 @@ fn login_item(app: &AppHandle, set: Option<bool>) {
     let (supported, on, approval) = {
         // The per-user Run key: what Task Manager's Startup apps lists and can switch off.
         const KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
-        let reg = |args: &[&str]| Command::new("reg").args(args).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false);
+        use std::os::windows::process::CommandExt;
+        let reg = |args: &[&str]| Command::new("reg").args(args).creation_flags(0x0800_0000).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false);
         if !installed {
             (false, false, false)
         } else {
@@ -862,6 +894,9 @@ fn handle_sidecar(app: &AppHandle, msg: Value) {
         // Listen right away, hands-free (after an area snap: snap, then just talk).
         Some("listen") => to_voice(app, &json!({ "cmd": "listen" })),
         Some("voice_config") => {
+            if let Some(dir) = msg.get("model").and_then(Value::as_str) {
+                *app.state::<VoiceModel>().0.lock().unwrap() = Some(dir.to_owned());
+            }
             if msg.get("enabled").and_then(Value::as_bool) == Some(true) {
                 app.state::<Voice>().1.store(0, Ordering::Relaxed);
                 start_voice(app);
@@ -900,6 +935,7 @@ fn main() {
         .manage(Roster(Mutex::new(vec!["sidekick".into()])))
         .manage(Voice(Mutex::new(None), AtomicUsize::new(0)))
         .manage(TalkChord(Mutex::new(vec!["control".into(), "option".into()])))
+        .manage(VoiceModel(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![set_hot, sidecar_send, set_typing, perm_status, perm_request, open_settings, onboarding_finish, relaunch, focus_guide, drag_window])
         .on_menu_event(|app, e| match e.id.as_ref() {
             "quit" => app.exit(0),
