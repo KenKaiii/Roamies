@@ -26,7 +26,7 @@ voice, keeps track of what you said you'd do and nudges you when it's due.
 
 ## Why Roamies
 
-- **Talk, don't type.** Hold ⌃⌥ (Ctrl+Alt on Windows), say it, let go.
+- **Talk, don't type.** Hold ⌃⌥ (Ctrl+Alt on Windows), say it, let go. Circle something with the cursor while you talk and it sees what you mean.
 - **It talks back.** Spoken replies in its own voice, with real feeling, through [Fish Audio](https://fish.audio).
 - **It remembers.** What you said you'd do, reminders down to the second, and what matters to you.
 - **It draws on your screen.** Rings the exact button to click, walks you through each step, and sketches answers beside what you're reading.
@@ -68,21 +68,27 @@ clear it all in one go.
 - **Safe by default:** file edits, commands and app control stay off until you turn them on, and risky steps always ask.
 - **Shows its work:** every tool plays its own animation, so you can see what it's doing.
 - **Where keys live:** your Fish Audio key stays in the macOS Keychain (encrypted with Windows DPAPI on Windows). AI sign-ins are stored in `~/.gg/auth.json`, shared with GG Coder.
-- **Out of the way:** no Dock icon, ⌃⌥S shows or hides it, Esc stops a reply.
+- **Out of the way:** no Dock or taskbar button, ⌃⌥S (Ctrl+Shift+S on Windows) shows or hides it, Esc stops a reply.
 - **Updates itself:** updates are signature-checked before they install, then it restarts itself. The Windows installer isn't code-signed yet, so SmartScreen warns the first time.
 - **Quick setup:** permissions, sign-in and a short chat so it gets to know you.
 
-|                         | macOS                      | Windows                     |
-| ----------------------- | -------------------------- | --------------------------- |
-| Talk to it              | Yes, best on macOS 26+     | Yes, speech runs on your PC |
-| Spoken replies          | Yes, with a Fish Audio key | Yes, with a Fish Audio key  |
-| Memory and reminders    | Yes                        | Yes                         |
-| Read windows and point  | Yes                        | Not yet                     |
-| Cards and diagrams      | Yes                        | Yes                         |
-| Click and type in apps  | Yes                        | Not yet                     |
-| Ask about an area (⌃⌥A) | Yes                        | Not yet                     |
+|                        | macOS                      | Windows                     |
+| ---------------------- | -------------------------- | --------------------------- |
+| Talk to it             | Yes, best on macOS 26+     | Yes, speech runs on your PC |
+| Circle while talking   | Yes                        | Yes                         |
+| Spoken replies         | Yes, with a Fish Audio key | Yes, with a Fish Audio key  |
+| Memory and reminders   | Yes                        | Yes                         |
+| Read windows and point | Yes                        | Yes                         |
+| Cards and diagrams     | Yes                        | Yes                         |
+| Click and type in apps | Yes                        | Yes                         |
+| Ask about an area      | Yes (⌃⌥A)                  | Yes (Ctrl+Shift+A)          |
 
 <sub>Before macOS 26, talking uses Apple's older speech recognizer, which needs Siri or Dictation turned on.</sub>
+
+<sub>On Windows, Roamies reads other apps through UI Automation and finds words on screen with Windows' own text
+recognition (it needs a Windows language with text recognition, which most have). It can't type or click in apps
+running as administrator, and it borrows your cursor for real clicks, keys and scrolling, giving it back when it's done.
+Windows also leaves Roamies out of every screen capture, so it won't show in your screenshots or screen shares.</sub>
 
 <sub>Spoken replies are billed to your own Fish Audio account; the panel shows what each voice model costs. Voice on
 Windows uses [NVIDIA Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3)
