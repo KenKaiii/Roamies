@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   build:
-    # Linux for the shared code, macOS for the Swift helpers, Windows for the Parakeet voice helper.
+    # Linux for the shared code, macOS for the Swift helpers, Windows for its Rust helpers (voice and hands).
     strategy:
       fail-fast: false
       matrix:
@@ -57,9 +57,10 @@ jobs:
           workspaces: |
             showcase/tauri/src-tauri -> target
             showcase/tauri/src-tauri/voice-win -> target
+            showcase/tauri/src-tauri/hands-win -> target
 
       # Copies the web files into dist/, bundles the sidecar, then `cargo build` (debug). On macOS this also
-      # compiles the Swift helpers; on Windows it builds the voice helper first (release, as shipped).
+      # compiles the Swift helpers; on Windows it builds the voice and hands helpers first (release, as shipped).
       - name: Build
         run: ./build.sh dev
 
@@ -79,3 +80,43 @@ jobs:
       - name: Test the Windows voice helper
         if: runner.os == 'Windows'
         run: cargo test --release --locked --manifest-path src-tauri/voice-win/Cargo.toml --target x86_64-pc-windows-msvc
+
+      # The Windows hands helper's logic (logic.rs) builds and is tested anywhere.
+      - name: Test the hands helper's logic
+        if: runner.os != 'Windows'
+        run: cargo test --locked --manifest-path src-tauri/hands-win/Cargo.toml
+
+      - name: Test the Windows hands helper
+        if: runner.os == 'Windows'
+        run: |
+          cargo test --release --locked --manifest-path src-tauri/hands-win/Cargo.toml --target x86_64-pc-windows-msvc
+          src-tauri/binaries/roamies-hands-x86_64-pc-windows-msvc.exe --self-test
+
+      # The real helper against a real app (Notepad): list, locate, capture, read, fill, read back, OCR (skipped with a
+      # reason when the runner has no OCR language) and refusing a terminal.
+      - name: Smoke test the Windows hands helper
+        if: runner.os == 'Windows'
+        run: src-tauri/binaries/roamies-hands-x86_64-pc-windows-msvc.exe --smoke
+
+      # The debug app starts, starts its sidecar (its "start" log line) and keeps running.
+      - name: Smoke test the Windows app
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $data = Join-Path $env:RUNNER_TEMP 'roamies-data'
+          $env:ROAMIES_DATA_DIR = $data
+          $p = Start-Process -FilePath src-tauri/target/debug/roamies.exe -PassThru
+          $logs = Join-Path $data 'sidekick/logs'
+          $started = $false
+          for ($i = 0; $i -lt 60; $i++) {
+            Start-Sleep -Seconds 1
+            if ($p.HasExited) { break }
+            if (Get-ChildItem $logs -Filter *.log -ErrorAction SilentlyContinue | Select-String -Pattern ' start ' -Quiet) { $started = $true; break }
+          }
+          $alive = -not $p.HasExited
+          if ($alive) { taskkill /PID $p.Id /T /F | Out-Null }
+          if (-not ($started -and $alive)) {
+            Get-Content (Join-Path $env:USERPROFILE '.gg/sidekick.log') -ErrorAction SilentlyContinue | Select-Object -Last 40
+            throw "Roamies didn't start its sidecar (started: $started, still running: $alive)"
+          }
+          "Roamies started its sidecar (pid $($p.Id))"

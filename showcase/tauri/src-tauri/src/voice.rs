@@ -239,6 +239,11 @@ fn handle_voice(app: &AppHandle, msg: Value) {
         app.state::<Voice>().1.store(0, Ordering::Relaxed);
         return;
     }
+    // Windows: the pen trail while circling something (voice-win/src/ink.rs); the overlays draw it, also during setup.
+    if msg.get("type").and_then(Value::as_str) == Some("ink") {
+        to_overlays(app, &ui);
+        return;
+    }
     // While the setup guide is open, talking is just the "try it" test: it never reaches the agent.
     if ONBOARDING.load(Ordering::Relaxed) {
         // Nothing answers here, so the listening pill goes as soon as the words are in.

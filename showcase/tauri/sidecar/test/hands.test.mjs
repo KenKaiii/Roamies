@@ -1,15 +1,15 @@
-// The macOS tools against a fake hands helper: act_in_app drops read-only steps, screenshots use the helper's own
+// The hands tools (macOS and Windows) against a fake hands helper: act_in_app drops read-only steps, screenshots use the helper's own
 // resize, and an app that isn't installed gives a plain answer. Run: npm test
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-if (process.platform !== 'darwin') { console.log('hands tests: skipped (macOS only)'); process.exit(0); }
+if (!['darwin', 'win32'].includes(process.platform)) { console.log('hands tests: skipped (macOS and Windows only)'); process.exit(0); }
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'roamies-hands-test-'));
-const log = path.join(dir, 'calls.jsonl'), fake = path.join(dir, 'hands');
-fs.writeFileSync(fake, `#!/usr/bin/env node
-const fs = require('fs'); const a = process.argv.slice(2);
+// A .mjs helper runs on this Node (tools.mjs), so the same fake works on Windows.
+const log = path.join(dir, 'calls.jsonl'), fake = path.join(dir, 'hands.mjs');
+fs.writeFileSync(fake, `import fs from 'node:fs'; const a = process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify(a) + '\\n');
 const swap = ${JSON.stringify(path.join(dir, 'front.json'))};
 const win = fs.existsSync(swap) ? JSON.parse(fs.readFileSync(swap, 'utf8')) : { id: 7, app: 'TextEdit', title: 'notes.txt', bounds: [0, 0, 800, 600] };
@@ -20,7 +20,7 @@ if (a[0] === 'ui') o = { ok: true, window: win, controls: [], texts: [], note: '
 if (a[0] === 'front') { if (win.slowFront) { const t = Date.now(); while (Date.now() - t < 2000); } o = { ok: true, app: win.app, title: win.title, ...(win.url ? { url: win.url } : {}) }; }
 if (a[0] === 'capture') { fs.writeFileSync(a[1], 'x'); o = { ok: true, file: a[1], window: win, pixels: [800, 600] }; }
 console.log(JSON.stringify(o));
-`, { mode: 0o755 });
+`);
 process.env.ROAMIES_HANDS = fake;
 const { createTools } = await import('../tools.mjs');
 const noop = async () => {};

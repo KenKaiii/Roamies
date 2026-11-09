@@ -240,7 +240,7 @@
         el('div', { className: 'actions' },
           btn('Ask', () => act('ask', true), { kind: u.available ? 'ghost' : 'primary', k: 'ask', disabled: state.busy, aria: `Ask ${state.name}` }),
           btn('Show list', () => act('list', true), { k: 'list' }),
-          mac ? btn('Ask about an area', () => act('snap', true), { k: 'snap' }) : null,
+          state.snap ?? mac ? btn('Ask about an area', () => act('snap', true), { k: 'snap' }) : null,
           state.busy ? btn('Stop', () => act('stop'), { k: 'stop' }) : btn('New chat', () => act('new'), { k: 'new', disabled: !state.canNew, aria: 'Start a new conversation' }),
           mac ? null : btn(`Show ${state.name}`, () => act('show', true), { k: 'show' }))),
       group('Recent', 'Newest first.', null,

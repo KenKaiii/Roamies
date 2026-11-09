@@ -3,7 +3,8 @@
 // transcribes on this PC with NVIDIA Parakeet TDT 0.6B v3 (int8 ONNX via parakeet-rs). Parakeet isn't a
 // streaming model, so live text comes from re-reading the take about once a second.
 // Hold the chord = push-to-talk (release sends). Quick tap = hands-free (ends on a pause or another tap).
-// Exits when stdin closes.
+// While the chord is held, moving the cursor round something circles it (ink.rs); the circled area goes out with
+// what was said, as on macOS. Exits when stdin closes.
 //
 // roamies-voice --model <dir> [--chord control,option]   normal use (Roamies starts it)
 // roamies-voice --perms                                   prints {"type":"perms","mic":…}
@@ -11,6 +12,7 @@
 // roamies-voice --model <dir> --test-audio <wav>          dev: a file stands in for the mic ({"cmd":"listen"} starts)
 
 mod audio;
+mod ink;
 mod keys;
 
 use audio::{Sink, Source};
@@ -25,7 +27,7 @@ use std::time::{Duration, Instant};
 
 pub const RATE: u32 = 16_000;
 
-fn emit(v: Value) {
+pub fn emit(v: Value) {
     let mut out = std::io::stdout().lock();
     let _ = writeln!(out, "{v}");
     let _ = out.flush();
@@ -160,6 +162,7 @@ struct Voice {
     tail_until: Option<f64>,
     final_until: Option<f64>,
     test_audio: Option<PathBuf>,
+    ink: ink::Ink,
     tx: Sender<Ev>,
     t0: Instant,
 }
@@ -182,6 +185,8 @@ impl Voice {
     fn tick(&mut self) {
         let now = self.now();
         self.tick_keys(now);
+        self.ink.set_armed(matches!(self.phase, Phase::Armed | Phase::Holding), now);
+        self.ink.follow(now);
         match self.phase {
             Phase::Holding | Phase::HandsFree => self.maybe_read(now),
             Phase::Finishing => {
@@ -355,6 +360,7 @@ impl Voice {
         let shown = self.phase != Phase::Armed;
         self.report_empty = shown;
         self.phase = Phase::Finishing;
+        self.ink.capture(self.now());
         if shown {
             emit(json!({ "type": "state", "state": "processing" }));
         }
@@ -419,8 +425,20 @@ impl Voice {
         self.take += 1;
         self.phase = Phase::Idle;
         let text = self.best.trim().to_string();
+        let area = self.ink.take();
         if !text.is_empty() {
-            emit(json!({ "type": "final", "text": text }));
+            // What was circled on screen while talking rides along with the words.
+            let mut msg = json!({ "type": "final", "text": text });
+            if let Some(a) = area {
+                msg["area"] = a;
+                log("sent what was said, with the circled area");
+            }
+            emit(msg);
+        } else if let Some(f) = area.as_ref().and_then(|a| a["file"].as_str()) {
+            // Circled something but said nothing: drop it quietly (no "I didn't hear you").
+            let _ = std::fs::remove_file(f);
+            log("nothing said, dropped the circled area");
+            self.report_empty = false;
         }
         emit(json!({ "type": "state", "state": "idle" }));
         // Listened but got no words: say so instead of closing silently.
@@ -439,6 +457,8 @@ impl Voice {
         self.reading = false;
         self.phase = Phase::Idle;
         self.report_empty = false;
+        let now = self.now();
+        self.ink.clear(now);
         emit(json!({ "type": "state", "state": "idle", "cancelled": true }));
     }
 
@@ -505,6 +525,12 @@ fn main() {
         return;
     }
     let model = arg(&args, "--model").map(PathBuf::from);
+    // Cursor positions and captures in real pixels on every monitor (ink.rs turns them into screen points).
+    #[cfg(windows)]
+    // SAFETY: a plain call at startup, before any window or thread exists.
+    unsafe {
+        windows_sys::Win32::UI::HiDpi::SetProcessDpiAwarenessContext(windows_sys::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    }
 
     if let Some(wav) = arg(&args, "--transcribe") {
         let dir = model.expect("--transcribe needs --model <dir>");
@@ -552,6 +578,7 @@ fn main() {
         tail_until: None,
         final_until: None,
         test_audio: arg(&args, "--test-audio").map(PathBuf::from),
+        ink: ink::Ink::default(),
         tx: tx.clone(),
         t0: Instant::now(),
     };

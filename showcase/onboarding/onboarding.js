@@ -126,6 +126,9 @@
   const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
   const CHEERS = ['Got it!', 'Nice!', 'Perfect.', 'Yes!'];
   const isMac = () => state?.platform === 'darwin';
+  // Ask About an Area and circling while talking: macOS and Windows (the sidecar says which this computer has).
+  const canSnap = () => state?.snap ?? isMac();
+  const canCircle = () => state?.circle ?? isMac();
   const MODE = new URLSearchParams(location.search).get('mode');
   const at = (name) => STEPS[cur]?.name === name;
 
@@ -574,9 +577,9 @@
       else if (msg.type === 'final') {
         voice.listening = false; poseFn = null;
         // Drawing (Mac): circling something while holding the keys marks it; the words arrive with that area.
-        const drew = isMac() && !!msg.area;
+        const drew = canCircle() && !!msg.area;
         heard.textContent = drew ? `“${msg.text}” + your circle` : `“${msg.text}”`;
-        act('hype'); quip(drew ? 'I saw your circle!' : keys.heard && isMac() && !keys.drew ? 'Now try circling!' : 'I heard you!'); sfx('heard');
+        act('hype'); quip(drew ? 'I saw your circle!' : keys.heard && canCircle() && !keys.drew ? 'Now try circling!' : 'I heard you!'); sfx('heard');
         if (drew) keys.drew = true; else keys.heard = true;
         keys.tryLabel();
       } else if (msg.type === 'state' && msg.state === 'idle') { voice.listening = false; if (poseFn) poseFn = null; }
@@ -602,8 +605,8 @@
         return b;
       }));
       keys.tryLabel();
-      $('snap-line').hidden = !isMac() || !k.snap;
-      $('draw-tip').hidden = !isMac();
+      $('snap-line').hidden = !canSnap() || !k.snap;
+      $('draw-tip').hidden = !canCircle();
       for (const w of ['summon', 'snap']) if (keys.recording !== w && k[w]) fillCaps($(`${w}-caps`), accelCaps(k[w]));
       nav();
     },
@@ -612,8 +615,8 @@
       const k = state?.keys, vm = state?.voiceModel; if (!k) return;
       const tl = $('try-label');
       if (!isMac() && vm && vm.status !== 'ready') tl.replaceChildren(vm.status === 'downloading' ? `Try it once my voice has downloaded (${pctOf(vm)}%).` : 'Download my voice in step 2 to try it.');
-      // Mac: once talking worked, the next try teaches drawing (circle something while holding the keys).
-      else if (isMac() && keys.heard && !keys.drew) tl.replaceChildren('Now hold ', capsEl(capsFor(k.talk)), ' and circle something as you ask');
+      // Once talking worked, the next try teaches drawing (circle something while holding the keys).
+      else if (canCircle() && keys.heard && !keys.drew) tl.replaceChildren('Now hold ', capsEl(capsFor(k.talk)), ' and circle something as you ask');
       else tl.replaceChildren('Try it: hold ', capsEl(capsFor(k.talk)), ' and say hi');
     },
     record(which) {
@@ -635,13 +638,13 @@
     enter() { keys.render(); aim($('chords')); setTimeout(() => at('keys') && quip(state?.voice ? 'Try talking to me!' : 'Your shortcuts'), 700); },
     leave() { if (keys.recording) keys.stop(); poseFn = null; voice.listening = false; },
   };
-  // Drawing, shown not told (Mac): a cursor holding the talk keys circles Roamie and the loop snaps shut, like the
+  // Drawing, shown not told: a cursor holding the talk keys circles Roamie and the loop snaps shut, like the
   // real pen. It loops while the step is open, pauses while they try talking or record a shortcut, and holds
   // still as a finished circle with reduced motion.
   const penDemo = {
     t: 0, eye: null, keysFor: '',
     LOOP: 6, START: 0.4, DRAW: 1.7,
-    on: () => at('keys') && isMac() && !!state?.voice && !keys.recording && !voice.listening && !sidekick.hidden,
+    on: () => at('keys') && canCircle() && !!state?.voice && !keys.recording && !voice.listening && !sidekick.hidden,
     // A hand-drawn loop: starts top left, goes clockwise, a little wobbly, and overlaps its start before it closes.
     points(r) {
       const pts = [], a0 = -2.3, span = Math.PI * 2 + 0.35, n = 80;
@@ -801,9 +804,9 @@
       const k = state?.keys;
       const recap = $('recap');
       recap.replaceChildren();
-      if (state?.voice && k) recap.append(el('dt', {}, capsEl(capsFor(k.talk))), el('dd', { textContent: isMac() ? 'Hold to talk to me. Circle something to mark it' : 'Hold to talk to me' }));
+      if (state?.voice && k) recap.append(el('dt', {}, capsEl(capsFor(k.talk))), el('dd', { textContent: canCircle() ? 'Hold to talk to me. Circle something to mark it' : 'Hold to talk to me' }));
       if (k) recap.append(el('dt', {}, capsEl(accelCaps(k.summon))), el('dd', { textContent: 'Show or hide me' }));
-      if (k?.snap && isMac()) recap.append(el('dt', {}, capsEl(accelCaps(k.snap))), el('dd', { textContent: 'Ask about an area of the screen' }));
+      if (k?.snap && canSnap()) recap.append(el('dt', {}, capsEl(accelCaps(k.snap))), el('dd', { textContent: 'Ask about an area of the screen' }));
       const tray = el('span', { className: 'caps' }); const cap = el('kbd', { className: 'px cap' }); cap.innerHTML = TRAY_SVG; tray.append(cap);
       recap.append(el('dt', {}, tray), el('dd', { textContent: isMac() ? 'Everything else, in the menu bar' : 'Everything else, in the system tray' }));
       // Windows keeps tray icons at the bottom right, and new ones start hidden behind the ^ arrow.

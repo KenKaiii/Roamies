@@ -251,6 +251,8 @@
 
   // ---------- voice (⌃⌥) ----------
   function onVoice(m) {
+    // Windows: the pen trail while the talk keys are held (pen.js).
+    if (m.type === 'ink') { Roamie.pen?.(m); return; }
     const a = getAgent();
     if (!a) return;
     if (m.type === 'state' && m.state === 'listening') {

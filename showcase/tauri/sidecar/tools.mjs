@@ -1,4 +1,4 @@
-// The agent's tools: screen capture, reading and working other apps (macOS "hands" helper), files, commands,
+// The agent's tools: screen capture, reading and working other apps (the "hands" helper), files, commands,
 // web pages and memory. Every file, command, URL and open goes through safety.mjs first.
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -18,22 +18,27 @@ export const expand = (p) => path.resolve(String(p).replace(/^~(?=$|\/|\\)/, HOM
 const clip = (s, n) => (s.length > n ? s.slice(0, n) + `\n…(${s.length - n} more characters)` : s);
 // windowsHide: no console window flashing up for each command or screenshot on Windows.
 export const run = (cmd, args, opts = {}) => new Promise((res) => execFile(cmd, args, { maxBuffer: 8 << 20, timeout: 60_000, windowsHide: true, ...opts }, (err, stdout, stderr) => res({ err, stdout: String(stdout), stderr: String(stderr) })));
-// Windows "open": Start-Process gets the target through an environment variable, so nothing in it is ever
-// parsed as a command (cmd's start split URLs at "&", and quotes in names broke it).
-export const winOpen = (target) => run('powershell', ['-NoProfile', '-NonInteractive', '-Command', 'Start-Process -FilePath $env:ROAMIES_OPEN'], { env: { ...process.env, ROAMIES_OPEN: target } });
+// Windows "open": Start-Process gets the target (and the app to open it in) through environment variables, so
+// nothing in them is ever parsed as a command (cmd's start split URLs at "&", and quotes in names broke it). A
+// failure says "Unable to find application", as macOS's open does.
+const WIN_OPEN = "try { if ($env:ROAMIES_OPEN_APP) { Start-Process -FilePath $env:ROAMIES_OPEN_APP -ArgumentList ('\"' + $env:ROAMIES_OPEN + '\"') -ErrorAction Stop } else { Start-Process -FilePath $env:ROAMIES_OPEN -ErrorAction Stop } } catch { [Console]::Error.WriteLine('Unable to find application: ' + $_.Exception.Message); exit 1 }";
+export const winOpen = (target, app = '') => run('powershell', ['-NoProfile', '-NonInteractive', '-Command', WIN_OPEN], { env: { ...process.env, ROAMIES_OPEN: target, ROAMIES_OPEN_APP: app } });
+const THIS_COMPUTER = process.platform === 'darwin' ? 'this Mac' : 'this computer';
 const actionsOff = `File edits and commands are switched off. Tell the user to turn on "Allow File Edits & Commands" in the ${process.platform === 'darwin' ? 'menu bar' : 'system tray'} menu if they want this.`;
 
-// macOS "hands": the bundled helper that captures one window or area and reads/controls other apps.
+// "hands": the bundled helper that captures one window or area and reads/controls other apps (hands/main.swift on
+// macOS, hands-win on Windows; same commands and JSON). A .mjs one (a test's fake) runs on this Node.
 const HANDS = process.env.ROAMIES_HANDS || '';
+const runHands = (args, opts) => (HANDS.endsWith('.mjs') ? run(process.execPath, [HANDS, ...args], opts) : run(HANDS, args, opts));
 const STALE_ID = 'The page changed since read_window, so that id is out of date. Call read_window again and use the new ids.';
 // An app named in read_window or act_in_app that isn't open: open it (with the open tool's safety check) and wait
 // up to 6 s for its window. True when it's there. Only plain app names, never paths or links.
 async function launchApp(name, hands) {
   const n = String(name).trim();
-  if (process.platform !== 'darwin' || !n || /[/\\:]/.test(n) || checkOpen(n, HOME).level === BLOCK) return false;
-  // Opened only to act in it: in background mode (the default) it opens behind the user's app, not in front.
-  const r = await run('open', [...(process.env.ROAMIES_BG !== '0' ? ['-g'] : []), '-a', n]);
-  if (r.err && /Unable to find application/i.test(r.stderr)) throw new Error(`There's no app called "${n}" on this Mac (not installed, or it has another name). Don't look for it another way; say so and carry on with the rest.`);
+  if (!['darwin', 'win32'].includes(process.platform) || !n || /[/\\:]/.test(n) || checkOpen(n, HOME).level === BLOCK) return false;
+  // Opened only to act in it: in background mode (the default) it opens behind the user's app, not in front (macOS).
+  const r = process.platform === 'win32' ? await winOpen(n) : await run('open', [...(process.env.ROAMIES_BG !== '0' ? ['-g'] : []), '-a', n]);
+  if (r.err && /Unable to find application/i.test(r.stderr)) throw new Error(`There's no app called "${n}" on ${THIS_COMPUTER} (not installed, or it has another name). Don't look for it another way; say so and carry on with the rest.`);
   if (r.err) return false;
   for (let i = 0; i < 30; i++) {
     await new Promise((r) => setTimeout(r, 200));
@@ -131,17 +136,17 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, sho
     };
   }
   async function hands(...args) {
-    if (!HANDS) throw new Error('This needs the Roamies app on macOS.');
+    if (!HANDS) throw new Error('This needs the Roamies app.');
     // Acting in an app may take the real cursor: meanwhile clicks go through the overlay, even where the Sidekick or
     // its bubble sits on the spot being clicked.
     const acting = args[0] === 'act';
     if (acting) ui({ kind: 'hands', on: true });
     let r;
-    try { r = await run(HANDS, args, { timeout: 120_000 }); } finally { if (acting) ui({ kind: 'hands', on: false }); }
+    try { r = await runHands(args, { timeout: 120_000 }); } finally { if (acting) ui({ kind: 'hands', on: false }); }
     let res;
     try { res = JSON.parse(r.stdout.trim().split('\n').pop() || '{}'); } catch { throw new Error(`hands helper failed: ${r.stderr.trim().slice(0, 200) || 'no output'}`); }
     if (res.ok === false && !res.cancelled) {
-      if (/Accessibility/i.test(res.error ?? '')) {
+      if (process.platform === 'darwin' && /Accessibility/i.test(res.error ?? '')) {
         // Open the exact Settings pane (once a minute at most) so the fix is one click away.
         if (Date.now() - axNudged > 60_000) { axNudged = Date.now(); openUrl('x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility'); }
         throw new Error('Accessibility is off for Roamies, so I can\'t read or control other apps yet. I just opened System Settings → Privacy & Security → Accessibility: switch on Roamies there, then ask again. Tell the user exactly that, briefly.');
@@ -169,28 +174,34 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, sho
     return isYes(answer);
   }
 
+  // The helper's screenshot: one window or app (even behind others), or the screen; shrunk by the helper itself.
+  async function handsShot(file, t) {
+    const spec = t === 'screen' || t === 'front' || t.startsWith('window:') ? t : `app:${t}`;
+    // Shot straight away, with nothing played on screen (the Roamie only shows a "looking" tag).
+    // 1568 px is Claude's own cap; a bigger image gets shrunk again and its coordinates drift. The helper shrinks it
+    // itself and says the final size; an older helper doesn't, so sips does it here.
+    const res = await hands('capture', file, spec, '1568');
+    const size = Array.isArray(res.pixels) && res.pixels.length === 2 ? res.pixels : await fitImage(file);
+    const bounds = res.window?.bounds ?? res.bounds;
+    // area: what the picture covers when it's more than the window (its child windows too); bounds still tell
+    // whether the window moved.
+    const area = res.area ?? bounds;
+    // A picture that isn't the shape of the area it's said to show would point in the wrong place: refuse to point.
+    lastShot = !size || !bounds ? null : shotFits(area, ...size) ? { ...shotMap(area, ...size), bounds, win: res.window?.id ?? null, turn } : { unmapped: true, turn };
+    const what = res.window ? `the ${res.window.app} window${res.window.title ? ` "${res.window.title}"` : ''}` : 'the whole screen';
+    const dims = lastShot?.unmapped ? ` (it doesn't line up with the window on screen, so don't point or click by its pixels; use visible words)` : size ? ` (${size[0]}×${size[1]} px; for draw or click_at give x, y in this image's pixels)` : '';
+    return { content: [{ type: 'text', text: `Screenshot of ${what}${dims}.` }, await imageBlock(file, 'image/jpeg')] };
+  }
   // target: "screen", "front" (the window you're working in), an app name ("browser", "Safari", "Figma"),
   // or "window:<id>" from list_windows. Apps that are open but hidden or minimised are brought forward.
   async function screenshot({ target = 'screen' } = {}, ctx) {
     const file = path.join(os.tmpdir(), `sidekick-${Date.now()}.jpg`);
-    if (process.platform === 'darwin') {
-      const t = String(target || 'screen').trim();
-      const spec = t === 'screen' || t === 'front' || t.startsWith('window:') ? t : `app:${t}`;
-      // Shot straight away, with nothing played on screen (the Roamie only shows a "looking" tag).
-      // 1568 px is Claude's own cap; a bigger image gets shrunk again and its coordinates drift. The helper shrinks it
-      // itself and says the final size; an older helper doesn't, so sips does it here.
-      const res = await hands('capture', file, spec, '1568');
-      const size = Array.isArray(res.pixels) && res.pixels.length === 2 ? res.pixels : await fitImage(file);
-      const bounds = res.window?.bounds ?? res.bounds;
-      // area: what the picture covers when it's more than the window (its child windows too); bounds still tell
-      // whether the window moved.
-      const area = res.area ?? bounds;
-      // A picture that isn't the shape of the area it's said to show would point in the wrong place: refuse to point.
-      lastShot = !size || !bounds ? null : shotFits(area, ...size) ? { ...shotMap(area, ...size), bounds, win: res.window?.id ?? null, turn } : { unmapped: true, turn };
-      const what = res.window ? `the ${res.window.app} window${res.window.title ? ` "${res.window.title}"` : ''}` : 'the whole screen';
-      const dims = lastShot?.unmapped ? ` (it doesn't line up with the window on screen, so don't point or click by its pixels; use visible words)` : size ? ` (${size[0]}×${size[1]} px; for draw or click_at give x, y in this image's pixels)` : '';
-      return { content: [{ type: 'text', text: `Screenshot of ${what}${dims}.` }, await imageBlock(file, 'image/jpeg')] };
-    } else if (process.platform === 'win32') {
+    // Windows without the helper (or when it fails on the whole screen): PowerShell's screenshot below.
+    const viaHands = process.platform === 'darwin' || (process.platform === 'win32' && HANDS);
+    const t = String(target || 'screen').trim();
+    const shot = viaHands ? await handsShot(file, t).catch((e) => { if (process.platform === 'win32' && t === 'screen') return null; throw e; }) : null;
+    if (shot) return shot;
+    if (process.platform === 'win32') {
       // DPI-aware (or scaled displays capture only the top-left part), shrunk to Claude's 1568 px cap, and the
       // file path passed by environment variable so odd characters in it can't break the script.
       const ps = [
@@ -256,7 +267,7 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, sho
   // Its rect and app too, so a click can be told to be in it.
   const frontWin = async () => {
     if (!HANDS) return null;
-    const r = await run(HANDS, ['locate', 'front'], { timeout: 900 });
+    const r = await runHands(['locate', 'front'], { timeout: 900 });
     try { const w = JSON.parse(r.stdout.trim().split('\n').pop() || '{}').window; return w ? { key: `${w.id}|${(w.bounds ?? []).map((v) => Math.round(v / 4)).join(',')}`, rect: w.bounds ?? null, app: w.app ?? '' } : null; } catch { return null; }
   };
   const frontKey = async () => (await frontWin())?.key ?? '';
@@ -265,7 +276,7 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, sho
   const pageOf = ({ url, title } = {}) => (url ? String(url).replace(/#.*$/, '') : String(title ?? '').replace(/^\(\d+\)\s*/, '').replace(/\s+[—–-]\s+Edited$/i, '').trim());
   const frontPage = async () => {
     if (!HANDS) return '';
-    const r = await run(HANDS, ['front'], { timeout: 900 });
+    const r = await runHands(['front'], { timeout: 900 });
     try { return pageOf(JSON.parse(r.stdout.trim().split('\n').pop() || '{}')); } catch { return ''; }
   };
   // The screen under the drawing changed: all of it fades (cards too), and the model is told nothing is there.
@@ -319,7 +330,7 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, sho
         return seen.get(k);
       },
       // Text read off the screen: words inside paragraphs, text in images and canvases, single characters (case
-      // matters). Exact boxes; [] when it isn't there (or not on a Mac).
+      // matters). Exact boxes; [] when it isn't there (or without the helper).
       async textAll(find) {
         if (!HANDS) return [];
         // The window the latest screenshot showed, when there's one from this request: the front app can change
@@ -328,7 +339,7 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, sho
         return (await hands('ocr-find', where, String(find), 'all').catch(() => null))?.matches ?? [];
       },
       async findText(find) {
-        if (!HANDS) throw new Error('Finding words on screen is Mac only; take a screenshot and give x, y instead.');
+        if (!HANDS) throw new Error('Finding words on screen needs the Roamies app; take a screenshot and give x, y instead.');
         // Text read off the screen: one match, or where each of several is, so the right one can be picked with within.
         const readOne = async () => {
           const all = await this.textAll(find);
@@ -353,7 +364,7 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, sho
         }
       },
       async id(n) {
-        if (!HANDS) throw new Error('read_window ids are Mac only; give x, y from a screenshot instead.');
+        if (!HANDS) throw new Error('read_window ids need the Roamies app; give x, y from a screenshot instead.');
         live ??= await liveControls(spec);
         const c = live(n);
         if (c.offscreen) throw new Error(`"${c.label || c.role}" is further down the page. Use its text instead; that scrolls to it.`);
@@ -421,7 +432,7 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, sho
       else if (m.kind === 'open') { await tools.find((x) => x.name === 'open').execute({ target: m.url }); }
       else if (m.kind === 'handoff') onHandoff(m.task || m.text || m.label || 'a task');
       else if (m.kind === 'type') {
-        if (!HANDS) throw new Error('Typing into apps is Mac only.');
+        if (!HANDS) throw new Error('Typing into apps needs the Roamies app.');
         const src = m.at.src, app = t === 'front' || t === 'screen' ? {} : { app: t };
         const steps = src.text != null ? [{ do: 'fill', field: src.text, text: m.text }]
           : src.id != null ? [{ do: 'click', id: m.at.live }, { do: 'type', text: m.text }]
@@ -547,7 +558,8 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, sho
       description: "Look at the user's screen. target: 'front' = just the window they're working in (best default when they say 'this' or 'here'), an app name like 'browser', 'Safari', 'Figma' or 'Notes' (works even if it's hidden behind other windows), 'window:<id>' from list_windows, or 'screen' for everything.",
       parameters: z.object({ target: z.string().optional() }), execute: screenshot,
     },
-    ...(process.platform === 'darwin' ? [
+    // The hands helper's tools: on macOS always (they explain what's missing), elsewhere when the helper is there.
+    ...(process.platform === 'darwin' || HANDS ? [
       {
         name: 'list_windows', description: 'List the open app windows (app, title, id), front to back.',
         parameters: z.object({}),
@@ -748,12 +760,12 @@ A drawing stays until the user clears it or the window changes; your next drawin
         // mailto: has no //, but it's a link too (it used to be taken for an app name and fail).
         const isUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(t) || /^mailto:/i.test(t), isPath = /^[~/.]/.test(t) || /^[a-z]:\\/i.test(t);
         let r;
-        const inApp = app && process.platform === 'darwin' && (isUrl || isPath) ? ['-a', String(app)] : [];
+        const inApp = app && ['darwin', 'win32'].includes(process.platform) && (isUrl || isPath) ? ['-a', String(app)] : [];
         if (process.platform === 'darwin') r = await run('open', isUrl || isPath ? [...inApp, isPath ? expand(t) : t] : ['-a', t]);
-        else if (process.platform === 'win32') r = await winOpen(isPath ? expand(t) : t);
+        else if (process.platform === 'win32') r = await winOpen(isPath ? expand(t) : t, app && (isUrl || isPath) ? String(app) : '');
         else r = await run('xdg-open', [isPath ? expand(t) : t]);
         // Not installed: say so plainly, so the model doesn't go hunting for it with scripts (which need a yes each).
-        if (r.err && /Unable to find application/i.test(r.stderr)) throw new Error(`There's no app called "${inApp.length ? app : t}" on this Mac (not installed, or it has another name). Don't look for it another way; tell ${userName} and carry on with the rest.`);
+        if (r.err && /Unable to find application/i.test(r.stderr)) throw new Error(`There's no app called "${inApp.length ? app : t}" on ${THIS_COMPUTER} (not installed, or it has another name). Don't look for it another way; tell ${userName} and carry on with the rest.`);
         if (r.err) throw new Error(r.stderr.trim() || `Couldn't open ${t}.`);
         if (lastShot) lastShot.used = true;
         return `Opened ${t}${inApp.length ? ` in ${app}` : ''}.`;
@@ -816,7 +828,7 @@ A drawing stays until the user clears it or the window changes; your next drawin
   // What's in front, for the live state. Quick and never fails: '' if the helper is missing, slow or denied.
   async function whereNow() {
     if (!HANDS) return '';
-    const r = await run(HANDS, ['front'], { timeout: 900 });
+    const r = await runHands(['front'], { timeout: 900 });
     try { return frontLine(JSON.parse(r.stdout.trim().split('\n').pop() || '{}'), userName); } catch { return ''; }
   }
   return { tools, hands, whereNow, ink: inkEvents, nextTurn: () => ++turn };

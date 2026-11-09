@@ -2,9 +2,12 @@
 
 Roamies: a Tauri 2 desktop app (Rust shell in `showcase/tauri/src-tauri`), a Node sidecar that runs the
 agent (`showcase/tauri/sidecar`), shared browser JS in `showcase/roamies`, macOS Swift helpers built by
-`src-tauri/build.rs`, and the Windows voice helper (`src-tauri/voice-win`, Rust + Parakeet) built by
-`build.sh` for Windows targets. It compiles elsewhere too: `--transcribe <wav>` and `--test-audio <wav>`
-test speech without a Windows PC (see the top of its `main.rs`).
+`src-tauri/build.rs`, and two Windows helpers built by `build.sh` for Windows targets: voice
+(`src-tauri/voice-win`, Rust + Parakeet; `--transcribe <wav>` and `--test-audio <wav>` test speech without a
+Windows PC, see the top of its `main.rs`) and hands (`src-tauri/hands-win`, the twin of `hands/main.swift`: same
+commands and JSON, over Win32, UI Automation and Windows OCR). Only hands-win's `logic.rs` builds off Windows, so
+`cargo test` there runs its checks anywhere; `roamies-hands --smoke` drives Notepad on a real Windows desktop (CI).
+From a Mac, `cargo xwin check --target x86_64-pc-windows-msvc` type-checks the Windows code with the real SDK.
 
 ## Commands
 
@@ -24,7 +27,8 @@ macOS DMG (Apple silicon and Intel) and an unsigned Windows installer into a dra
 ## Rules
 
 - Every tool that touches files, commands, URLs or other apps goes through `showcase/tauri/sidecar/safety.mjs`
-  (tested in `test/safety.test.mjs`); the macOS helper also refuses to type or click in the apps in `HANDS_OFF`.
+  (tested in `test/safety.test.mjs`); the hands helpers also refuse to type or click in the apps in `HANDS_OFF`
+  (by bundle id in `hands/main.swift`, by program name in `hands-win/src/logic.rs`).
   Add a test case with every rule change.
 - In-app updates read `latest.json` from the newest published release, signed with the key in the
   `TAURI_SIGNING_PRIVATE_KEY` secret. Keep `plugins.updater.pubkey` in `tauri.conf.json` matching it.

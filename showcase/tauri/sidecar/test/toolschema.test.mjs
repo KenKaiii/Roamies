@@ -43,7 +43,8 @@ console.log('tool schema ok');
 }
 
 // Regression: a YouTube search typed into the search box failed and re-ran the old search; the search URL works.
-// act_in_app exists only on macOS.
+// act_in_app is there on macOS, and elsewhere when the hands helper is (ROAMIES_HANDS).
+assert.equal(tools.some((t) => t.name === 'act_in_app'), process.platform === 'darwin' || !!process.env.ROAMIES_HANDS, 'act_in_app follows the helper');
 if (process.platform === 'darwin') {
   const actInApp = tools.find((t) => t.name === 'act_in_app').description;
   assert.match(actInApp, /youtube\.com\/results\?search_query=/);

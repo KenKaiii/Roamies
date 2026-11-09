@@ -157,6 +157,20 @@ fn left_button_down() -> bool {
     false
 }
 
+/// Windows: leaves an overlay out of every capture, so Roamies never shows up in its own screenshots, area snaps
+/// or the pictures it reads text from.
+#[cfg(target_os = "windows")]
+fn exclude_from_capture(w: &WebviewWindow) {
+    #[link(name = "user32")]
+    extern "system" {
+        fn SetWindowDisplayAffinity(hwnd: isize, affinity: u32) -> i32;
+    }
+    // WDA_EXCLUDEFROMCAPTURE (Windows 10 2004 and later).
+    if let Ok(h) = w.hwnd() {
+        unsafe { SetWindowDisplayAffinity(h.0 as isize, 0x11) };
+    }
+}
+
 /// Cursor entered or left something clickable: flip click-through.
 #[tauri::command]
 fn set_hot(window: WebviewWindow, hot: bool) {
@@ -875,6 +889,8 @@ fn build_overlays(app: &AppHandle) -> tauri::Result<()> {
         w.set_ignore_cursor_events(true)?;
         #[cfg(target_os = "macos")]
         full_frame_rate(&w);
+        #[cfg(target_os = "windows")]
+        exclude_from_capture(&w);
     }
     Ok(())
 }
@@ -1206,9 +1222,6 @@ fn handle_sidecar(app: &AppHandle, msg: Value) {
         Some("onboarding") => open_onboarding(app, msg.get("mode").and_then(Value::as_str)),
         Some("keybinds") => {
             for (slot, which) in [(0usize, "summon"), (1, "snap"), (2, "list")] {
-                if which == "snap" && !cfg!(target_os = "macos") {
-                    continue;
-                }
                 if let Some(accel) = msg.get(which).and_then(Value::as_str) {
                     if let Err(e) = set_hotkey(slot, accel) {
                         eprintln!("{which} shortcut {accel}: {e}");
@@ -1313,7 +1326,6 @@ fn main() {
             if let Err(e) = set_hotkey(0, "Control+Alt+KeyS") {
                 eprintln!("could not register the show/hide shortcut: {e}");
             }
-            #[cfg(target_os = "macos")]
             if let Err(e) = set_hotkey(1, "Control+Alt+KeyA") {
                 eprintln!("could not register the area shortcut: {e}");
             }

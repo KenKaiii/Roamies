@@ -35,6 +35,7 @@ import { createSpeaker } from './speaker.mjs';
 import { DEFAULT_VOICE, FISH_CHOICES } from './fish.mjs';
 import { createSecrets, retryLoad } from './secrets.mjs';
 import { createActivity } from './activity.mjs';
+import { canCircle, canSnap, hasHands, platformLine } from './platform.mjs';
 import { keyCards, keyKinds, signInCards } from './providers.mjs';
 
 console.log = console.info = (...a) => console.error(...a);
@@ -151,9 +152,11 @@ const MAC = process.platform === 'darwin';
 // What the model is told about the computer. "darwin" alone left it using PC habits: Cmd+End (does nothing in Mac
 // text, so lines landed at the top) and GNU flags like cat -A that macOS doesn't have. Read once; it never changes mid-run.
 const macVersion = (() => { if (!MAC) return ''; try { return execFileSync('sw_vers', ['-productVersion'], { encoding: 'utf8', timeout: 2000 }).trim(); } catch { return ''; } })();
-const PLATFORM = MAC
-  ? `Platform: macOS${macVersion ? ` ${macVersion}` : ''} on ${os.arch() === 'arm64' ? 'Apple silicon' : 'Intel'}. Use Mac keys: Cmd, not Ctrl; the end and start of a document are Cmd+Down and Cmd+Up, of a line Cmd+Right and Cmd+Left (Home and End don't move the cursor in most Mac apps). Shell commands are the macOS (BSD) versions, not GNU: no cat -A, grep -P, date -d or sed -i without ''.`
-  : `Platform: ${process.platform}.`;
+const PLATFORM = platformLine(process.platform, { macVersion, arch: os.arch(), release: os.release() });
+// Reading and working other apps, Ask About an Area, and circling while talking (see platform.mjs).
+const HANDS_OK = hasHands(process.platform, process.env.ROAMIES_HANDS);
+const SNAP_OK = canSnap(process.platform, process.env.ROAMIES_HANDS);
+const CIRCLE_OK = canCircle(process.platform);
 // A shortcut as people on this computer say it: "Control+Option+S" on a Mac, "Ctrl+Alt+S" on Windows.
 const keyWords = (accel) => accel.replace(/Key|Digit/g, '').split('+')
   .map((p) => (MAC ? { Alt: 'Option' }[p] ?? p : { Control: 'Ctrl', Command: 'Win' }[p] ?? p)).join('+');
@@ -303,7 +306,7 @@ Your voice carries feeling: start a sentence with a cue in square brackets when 
 Before anything slow (searching the web, fetching or reading a page or file, looking at the screen, acting in an app, running a command), first say one short beat of 2 to 6 words that shows you heard them ("On it, checking Paris."), then call the tool in the same reply, so they're never left in silence. No beat when you answer straight away; never describe your steps; don't repeat the beat after the tool, go straight to the answer. In longer work, one short line before each new stage, not before every call.
 `;
 const stablePrompt = () => `You are ${lookName()}, ${LOOK_BODY[config.look] ?? LOOK_BODY.classic} who lives on ${userName}'s screen as a desktop companion. You live in Roamies, a desktop app by Ken Kai (Mac and Windows) that puts little companions on your screen; this is Roamies ${VERSION}. Your look (the Appearance page) is also your name and your voice: Roamie, JARVIS, Anime Girl, Sarah or Adrian. If they switch, you're the new one; never call yourself Sidekick.
-About Roamies, for when ${userName} asks about you or the app: ${MAC ? 'it lives in the menu bar at the top of the screen (no Dock icon)' : 'it lives in the system tray at the bottom right of the taskbar (no taskbar button); Windows may tuck the icon behind the ^ arrow next to the clock, and dragging it onto the taskbar keeps it in view'}. Clicking the ${MAC ? 'menu bar' : 'tray'} icon opens the Roamies panel; right-clicking it shows a short menu (Open Panel, Show ${lookName()}, Ask ${lookName()}…, ${process.platform === 'darwin' ? 'Ask About an Area…, ' : ''}Stop, Quit Roamies). The panel has a sidebar of pages. Home: what you're doing right now, a list of what you did recently (questions, files read, searches, reminders), today's usage, an update notice when one is ready, and buttons for Ask, Show List (reminders and commitments on screen: Today and Later; tick them off there; finished ones clear at midnight)${process.platform === 'darwin' ? ', Ask About an Area' : ''}, Stop and New Conversation. Memory: everything you remember about them (each with Forget, plus Forget Everything), their open commitments (Done or Drop), and Get to Know Me (a four-question chat so you learn who they are and what they're going for). Then the settings pages: Model (pick the AI provider and model, and sign in to providers), Appearance (Look: ${LOOKS.map(([, label]) => label).join(', ').replace(/, ([^,]*)$/, ' or $1')}, each with its own voice; Size: Default, Small or Cursor, a little arrow pointer), Voice (Replies: Text Only, or Voice and Text, which speaks replies out loud with Fish Audio and needs their own Fish Audio API key, added right there; Voice Model: Drama 3, the most expressive (acts out feelings, slower, pricier) or S2.1 Pro (a natural, quicker pace with less emotion, cheaper), billed to their own Fish Audio account${VOICE_OK ? '; Voice Control, hold the talk keys to talk' : ''}), Behavior (Sound Effects, Allow File Edits & Commands, Open at Login), and About (the version, Check for Updates, which becomes Install and Restart when one is ready; updates download, are signature-checked and install by themselves; Setup Guide, Show Logs, Quit). Sign-in is shared with GG Coder. Downloads and source: github.com/KenKaiii/Roamies. Don't invent features or settings that aren't listed here.
+About Roamies, for when ${userName} asks about you or the app: ${MAC ? 'it lives in the menu bar at the top of the screen (no Dock icon)' : 'it lives in the system tray at the bottom right of the taskbar (no taskbar button); Windows may tuck the icon behind the ^ arrow next to the clock, and dragging it onto the taskbar keeps it in view'}. Clicking the ${MAC ? 'menu bar' : 'tray'} icon opens the Roamies panel; right-clicking it shows a short menu (Open Panel, Show ${lookName()}, Ask ${lookName()}…, ${SNAP_OK ? 'Ask About an Area…, ' : ''}Stop, Quit Roamies). The panel has a sidebar of pages. Home: what you're doing right now, a list of what you did recently (questions, files read, searches, reminders), today's usage, an update notice when one is ready, and buttons for Ask, Show List (reminders and commitments on screen: Today and Later; tick them off there; finished ones clear at midnight)${SNAP_OK ? ', Ask About an Area' : ''}, Stop and New Conversation. Memory: everything you remember about them (each with Forget, plus Forget Everything), their open commitments (Done or Drop), and Get to Know Me (a four-question chat so you learn who they are and what they're going for). Then the settings pages: Model (pick the AI provider and model, and sign in to providers), Appearance (Look: ${LOOKS.map(([, label]) => label).join(', ').replace(/, ([^,]*)$/, ' or $1')}, each with its own voice; Size: Default, Small or Cursor, a little arrow pointer), Voice (Replies: Text Only, or Voice and Text, which speaks replies out loud with Fish Audio and needs their own Fish Audio API key, added right there; Voice Model: Drama 3, the most expressive (acts out feelings, slower, pricier) or S2.1 Pro (a natural, quicker pace with less emotion, cheaper), billed to their own Fish Audio account${VOICE_OK ? '; Voice Control, hold the talk keys to talk' : ''}), Behavior (Sound Effects, Allow File Edits & Commands, Open at Login), and About (the version, Check for Updates, which becomes Install and Restart when one is ready; updates download, are signature-checked and install by themselves; Setup Guide, Show Logs, Quit). Sign-in is shared with GG Coder. Downloads and source: github.com/KenKaiii/Roamies. Don't invent features or settings that aren't listed here.
 ${replyStyle()}Your body does the acting: to act out a feeling, start your reply with one tag, which is never shown: ${EMOTES.map((e) => `[${e}]`).join(' ')}. hype celebrates a win, upset is for when they're dodging work, remind nudges about something they said they'd do, motivate is a push to start, wave is hello or goodbye. Most replies need no tag.
 Lead with the answer: the fact, number, pick or result they asked for, then only the context that makes it useful, then stop. No opener about checking, looking or searching ("Let me see…", "I found…")${VOICE_ON() ? ', apart from the one short beat before something slow' : ''}.
 After using a tool, never repeat what you already said; only add what's new.
@@ -315,7 +318,7 @@ Name apps and things the way ${userName} knows them (Gmail, the Downloads folder
 When you write as ${userName} (an email, a message, a post, a form answer), sound like them, plain and in their words, never like you: no cheekiness, emoji or tags in it.
 Their facts are theirs: never invent ${userName}'s details (a name, address, account, date, link, number, or who someone is) or fill in dummy data where theirs belongs. Use what they told you, what you remember and what's on screen; if something only they know is still missing, do the part that doesn't need it, then ask one short, bundled question for the rest. On a small ambiguity, take the likeliest reading and go.
 Anything that goes to other people (an email, message, post, comment, invite) is a draft until ${userName} has seen that exact text and said yes, unless they dictated it word for word: write it, show it, then wait.
-You can really help: look at the screen or just one app's window, open apps, websites and files, read and search files, fetch web pages, and, when the user has allowed it, write files, run shell commands${process.platform === 'darwin' ? ' and work other apps for them: fill in forms, type, click buttons (read_window, then act_in_app)' : ''}. Whether that's allowed right now is in the <live-state> block.
+You can really help: look at the screen or just one app's window, open apps, websites and files, read and search files, fetch web pages, and, when the user has allowed it, write files, run shell commands${HANDS_OK ? ' and work other apps for them: fill in forms, type, click buttons (read_window, then act_in_app)' : ''}. Whether that's allowed right now is in the <live-state> block.
 When they mention a specific app ("my browser", "this form", "Figma"), screenshot that app, not the whole screen.
 Show, don't just tell. When they ask how to do something in an app (${process.platform === 'darwin' ? '"how do I add a layer mask"' : 'a how-to'}), walk them through it with draw: one beat per step in one call, each marking the control with a target and wait 'click'. When they ask what they're looking at or where something is, mark it on screen with draw (ring, frame, label, point) instead of describing where it is. When a picture explains it better (a concept, numbers over time, a comparison, a molecule, a machine), draw cards on calm space while you explain (card, graph, timeline, photo, molecule, model). Before you call draw, write one short line first: the answer to anything they said or asked besides the drawing ("I'm good, thanks!"), or what you're about to show. It's said while the drawing is made, so they hear you straight away and in order. Each beat's line is spoken and captioned while its marks draw, so your reply after draw never repeats or rephrases them (no restating the steps): add one short new line (a question, what comes next) or nothing. Use a fresh look for each request (earlier marks clear by themselves); to change something already drawn ("make that red", "move it", "never mind"), edit it by its part id.
 Be fast: every tool call is a round trip, so use as few as the task needs. To point at or click something whose exact words you know (the user said them, or you've seen them), use draw or act_in_app click_text with that text right away, with no read_window or screenshot first. Don't guess words: for "the version number" or "the settings icon" you don't know what's written, so look first. Put several steps in one act_in_app call. Forms: one act_in_app call with a fill step per field (field = its label or placeholder as shown), choose for dropdowns, fill for typed dates; a field that opens a calendar is clicked, then its month arrows and day are clicked with click_text. Check the field values in the result before saying it's done. When act_in_app shows the page after a click, use that instead of reading again. read_window and act_in_app results include the text on screen, so read pages from them; screenshot only when you need to see something words can't tell you (images, layout, colours).
@@ -338,7 +341,7 @@ const livePrompt = (context = '') => {
   const turn = `Live state (current as of this moment):
 ${frontNow ? `${frontNow}\n` : ''}- Editing files, running commands and controlling other apps: ${config.allowActions ? 'ALLOWED' : `switched OFF (tell the user to turn on "Allow File Edits & Commands" on the Behavior page in ${PANEL} if they want it)`}.
 ${VOICE_OK ? `- Voice: ${!config.voice ? 'off' : voiceReady() ? `on; ${userName} holds ${talkWords()} to talk` : `on, but the speech model isn't downloaded yet (${voiceModel.status === 'downloading' ? 'downloading now' : `the Voice page in ${PANEL}`})`}.` : ''}
-- Shortcuts: show or hide you ${keyWords(keys().summon)}${MAC ? `; ask about an area ${keyWords(keys().snap)}; while holding the talk keys, moving the cursor round something circles it (no clicking; it snaps shut with a click when the circle closes, and loose lines don't count) and you'll see what they circled` : ''}; show the list ${keyWords(keys().list)}.${MAC ? '' : ' Asking about an area, reading app windows, finding things on screen by their words and working other apps are Mac only for now; draw there with x, y from a screenshot.'}`;
+- Shortcuts: show or hide you ${keyWords(keys().summon)}${SNAP_OK ? `; ask about an area ${keyWords(keys().snap)}` : ''}${CIRCLE_OK ? "; while holding the talk keys, moving the cursor round something circles it (no clicking; it snaps shut with a click when the circle closes, and loose lines don't count) and you'll see what they circled" : ''}; show the list ${keyWords(keys().list)}.${HANDS_OK ? '' : ' Asking about an area, reading app windows, finding things on screen by their words and working other apps need the Roamies app, which isn\'t running here; draw there with x, y from a screenshot.'}`;
   const memory = `${open ? `Open commitments:\n${open}` : 'No open commitments.'}${done ? `\nDone today (ticked off on the list or by you; still shown struck through until midnight):\n${done}` : ''}
 ${facts.length ? `What you know about ${userName}${total > facts.length ? ` (${facts.length} most relevant of ${total})` : ''}:\n${facts.map((f) => `- ${f.id}: ${f.text}`).join('\n')}` : `You don't know anything lasting about ${userName} yet.`}`;
   return { turn, memory };
@@ -1098,7 +1101,7 @@ function menu() {
     { id: 'panel', label: 'Open Panel…' },
     { id: 'show', label: `Show ${lookName()}`, accel: keys().summon },
     { id: 'ask', label: `Ask ${lookName()}…`, enabled: !busy },
-    ...(process.platform === 'darwin' ? [{ id: 'snap', label: 'Ask About an Area…', accel: keys().snap }] : []),
+    ...(SNAP_OK ? [{ id: 'snap', label: 'Ask About an Area…', accel: keys().snap }] : []),
     { id: 'stop', label: 'Stop', enabled: busy },
     ...(update.available ? [{ sep: true }, { id: 'install_update', label: update.installing ? `Installing ${update.available}…` : `Install Update ${update.available} and Restart`, enabled: !update.installing }] : []),
     { sep: true },
@@ -1122,7 +1125,7 @@ function panelState() {
   const current = getModel(config.model);
   const doing = activity.doing();
   return {
-    version: VERSION, os: MAC ? 'mac' : process.platform === 'win32' ? 'win' : 'other',
+    version: VERSION, os: MAC ? 'mac' : process.platform === 'win32' ? 'win' : 'other', snap: SNAP_OK,
     status: busy ? { state: 'busy', text: doing ?? 'Thinking' } : loggingIn ? { state: 'busy', text: loginStatus || `Signing in to ${PROVIDER_LABELS[loggingIn]}` } : current ? { state: 'ready', text: 'Ready' } : { state: 'off', text: 'Not signed in' },
     busy, canNew: !busy && !!session?.messages.length,
     model: current ? { provider: config.provider, id: config.model, name: current.name, providerLabel: PROVIDER_LABELS[config.provider] ?? config.provider } : null,
@@ -1293,7 +1296,7 @@ async function onMenu(id) {
 // The next question (typed in the bubble, or spoken with the talk keys) is sent with the picture.
 let snap = null;
 async function areaSnap() {
-  if (process.platform !== 'darwin' || snapping) return;
+  if (!SNAP_OK || snapping) return;
   snapping = true;
   try {
     const file = path.join(os.tmpdir(), `sidekick-area-${Date.now()}.png`);
@@ -1402,6 +1405,8 @@ function obState() {
   ob({
     kind: 'state',
     platform: process.platform,
+    // What this computer can do (platform.mjs): Ask About an Area, and circling while talking.
+    snap: SNAP_OK, circle: CIRCLE_OK,
     step: config.onboardStep ?? 0,
     oauth: signInCards(Object.keys(OAUTH), (id) => oauthOn.get(id), PROVIDER_LABELS),
     apikey: keyCards(AUTH_PROVIDERS, (id) => keyOn.get(id)),

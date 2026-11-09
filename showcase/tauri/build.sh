@@ -11,14 +11,16 @@ cp -R ../roamies ../onboarding ../panel dist/
 # Ship a Node.js runtime with the app, for the target being built (--target <triple>, else this machine).
 TARGET=""; prev=""; for a in "$@"; do [ "$prev" = "--target" ] && TARGET="$a"; prev="$a"; done
 ../tauri/sidecar/fetch-node.sh ${TARGET:+"$TARGET"}
-# Windows voice helper (Parakeet speech on the PC; macOS uses voice/main.swift, built by build.rs). Always
-# an optimised build: a debug one is far too slow at reading speech.
+# Windows helpers: voice (Parakeet speech on the PC) and hands (windows, capture, UI Automation, OCR); macOS
+# builds its Swift twins in build.rs. Always optimised: a debug voice build is far too slow at reading speech.
 TRIPLE="${TARGET:-$(rustc -vV | sed -n 's/^host: //p')}"
 case "$TRIPLE" in
   *-windows-*)
-    cargo build --release --locked --manifest-path src-tauri/voice-win/Cargo.toml --target "$TRIPLE"
     mkdir -p src-tauri/binaries
-    cp "src-tauri/voice-win/target/$TRIPLE/release/roamies-voice.exe" "src-tauri/binaries/roamies-voice-$TRIPLE.exe" ;;
+    for h in voice hands; do
+      cargo build --release --locked --manifest-path "src-tauri/$h-win/Cargo.toml" --target "$TRIPLE"
+      cp "src-tauri/$h-win/target/$TRIPLE/release/roamies-$h.exe" "src-tauri/binaries/roamies-$h-$TRIPLE.exe"
+    done ;;
 esac
 cd src-tauri
 # macOS signing: APPLE_SIGNING_IDENTITY if set, else the first Developer ID Application certificate in
