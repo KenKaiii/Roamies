@@ -653,7 +653,7 @@ fn place_panel(app: &AppHandle, w: &WebviewWindow, rect: Option<tauri::Rect>) ->
     let margin = 8.0 * s;
     let h = (PANEL_H * s).min(ah - 2.0 * margin);
     let pw = PANEL_W * s;
-    let _ = w.set_size(tauri::PhysicalSize::new(pw.round() as u32, h.round() as u32));
+    set_panel_size(w, pw, h, s);
     let (cx, y, above) = match icon {
         Some((x, y, iw, ih)) if y + ih / 2.0 < ay + ah / 2.0 => (x + iw / 2.0, (y + ih).max(ay) + gap, false),
         Some((x, y, iw, _)) => (x + iw / 2.0, y.min(ay + ah) - h - gap, true),
@@ -661,8 +661,27 @@ fn place_panel(app: &AppHandle, w: &WebviewWindow, rect: Option<tauri::Rect>) ->
     };
     let x = (cx - pw / 2.0).clamp(ax + margin, (ax + aw - pw - margin).max(ax + margin));
     let y = y.clamp(ay + margin.min(gap), (ay + ah - h - margin).max(ay));
-    let _ = w.set_position(tauri::PhysicalPosition::new(x.round() as i32, y.round() as i32));
+    set_panel_position(w, x, y, s);
     above
+}
+
+// macOS converts physical sizes with the scale of the screen the window is on now, not the one it's going to,
+// so with mixed 1x/2x screens the panel came out half (or twice) its size. Its global space is in points.
+#[cfg(target_os = "macos")]
+fn set_panel_size(w: &WebviewWindow, pw: f64, h: f64, s: f64) {
+    let _ = w.set_size(tauri::LogicalSize::new(pw / s, h / s));
+}
+#[cfg(target_os = "macos")]
+fn set_panel_position(w: &WebviewWindow, x: f64, y: f64, s: f64) {
+    let _ = w.set_position(tauri::LogicalPosition::new(x / s, y / s));
+}
+#[cfg(not(target_os = "macos"))]
+fn set_panel_size(w: &WebviewWindow, pw: f64, h: f64, _s: f64) {
+    let _ = w.set_size(tauri::PhysicalSize::new(pw.round() as u32, h.round() as u32));
+}
+#[cfg(not(target_os = "macos"))]
+fn set_panel_position(w: &WebviewWindow, x: f64, y: f64, _s: f64) {
+    let _ = w.set_position(tauri::PhysicalPosition::new(x.round() as i32, y.round() as i32));
 }
 
 // ---------- setup guide window ----------
