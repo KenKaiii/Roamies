@@ -17,7 +17,7 @@
   // What's open in the panel itself: a key field (provider id or 'fish'), the row action waiting for its
   // Confirm, and how far down the long lists it shows (a page at a time) and what the memory search holds.
   const PAGE = 10, MORE = 20;
-  const ui = { key: null, kind: {}, arm: null, facts: PAGE, commits: PAGE, q: '' };
+  const ui = { key: null, kind: {}, arm: null, facts: PAGE, commits: PAGE, q: '', bindShown: new Set() };
   let armTimer = 0;
   const disarm = () => { clearTimeout(armTimer); if (ui.arm) { ui.arm = null; return true; } return false; };
 
@@ -414,6 +414,7 @@
     ];
   }
   // Wayland: the commands to bind to keys in the desktop's settings (no app may hold its own shortcuts there).
+  // A command shows only after copying it failed, so it can be copied by hand.
   const BIND_ROWS = [['talk', 'Talk to me'], ['summon', 'Show or hide me'], ['ask', 'Ask me'], ['list', 'Your list'], ['panel', 'This panel']];
   function behaviorPage() {
     const b = state.bind;
@@ -424,7 +425,7 @@
         state.login ? toggle('Open at login', null, state.login.on, () => act('login'), 'login') : null),
       b ? group('Shortcuts', 'Add these as custom shortcuts in your keyboard settings, with any keys you like.', null,
         BIND_ROWS.filter(([k]) => b[k]).map(([k, label]) => el('div', { className: 'setting' },
-          el('span', {}, label, el('small', { textContent: b[k], title: b[k] })),
+          el('span', {}, label, ui.bindShown.has(k) ? el('small', { className: 'cmd', textContent: b[k] }) : null),
           link('Copy', () => send({ type: 'copy_bind', which: k }), { k: `bind-${k}`, aria: `Copy the command for ${label.toLowerCase()}` })))) : null,
     ];
   }
@@ -587,7 +588,10 @@
       render(null, first);
     }
     else if (m.kind === 'note') note(m.text, m.bad);
-    else if (m.kind === 'copied') note(m.ok ? 'Copied. Paste it into a new custom shortcut.' : "Couldn't copy it. Select the command and copy it instead.", !m.ok);
+    else if (m.kind === 'copied') {
+      if (!m.ok && state?.bind?.[m.which]) { ui.bindShown.add(m.which); render(`bind-${m.which}`); }
+      note(m.ok ? 'Copied. Paste it into a new custom shortcut.' : "Couldn't copy it. Select the command and copy it instead.", !m.ok);
+    }
   };
   send({ type: 'panel_open' });
   // The first show: the window was made hidden, so the switch-on is played here (main.rs's call may land

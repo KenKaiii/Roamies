@@ -623,6 +623,7 @@
       nav();
     },
     // Wayland: one line per command, with a Copy button (drawn again only when the commands change, so focus stays).
+    // The command itself shows only if copying fails, so it can be copied by hand.
     bound: '',
     renderBind(b) {
       const list = [['talk', 'Talk to me'], ['summon', 'Show or hide me'], ['ask', 'Ask me'], ['list', 'Your list'], ['panel', 'My panel']];
@@ -631,8 +632,8 @@
       keys.bound = sig;
       $('bind-list').replaceChildren(...list.filter(([k]) => b[k]).map(([k, title]) => el('div', { className: 'bind-line' },
         el('span', { textContent: title }),
-        el('code', { className: 'bind-cmd', id: `bind-${k}`, textContent: b[k], title: b[k] }),
-        el('button', { className: 'link', type: 'button', textContent: 'Copy', ariaLabel: `Copy the command for ${title.toLowerCase()}`, onclick: () => send({ type: 'copy_bind', which: k }) }))));
+        el('button', { className: 'link', type: 'button', textContent: 'Copy', ariaLabel: `Copy the command for ${title.toLowerCase()}`, onclick: () => send({ type: 'copy_bind', which: k }) }),
+        el('code', { className: 'bind-cmd', id: `bind-${k}`, textContent: b[k], hidden: true }))));
     },
     // Windows and Linux can only try talking once the speech model is downloaded.
     tryLabel() {
@@ -1161,7 +1162,12 @@
   // ---------------------------------------------------------------- messages from the app
   window.__onboard = (msg) => {
     switch (msg.kind) {
-      case 'copied': quip(msg.ok ? 'Copied!' : "Couldn't copy. Select it instead?"); break;
+      case 'copied': {
+        const cmd = !msg.ok && document.getElementById(`bind-${msg.which}`);
+        if (cmd) cmd.hidden = false;
+        quip(msg.ok ? 'Copied!' : "Couldn't copy. Select it instead?");
+        break;
+      }
       case 'state': {
         const first = !state;
         state = msg;

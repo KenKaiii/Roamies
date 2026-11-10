@@ -295,11 +295,13 @@ input:focus-visible { outline: none; }
 .tip b { color: var(--ink-2); }
 /* Rows that set display: grid otherwise ignore the hidden attribute. */
 .kline[hidden], .tip[hidden], .keyrow[hidden], .chords[hidden] { display: none; }
-/* Wayland: one line per command to bind in the desktop's keyboard settings: what it does, the command, Copy. */
-.bind-line { display: grid; grid-template-columns: 9.5em minmax(0, 1fr) auto; align-items: center; gap: 10px; font-size: 11px; line-height: 1.4; }
+/* Wayland: one line per command to bind in the desktop's keyboard settings: what it does and Copy (the command shows
+   under it only when copying fails). */
+.bind-line { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 10px; font-size: 11px; line-height: 1.4; }
 .bind-line + .bind-line { margin-top: 6px; }
 .bind-line span { color: var(--ink-2); }
-.bind-cmd { font: 11px/1.4 var(--mono); color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; user-select: text; -webkit-user-select: text; }
+.bind-cmd { grid-column: 1 / -1; font: 11px/1.4 var(--mono); color: var(--ink); overflow-wrap: anywhere; user-select: text; -webkit-user-select: text; }
+.bind-cmd[hidden] { display: none; }
 .recap { display: grid; grid-template-columns: auto 1fr; gap: 10px 16px; align-items: center; margin: 0; }
 .recap dt { white-space: nowrap; }
 .recap dd { margin: 0; color: var(--ink-2); }
