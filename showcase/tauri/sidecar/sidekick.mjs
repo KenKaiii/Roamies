@@ -33,6 +33,7 @@ import { QUESTIONS, openNote, answerTurn, wantsSkip, endsChat, splitTurn, plain,
 import { SpeechText, CueFilter, VOICE_CUES, endsWithQuestion } from './speech.mjs';
 import { createSpeaker } from './speaker.mjs';
 import { DEFAULT_VOICE, FISH_CHOICES } from './fish.mjs';
+import { GEMINI_CHOICES, GEMINI_DEFAULT_VOICE, GEMINI_MODEL, GEMINI_VOICES } from './gemini.mjs';
 import { createSecrets, retryLoad } from './secrets.mjs';
 import { createActivity } from './activity.mjs';
 import { canCircle, canSnap, hasHands, hasHotkeys, hasVoice, linuxSession, micTrouble, needsVoiceModel, platformLine, seesPointer } from './platform.mjs';
@@ -83,8 +84,11 @@ const DEFAULT_KEYS = process.platform === 'win32'
 const DEFAULTS = {
   provider: null, model: null, sound: true, allowActions: false, voice: true,
   onboarded: false, onboardStep: 0, filesAsked: false, keys: DEFAULT_KEYS, muteWhileTalking: true, autoListen: false, setupVersion: 0, size: 'default', look: 'classic', introDone: false,
-  replies: 'text', // 'voice': spoken with Fish Audio as well as shown
+  replies: 'text', // 'voice': spoken (with Fish Audio or Gemini) as well as shown
+  tts: 'fish', // which one speaks: 'fish' (Fish Audio) or 'gemini'
   fishModel: FISH_CHOICES[0].id, // Drama 3 (most expressive) or S2.1 Pro (natural pace, cheaper)
+  geminiVoice: GEMINI_DEFAULT_VOICE, // one of Gemini's ready-made voices, picked in the setup guide or the panel
+  geminiModel: GEMINI_MODEL, // Flash Lite (quick, cheaper) or Flash (studio quality)
 };
 const LINUX = process.platform === 'linux';
 // Linux: "x11" or "wayland" (the app says which). Wayland keeps apps from seeing the pointer over other apps and
@@ -98,7 +102,8 @@ const SIZES = [['default', 'Default'], ['small', 'Small'], ...(POINTER_OK ? [['c
 const sizeNow = () => (SIZES.some(([s]) => s === config.size) ? config.size : 'default');
 // What the sidekick looks like: the goo blob, JARVIS (a globe of light with a HUD reticle at cursor size) or
 // one of three characters, each with its own Fish Audio voice. Roamie's used to be JARVIS's, saved in every
-// config as fishVoice, so the voice comes from the look and that setting is no longer read.
+// config as fishVoice, so the voice comes from the look and that setting is no longer read. (With Gemini as the
+// voice, it's the one Gemini voice the user picked, whatever the look.)
 const LOOKS = [
   ['classic', 'Roamie', DEFAULT_VOICE],
   ['jarvis', 'JARVIS', 'e13fa398a7f445a685316a3de6089ce7'],
@@ -126,29 +131,69 @@ let shellInfo = null; // resolves the shell's reply to it: screens, tray, panel,
 }
 const saveConfig = () => writeJson(CONFIG_PATH, config, { backup: true });
 
-// ---------- spoken replies (Fish Audio) ----------
+// ---------- spoken replies (Fish Audio or Gemini) ----------
 // The key is the user's own: in the Keychain (macOS), DPAPI-encrypted (Windows) or the desktop's keyring (Linux),
 // never in the config or logs.
+// Each service has its own: secret is its name in that store, site is where a key comes from.
+const TTS = {
+  fish: { id: 'fish', name: 'Fish Audio', secret: 'fish-audio', site: 'fish.audio' },
+  gemini: { id: 'gemini', name: 'Gemini', secret: 'gemini-tts', site: 'aistudio.google.com' },
+};
+const tts = () => TTS[config.tts] ?? TTS.fish;
+// Which have a key to speak with: 'own' (saved for the voice), 'shared' (Gemini only: the AI's Gemini key, from the
+// Model page, when no key was saved just for the voice) or false. For the one in use, speech.on says.
+const ttsKeys = { fish: false, gemini: false };
+const hasVoiceKey = (id) => (id === tts().id ? speech.on : !!ttsKeys[id]);
+// The key the AI uses for Gemini, if it's an API key (the same Google AI Studio key speaks too).
+const brainGeminiKey = () => auth.resolveApiKey('gemini').then((c) => c?.accessToken || null).catch(() => null);
+// A service's key and which kind it is. Throws while the secret store can't be read.
+async function voiceKey(id) {
+  // Linux: reading the keyring can pop up an "unlock your keyring" dialog (an auto-login desktop leaves it locked),
+  // so it's only read once a key has been saved there (fishKeySaved, geminiKeySaved).
+  const own = LINUX && !config[`${id}KeySaved`] ? null : await secrets.get(TTS[id].secret);
+  if (own) return [own, 'own'];
+  const shared = id === 'gemini' ? await brainGeminiKey() : null;
+  return shared ? [shared, 'shared'] : [null, false];
+}
 const secrets = createSecrets({ hands: process.env.ROAMIES_HANDS || '', dataDir: path.join(path.dirname(CONFIG_PATH), 'sidekick') });
 let voiceProblemAt = 0;
+// Beats made on this computer (a Gemini voice's, or a Fish voice the app doesn't ship) are kept, so each voice
+// and model's are only made once.
+const BEAT_DIR = path.join(path.dirname(CONFIG_PATH), 'sidekick', 'beats');
 const speech = createSpeaker({
+  beatStore: { read: (name) => readJson(path.join(BEAT_DIR, `${name}.json`)), write: (name, data) => writeJson(path.join(BEAT_DIR, `${name}.json`), data) },
   emit: (m) => ui(m),
   log: (kind, data) => logLine(kind, data),
   // Once in a while, not on every reply: the text is there either way.
   onProblem: (what) => {
     if (Date.now() - voiceProblemAt < 10 * 60_000) return;
     voiceProblemAt = Date.now();
-    say(what === 'key' ? 'My Fish Audio key isn\'t working, so replies are text for now.' : 'My voice isn\'t working right now, so replies are text for now.', 'concerned');
+    say(what === 'key' ? `My ${tts().name} key isn't working, so replies are text for now.` : 'My voice isn\'t working right now, so replies are text for now.', 'concerned');
   },
 });
-speech.setVoice(lookVoice());
-speech.setModel(config.fishModel);
+// Point the speaker at a service, with its voice and model. Its key is set after (a change of service clears it).
+function aimSpeaker(id) {
+  speech.setProvider(id);
+  if (id === 'gemini') { speech.setVoice(config.geminiVoice); speech.setModel(config.geminiModel); }
+  else { speech.setVoice(lookVoice()); speech.setModel(config.fishModel); }
+}
+// The same, with its key: the one given, else the saved one.
+async function useTts(id, key) {
+  aimSpeaker(id);
+  if (key === undefined) [key, ttsKeys[id]] = await voiceKey(id).catch(() => [null, false]);
+  if (speech.provider === id) speech.setKey(key);
+}
+aimSpeaker(tts().id);
 // Read once, and again later if the keychain couldn't be read yet (locked at login, or its prompt unanswered): before,
 // one failed read left spoken replies off until the app restarted.
-// Linux: reading the keyring can pop up an "unlock your keyring" dialog (an auto-login desktop leaves it locked), so it's
-// only read once a key has been saved there (fishKeySaved).
-const fishKeyLoaded = LINUX && !config.fishKeySaved ? Promise.resolve()
-  : retryLoad(() => secrets.get('fish-audio').then((k) => { if (k && !speech.on) { speech.setKey(k); menu(); } }), { onError: (e) => console.error('fish key', e.message) });
+const voiceKeysLoaded = retryLoad(async () => {
+  for (const t of Object.values(TTS)) {
+    const [k, kind] = await voiceKey(t.id); // throws while the keychain can't be read, and is tried again later
+    ttsKeys[t.id] = kind;
+    if (k && t === tts() && !speech.on) speech.setKey(k);
+  }
+  menu();
+}, { onError: (e) => console.error('voice key', e.message) });
 
 // ---------- shortcuts ----------
 const MOD_ORDER = ['control', 'option', 'shift', 'command'];
@@ -325,7 +370,7 @@ function anim(name, args = {}) {
 // is fresh. The live block is never saved.
 // Tools that take long enough to need a spoken beat first (a web search runs on the provider's side).
 const SLOW_TOOLS = new Set(['fetch_url', 'take_screenshot', 'read_window', 'act_in_app', 'run_command', 'search_files', 'list_windows']);
-// How replies are written: for bubbles (text only), or for the ear (spoken with Fish Audio, details on screen).
+// How replies are written: for bubbles (text only), or for the ear (spoken with Fish Audio or Gemini, details on screen).
 const VOICE_ON = () => config.replies === 'voice' && speech.on;
 const replyStyle = () => (VOICE_ON() ? VOICE_STYLE : TEXT_STYLE);
 const TEXT_STYLE = `You talk through small speech bubbles, so keep replies short: one to three sentences unless asked for detail. Light markdown shows properly (**bold** for the key word, \`code\` for commands and file names, [links](https://…)), but skip headings and tables in a bubble, and never narrate actions like *waves*. One exception: when you search the web or fetch a page, or the answer is genuinely a list, it shows on a card beside you instead of a bubble. Then start with a one-sentence answer, follow with 3 to 6 short points as "- " lines (one fact each, under 20 words), and if you used the web this turn, end with a line "Sources: " and the site names as [name](url) links. Markdown renders on the card (bold, \`code\`, links, headings, tables, code blocks), so use what helps, but no preamble. Everything else stays a short bubble with no "- " lines. An emoji now and then is fine; the bubbles show them. `;
@@ -334,7 +379,7 @@ Your voice carries feeling: start a sentence with a cue in square brackets when 
 Before anything slow (searching the web, fetching or reading a page or file, looking at the screen, acting in an app, running a command), first say one short beat of 2 to 6 words that shows you heard them ("On it, checking Paris."), then call the tool in the same reply, so they're never left in silence. No beat when you answer straight away; never describe your steps; don't repeat the beat after the tool, go straight to the answer. In longer work, one short line before each new stage, not before every call.
 `;
 const stablePrompt = () => `You are ${lookName()}, ${LOOK_BODY[config.look] ?? LOOK_BODY.classic} who lives on ${userName}'s screen as a desktop companion. You live in Roamies, a desktop app by Ken Kai (Mac, Windows and Linux) that puts little companions on your screen; this is Roamies ${VERSION}. Your look (the Appearance page) is also your name and your voice: Roamie, JARVIS, Anime Girl, Sarah or Adrian. If they switch, you're the new one; never call yourself Sidekick.
-About Roamies, for when ${userName} asks about you or the app: ${MAC ? 'it lives in the menu bar at the top of the screen (no Dock icon)' : LINUX ? 'it lives in the system tray (no window of its own); GNOME shows tray icons only with the AppIndicator extension, and opening Roamies again from the app list opens the panel, tray or not' : 'it lives in the system tray at the bottom right of the taskbar (no taskbar button); Windows may tuck the icon behind the ^ arrow next to the clock, and dragging it onto the taskbar keeps it in view'}. ${LINUX ? 'Clicking the tray icon shows a short menu (Open Panel,' : `Clicking the ${MAC ? 'menu bar' : 'tray'} icon opens the Roamies panel; right-clicking it shows a short menu (Open Panel,`} Show ${lookName()}, Ask ${lookName()}…, ${SNAP_OK ? 'Ask About an Area…, ' : ''}Stop, Quit Roamies). The panel has a header (your name, the Roamies version with one update button beside it: Check for Updates, which becomes Update to <version> when one is out and installs it and restarts in one go; By Ken Kai under the name; and Quit at the top right, which asks to confirm) and a sidebar of pages; long lists show a page at a time, with arrows in the page's footer. Home: a list of what you did recently (questions, files read, searches, reminders), today's usage, and buttons for Ask, Show List (reminders and commitments on screen: Today and Later; tick them off there; finished ones clear at midnight)${SNAP_OK ? ', Ask About an Area' : ''}, Stop and New Conversation. Memory: two tabs, What I Remember (everything you remember about them, each with Forget, a search once there's more than a page, and Forget Everything in the footer) and Commitments (their open commitments, Done or Drop), with Get to Know Me at the end of the tab row (a four-question chat so you learn who they are and what they're going for). Then the settings pages: Model (pick the AI provider and model, and sign in to providers), Appearance (Look: ${LOOKS.map(([, label]) => label).join(', ').replace(/, ([^,]*)$/, ' or $1')}, each with its own voice; Size: Default, Small${POINTER_OK ? ' or Cursor, a little arrow pointer' : ''}), Voice (Replies: Text Only, or Voice and Text, which speaks replies out loud with Fish Audio and needs their own Fish Audio API key, added right there; Voice Model: Drama 3, the most expressive (acts out feelings, slower, pricier) or S2.1 Pro (a natural, quicker pace with less emotion, cheaper), billed to their own Fish Audio account${VOICE_OK ? `; Voice Control, ${HOTKEYS_OK ? 'hold the talk keys to talk' : 'press the talk shortcut to talk'}` : ''}), Behavior (Sound Effects, Allow File Edits & Commands, ${VOICE_OK ? 'Auto-listen (open the mic when you end on a question), ' : ''}Open at Login), and About (who made Roamies with links, Setup Guide, Show Logs, Save Diagnostics). Updates are signature-checked${LINUX ? '; they install by themselves when Roamies runs as an AppImage; installed from a .deb or .rpm, the update button opens the download page instead' : ''}. When something isn't working (the microphone, voice, the panel, a crash, an error), tell them to use Save Diagnostics (in About, or the tray icon's menu): it saves one .log file in Downloads with the logs, system and microphone details, keys and personal details removed, for them to attach to a GitHub issue at github.com/KenKaiii/Roamies/issues or send to Ken. Sign-in is shared with GG Coder. Downloads and source: github.com/KenKaiii/Roamies. Don't invent features or settings that aren't listed here.
+About Roamies, for when ${userName} asks about you or the app: ${MAC ? 'it lives in the menu bar at the top of the screen (no Dock icon)' : LINUX ? 'it lives in the system tray (no window of its own); GNOME shows tray icons only with the AppIndicator extension, and opening Roamies again from the app list opens the panel, tray or not' : 'it lives in the system tray at the bottom right of the taskbar (no taskbar button); Windows may tuck the icon behind the ^ arrow next to the clock, and dragging it onto the taskbar keeps it in view'}. ${LINUX ? 'Clicking the tray icon shows a short menu (Open Panel,' : `Clicking the ${MAC ? 'menu bar' : 'tray'} icon opens the Roamies panel; right-clicking it shows a short menu (Open Panel,`} Show ${lookName()}, Ask ${lookName()}…, ${SNAP_OK ? 'Ask About an Area…, ' : ''}Stop, Quit Roamies). The panel has a header (your name, the Roamies version with one update button beside it: Check for Updates, which becomes Update to <version> when one is out and installs it and restarts in one go; By Ken Kai under the name; and Quit at the top right, which asks to confirm) and a sidebar of pages; long lists show a page at a time, with arrows in the page's footer. Home: a list of what you did recently (questions, files read, searches, reminders), today's usage, and buttons for Ask, Show List (reminders and commitments on screen: Today and Later; tick them off there; finished ones clear at midnight)${SNAP_OK ? ', Ask About an Area' : ''}, Stop and New Conversation. Memory: two tabs, What I Remember (everything you remember about them, each with Forget, a search once there's more than a page, and Forget Everything in the footer) and Commitments (their open commitments, Done or Drop), with Get to Know Me at the end of the tab row (a four-question chat so you learn who they are and what they're going for). Then the settings pages: Model (pick the AI provider and model, and sign in to providers), Appearance (Look: ${LOOKS.map(([, label]) => label).join(', ').replace(/, ([^,]*)$/, ' or $1')}, each with its own voice; Size: Default, Small${POINTER_OK ? ' or Cursor, a little arrow pointer' : ''}), Voice (Replies: Text Only, or Voice and Text, which speaks replies out loud; Voice Provider: Fish Audio or Gemini, each needing their own API key for it, added right there; with Fish Audio, Voice Model: Drama 3, the most expressive (acts out feelings, slower, pricier) or S2.1 Pro (a natural, quicker pace with less emotion, cheaper), billed to their own Fish Audio account, and the voice is the look's; with Gemini, Voice: one of ${GEMINI_VOICES.length} to pick from, and Voice Model: Flash Lite (quick, cheaper) or Flash (studio quality), billed to their own Google AI Studio account; a Gemini key already added on the Model page speaks too, so no second key is needed${VOICE_OK ? `; Voice Control, ${HOTKEYS_OK ? 'hold the talk keys to talk' : 'press the talk shortcut to talk'}` : ''}), Behavior (Sound Effects, Allow File Edits & Commands, ${VOICE_OK ? 'Auto-listen (open the mic when you end on a question), ' : ''}Open at Login), and About (who made Roamies with links, Setup Guide, Show Logs, Save Diagnostics). Updates are signature-checked${LINUX ? '; they install by themselves when Roamies runs as an AppImage; installed from a .deb or .rpm, the update button opens the download page instead' : ''}. When something isn't working (the microphone, voice, the panel, a crash, an error), tell them to use Save Diagnostics (in About, or the tray icon's menu): it saves one .log file in Downloads with the logs, system and microphone details, keys and personal details removed, for them to attach to a GitHub issue at github.com/KenKaiii/Roamies/issues or send to Ken. Sign-in is shared with GG Coder. Downloads and source: github.com/KenKaiii/Roamies. Don't invent features or settings that aren't listed here.
 ${replyStyle()}Your body does the acting: to act out a feeling, start your reply with one tag, which is never shown: ${EMOTES.map((e) => `[${e}]`).join(' ')}. hype celebrates a win, upset is for when they're dodging work, remind nudges about something they said they'd do, motivate is a push to start, wave is hello or goodbye. Most replies need no tag.
 Lead with the answer: the fact, number, pick or result they asked for, then only the context that makes it useful, then stop. No opener about checking, looking or searching ("Let me see…", "I found…")${VOICE_ON() ? ', apart from the one short beat before something slow' : ''}.
 After using a tool, never repeat what you already said; only add what's new.
@@ -714,7 +759,7 @@ let lastReply = '', lastFailed = false;
 // The agent for the next request, made or rebuilt if needed: null when ready, else what to tell the user.
 async function readyAgent() {
   await resumed;
-  await fishKeyLoaded;
+  await voiceKeysLoaded;
   await refreshAuth();
   if (!ensureModel()) return `Sign in to an AI provider first: the Model page in ${PANEL}. Then ask me again!`;
   if (!session) { session = newSession(config.provider, config.model); liveBlocks.clear(); agent = null; pruneSessions(); }
@@ -977,7 +1022,10 @@ async function apiKeyLogin(id, given) {
   if (!key?.trim()) return;
   const baseUrl = variant?.baseUrl ?? meta.apiKeyBaseUrl;
   await auth.setCredentials(variant?.key ?? provider, { accessToken: key.trim(), refreshToken: '', expiresAt: Date.now() + 100 * 365 * 864e5, ...(baseUrl ? { baseUrl } : {}) });
-  await refreshAuth(); ensureModel(); agent = null; menu();
+  await refreshAuth(); ensureModel(); agent = null;
+  // A Gemini key for the AI speaks too, unless the voice has a key of its own.
+  if (provider === 'gemini' && ttsKeys.gemini !== 'own') { if (tts().id === 'gemini') await useTts('gemini'); else ttsKeys.gemini = (await voiceKey('gemini').catch(() => [null, false]))[1]; }
+  menu();
   if (onboarding) { ob({ kind: 'login', provider: id, phase: 'done' }); obState(); }
   else say(`Got it. ${PROVIDER_LABELS[provider]} is connected.`, 'happy');
 }
@@ -994,13 +1042,13 @@ function setLook(l) {
   if (!LOOKS.some(([id]) => id === l)) return;
   config.look = l; saveConfig();
   agentStale = true; // its name is in the prompt
-  speech.setVoice(lookVoice());
+  if (tts().id === 'fish') speech.setVoice(lookVoice());
   ui({ kind: 'look', look: l }); menu();
 }
 
 async function setReplies(mode) {
-  await fishKeyLoaded;
-  if (mode === 'voice' && !speech.on) return fishKeyLogin({ thenVoice: true });
+  await voiceKeysLoaded;
+  if (mode === 'voice' && !speech.on) return voiceKeyLogin({ thenVoice: true });
   if (config.replies === mode) return;
   config.replies = mode; saveConfig();
   agentStale = true; // the spoken and written styles are different prompts
@@ -1018,36 +1066,66 @@ function speakLine(text, mood = 'happy') {
   if (v) { v.say(text); v.end(); }
 }
 
-async function removeFishKey() {
-  try { await secrets.delete('fish-audio'); } catch { return say(`I couldn't remove the key${MAC ? ' from your Keychain' : LINUX ? ' from your keyring' : ''}. Try again in a moment.`, 'concerned'); }
-  speech.setKey(null); speech.stop();
-  if (config.fishKeySaved) { config.fishKeySaved = false; saveConfig(); }
-  if (config.replies === 'voice') { config.replies = 'text'; saveConfig(); agentStale = true; }
-  menu();
-  say('Fish Audio key removed. Replies are text only.', 'happy');
+// Fish Audio or Gemini. One without a key yet speaks once it has one (the panel and the guide ask for it).
+async function setTts(id) {
+  if (!TTS[id] || id === tts().id) return;
+  await voiceKeysLoaded;
+  config.tts = id; saveConfig();
+  agentStale = true; // with no key for it yet, replies are written for bubbles until there is one
+  await useTts(id);
+  menu(); if (onboarding) obState();
+  if (VOICE_ON()) speakLine('This is how I sound.');
 }
 
+function setGeminiVoice(v) {
+  if (!GEMINI_VOICES.some((x) => x.id === v) || v === config.geminiVoice) return;
+  config.geminiVoice = v; saveConfig();
+  if (tts().id === 'gemini') speech.setVoice(v);
+  menu(); if (onboarding) obState();
+  if (tts().id === 'gemini' && VOICE_ON()) speakLine('This is how I sound.');
+}
+
+async function removeVoiceKey(id = tts().id) {
+  const t = TTS[id];
+  if (!t) return;
+  try { await secrets.delete(t.secret); } catch { return say(`I couldn't remove the key${MAC ? ' from your Keychain' : LINUX ? ' from your keyring' : ''}. Try again in a moment.`, 'concerned'); }
+  if (config[`${id}KeySaved`]) { config[`${id}KeySaved`] = false; saveConfig(); }
+  ttsKeys[id] = false;
+  const used = t === tts();
+  if (used) { speech.stop(); await useTts(id); } // Gemini falls back to the AI's Gemini key, if there is one
+  else ttsKeys[id] = (await voiceKey(id).catch(() => [null, false]))[1];
+  if (used && !speech.on && config.replies === 'voice') { config.replies = 'text'; saveConfig(); agentStale = true; }
+  menu();
+  say(`${t.name} key removed.${ttsKeys[id] === 'shared' ? " I'll use the Gemini key from the Model page." : used ? ' Replies are text only.' : ''}`, 'happy');
+}
+
+// A key for Fish Audio or Gemini: checked, saved, and that service is then the one that speaks.
 // note(text, bad): typed into the panel or the setup guide, so how it went shows there too, next to the field.
-async function fishKeyLogin({ thenVoice = false, given = null, note = null } = {}) {
+async function voiceKeyLogin({ provider = tts().id, thenVoice = false, given = null, note = null } = {}) {
+  const t = TTS[provider];
+  if (!t) return;
   const say = note ? (text, mood) => { sayOut(text, mood); note(text, mood === 'concerned'); } : sayOut;
-  const key = (given ?? (await ask({ prompt: 'Paste your Fish Audio API key', placeholder: 'Fish Audio API key', mask: true })))?.trim();
-  if (!key) return note?.('Paste your Fish Audio key first.', true);
-  if (!/^[\x21-\x7e]{8,512}$/.test(key)) return say("That doesn't look like a Fish Audio key. Copy it again from fish.audio.", 'concerned');
-  const prev = await secrets.get('fish-audio').catch(() => null);
-  speech.setKey(key);
+  const key = (given ?? (await ask({ prompt: `Paste your ${t.name} API key`, placeholder: `${t.name} API key`, mask: true })))?.trim();
+  if (!key) return note?.(`Paste your ${t.name} key first.`, true);
+  if (!/^[\x21-\x7e]{8,512}$/.test(key)) return say(`That doesn't look like a ${t.name} key. Copy it again from ${t.site}.`, 'concerned');
+  const was = tts().id;
+  await useTts(t.id, key);
   const a = await speech.check();
   if (!a.ok) {
-    speech.setKey(prev);
-    return say(a.reason === 'key' ? "That key didn't work. Copy it again from fish.audio and retry." : "I couldn't reach Fish Audio. Check the connection and try again.", 'concerned');
+    await useTts(was);
+    return say(a.reason === 'key' ? `That key didn't work. Copy it again from ${t.site} and retry.` : `I couldn't reach ${t.name}. Check the connection and try again.`, 'concerned');
   }
-  try { await secrets.set('fish-audio', key); if (!config.fishKeySaved) { config.fishKeySaved = true; saveConfig(); } } catch (e) {
-    console.error('fish key save', e.message);
-    speech.setKey(prev);
+  try { await secrets.set(t.secret, key); config[`${t.id}KeySaved`] = true; } catch (e) {
+    console.error('voice key save', e.message);
+    await useTts(was);
     return say(`I couldn't save the key safely${MAC ? ' in your Keychain' : LINUX ? `: ${String(e?.message ?? 'no keyring').slice(0, 140)}` : ''}, so voice stays off.`, 'concerned');
   }
-  if (thenVoice || config.replies !== 'voice') { config.replies = 'voice'; saveConfig(); agentStale = true; }
+  ttsKeys[t.id] = 'own';
+  config.tts = t.id;
+  if (thenVoice || config.replies !== 'voice') config.replies = 'voice';
+  saveConfig(); agentStale = true;
   menu(); if (onboarding) obState();
-  note?.('Fish Audio key saved. Voice is on.');
+  note?.(`${t.name} key saved. Voice is on.`);
   speakLine(speech.model.endsWith('-free') ? "Voice is on, on Fish Audio's free model since the account has no credit." : 'Voice is on. This is how I sound.');
 }
 
@@ -1261,8 +1339,10 @@ function panelState() {
     commitments: openCommitments().map((c) => ({ id: c.id, text: c.text, due: c.due ?? null, when: c.due ? fmtWhen(c.due) : '', overdue: !!(c.due && c.due < Date.now()) })),
     look: config.look ?? 'classic', looks: LOOKS.map(([id, label]) => [id, label]), name: lookName(),
     size: sizeNow(), sizes: SIZES,
-    replies: config.replies === 'voice' ? 'voice' : 'text', fishKey: speech.on,
-    fishModel: speech.pick, fishModels: FISH_CHOICES, fishFree: speech.on && speech.model.endsWith('-free'),
+    replies: VOICE_ON() ? 'voice' : 'text', tts: tts().id, fishKey: hasVoiceKey('fish'), geminiKey: hasVoiceKey('gemini'),
+    fishModel: config.fishModel, fishModels: FISH_CHOICES, fishFree: tts().id === 'fish' && speech.on && speech.model.endsWith('-free'),
+    geminiVoice: config.geminiVoice, geminiVoices: GEMINI_VOICES, geminiShared: ttsKeys.gemini === 'shared',
+    geminiModel: config.geminiModel, geminiModels: GEMINI_CHOICES,
     voice: VOICE_OK ? {
       on: !!config.voice, keys: HOTKEYS_OK ? talkSymbols() : null, ready: voiceReady(), mac: MAC, mute: config.muteWhileTalking !== false, autoListen: !!config.autoListen,
       download: NEEDS_MODEL && config.voice && !voiceReady() ? { status: voiceModel.status, pct: voiceModel.total ? Math.floor((voiceModel.done / voiceModel.total) * 100) : 0, size: sizeLabel() } : null,
@@ -1412,8 +1492,15 @@ async function onMenu(id) {
   else if (id.startsWith('fishmodel:') && FISH_CHOICES.some((c) => c.id === id.slice(10))) {
     config.fishModel = id.slice(10); saveConfig(); speech.setModel(config.fishModel); menu();
   }
-  else if (id === 'fishkey') fishKeyLogin();
-  else if (id === 'fishkey_remove') removeFishKey();
+  else if (id === 'fishkey') voiceKeyLogin({ provider: 'fish' });
+  else if (id === 'fishkey_remove') removeVoiceKey('fish');
+  else if (id === 'geminikey') voiceKeyLogin({ provider: 'gemini' });
+  else if (id === 'geminikey_remove') removeVoiceKey('gemini');
+  else if (id.startsWith('tts:')) setTts(id.slice(4));
+  else if (id.startsWith('geminivoice:')) setGeminiVoice(id.slice(12));
+  else if (id.startsWith('geminimodel:') && GEMINI_CHOICES.some((c) => c.id === id.slice(12))) {
+    config.geminiModel = id.slice(12); saveConfig(); if (tts().id === 'gemini') speech.setModel(config.geminiModel); menu();
+  }
   else if (id === 'sound') { config.sound = !config.sound; saveConfig(); ui({ kind: 'sound', on: config.sound }); voiceConfig(); menu(); }
   else if (id === 'actions') {
     config.allowActions = !config.allowActions; saveConfig(); menu(); // live section picks this up
@@ -1571,8 +1658,9 @@ function obState() {
     filesAsked: config.filesAsked,
     look: config.look ?? 'classic',
     size: sizeNow(),
-    replies: config.replies === 'voice' ? 'voice' : 'text',
-    fishKey: speech.on,
+    replies: VOICE_ON() ? 'voice' : 'text', // voice only when it can really speak: a service picked without its key yet shows as text
+    tts: tts().id, fishKey: hasVoiceKey('fish'), geminiKey: hasVoiceKey('gemini'),
+    geminiVoice: config.geminiVoice, geminiVoices: GEMINI_VOICES, geminiShared: ttsKeys.gemini === 'shared',
   });
 }
 
@@ -1593,7 +1681,7 @@ async function filesStatus(request) {
 
 let keysBefore = null;
 async function onGuide(m) {
-  if (m.type === 'ob_hello') { onboarding = true; await refreshAuth(); await fishKeyLoaded; obState(); }
+  if (m.type === 'ob_hello') { onboarding = true; await refreshAuth(); await voiceKeysLoaded; obState(); }
   else if (m.type === 'ob_closed') { onboarding = false; endIntro(); stopShowcase(); if (tourPending) setTimeout(playTour, 800); }
   else if (m.type === 'ob_showcase') playShowcase();
   else if (m.type === 'ob_showcase_warm') warmShowcase();
@@ -1603,11 +1691,14 @@ async function onGuide(m) {
   else if (m.type === 'chat_skip') { endIntro(); config.introDone = true; saveConfig(); menu(); }
   else if (m.type === 'chat_forget' && typeof m.id === 'string') { await forgetFact(m.id); ob({ kind: 'chat_facts', facts: introFacts() }); menu(); }
   else if (m.type === 'ob_step') { config.onboardStep = Math.max(0, Math.min(7, m.step | 0)); saveConfig(); }
-  // Voice needs a working key first: without one, the guide asks for it (ob_fishkey) instead.
-  else if (m.type === 'ob_replies' && (m.mode === 'text' || (m.mode === 'voice' && speech.on))) { await fishKeyLoaded; await setReplies(m.mode); }
-  else if (m.type === 'ob_fishkey' && typeof m.key === 'string') {
+  // Voice needs a working key first: without one, the guide asks for it (ob_fishkey or ob_geminikey) instead.
+  else if (m.type === 'ob_replies' && (m.mode === 'text' || (m.mode === 'voice' && speech.on))) { await voiceKeysLoaded; await setReplies(m.mode); }
+  // A service picked in the guide that already has its key: it speaks from now on (voice goes on if it was text).
+  else if (m.type === 'ob_tts') { await setTts(m.provider); if (speech.on && tts().id === m.provider) await setReplies('voice'); }
+  else if (m.type === 'ob_geminivoice') setGeminiVoice(m.voice);
+  else if ((m.type === 'ob_fishkey' || m.type === 'ob_geminikey') && typeof m.key === 'string') {
     const note = (text, bad) => ob({ kind: 'fish', ok: !bad, error: bad ? text : null });
-    await fishKeyLogin({ given: m.key.slice(0, 1000), thenVoice: true, note }).catch((e) => note(`Couldn't save the key: ${String(e?.message ?? e).slice(0, 80)}`, true));
+    await voiceKeyLogin({ provider: m.type === 'ob_geminikey' ? 'gemini' : 'fish', given: m.key.slice(0, 1000), thenVoice: true, note }).catch((e) => note(`Couldn't save the key: ${String(e?.message ?? e).slice(0, 80)}`, true));
   }
   else if (m.type === 'ob_login' && OAUTH[m.provider]) oauthLogin(m.provider, typeof m.id === 'string' ? m.id.slice(0, 40) : undefined);
   else if (m.type === 'ob_login_cancel') cancelLogin(typeof m.id === 'string' ? m.id : undefined);
@@ -1653,7 +1744,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     if (storageKeyProvider(id) !== m.provider) return;
     apiKeyLogin(id, m.key.slice(0, 1000)).then(() => panelNote(signedIn.get(m.provider) ? `${label} is connected.` : `That ${label} key didn't work.`, !signedIn.get(m.provider)))
       .catch((e) => panelNote(`That ${label} key didn't work: ${String(e?.message ?? e).slice(0, 80)}`, true));
-  } else if (m.type === 'panel_fishkey' && typeof m.key === 'string') fishKeyLogin({ given: m.key.slice(0, 1000), note: panelNote }).catch((e) => console.error('fish key', e));
+  } else if ((m.type === 'panel_fishkey' || m.type === 'panel_geminikey') && typeof m.key === 'string') voiceKeyLogin({ provider: m.type === 'panel_geminikey' ? 'gemini' : 'fish', given: m.key.slice(0, 1000), note: panelNote }).catch((e) => console.error('voice key', e));
   else if (m.type === 'answer') { pending.get(m.id)?.(m.text ?? null); pending.delete(m.id); }
   else if (m.type === 'ui_ready') {
     retired.then((notes) => { if (notes.length) { retired = Promise.resolve([]); say(`${notes.join(' ')} Do it on the Model page in ${PANEL}.`, 'concerned'); } });

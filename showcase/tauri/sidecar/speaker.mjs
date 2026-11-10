@@ -1,5 +1,6 @@
-// Speaks replies with Fish Audio and hands the audio to the overlay ({ kind: 'speech' } messages).
-// - The model is the one the user picked (Drama 3 or S2.1 Pro) while the account has credit, the free tier
+// Speaks replies with Fish Audio or Gemini (the user's pick) and hands the audio to the overlay
+// ({ kind: 'speech' } messages).
+// - Fish Audio: the model is the one the user picked (Drama 3 or S2.1 Pro) while the account has credit, the free tier
 //   otherwise (checked when the key is set, at start and after a failure). If a reply's voice fails before any
 //   audio, it's retried on the next model down from the pick, never a pricier one (Drama 3 → S2.1 Pro → free;
 //   S2.1 Pro → free) with everything said so far, and one that works is kept from then on; if it fails after
@@ -12,6 +13,26 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_VOICE, FISH_MODELS, FREE_MODEL, FishVoice, RATE, fishAccount } from './fish.mjs';
+import { GEMINI_DEFAULT_VOICE, GEMINI_MODEL, GEMINI_MODELS, GEMINI_PITCH, GEMINI_RATE, GeminiVoice, geminiAccount } from './gemini.mjs';
+
+// The services that can speak. models: priciest first, the pick and the ones after it are tried in turn; pick:
+// the one used until the user picks (else the first); freeModel: the one for an account with no credit; rate:
+// the PCM's sample rate; warmDelay: how long a key, voice or model must stay put before its beats are made
+// (Gemini has 30 voices to try out, and making 34 beats for each one passed over would waste the allowance).
+export const PROVIDERS = {
+  fish: { id: 'fish', name: 'Fish Audio', Voice: FishVoice, account: fishAccount, models: FISH_MODELS, freeModel: FREE_MODEL, rate: RATE, defaultVoice: DEFAULT_VOICE },
+  gemini: { id: 'gemini', name: 'Gemini', Voice: GeminiVoice, account: geminiAccount, models: GEMINI_MODELS, pick: GEMINI_MODEL, freeModel: null, rate: GEMINI_RATE, play: Math.round(GEMINI_RATE * GEMINI_PITCH), defaultVoice: GEMINI_DEFAULT_VOICE, warmDelay: 15_000 },
+};
+
+// Silence trimmed from both ends (a little kept), so a beat starts the moment it plays.
+export function trimSilence(pcm, rate) {
+  const s = new Int16Array(pcm.buffer.slice(pcm.byteOffset, pcm.byteOffset + (pcm.byteLength & ~1))), loud = 500, pad = Math.round(rate * 0.04);
+  let a = 0, b = s.length - 1;
+  while (a < s.length && Math.abs(s[a]) < loud) a++;
+  if (a === s.length) return Buffer.from(s.buffer); // nothing loud in it: left as it is
+  while (b > a && Math.abs(s[b]) < loud) b--;
+  return Buffer.from(s.slice(Math.max(0, a - pad), Math.min(s.length, b + 1 + pad)).buffer);
+}
 
 // One or two words each, so a beat never sounds canned; any of them must fit before a search, a page, the screen or a drawing.
 export const BEATS = [
@@ -40,11 +61,14 @@ export function bundledBeats(dir = path.join(path.dirname(fileURLToPath(import.m
   };
 }
 
-export function createSpeaker({ emit, onProblem = () => {}, log = () => {}, FishVoiceImpl = FishVoice, account = fishAccount, beatPhrases = BEATS, bundled = bundledBeats() }) {
-  let key = null, voice = DEFAULT_VOICE, pref = FISH_MODELS[0], model = pref, seq = 0, current = null, checking = null;
-  // The pick and the cheaper ones after it (FISH_MODELS runs from priciest to free).
-  const chain = () => FISH_MODELS.slice(Math.max(0, FISH_MODELS.indexOf(pref)));
-  let beats = new Map(), recent = [], warming = null; // phrase → [base64 PCM chunks], for the current key and voice
+// beatStore: { read(name), write(name, data) }, where beats made here are kept between runs (none: made again each run).
+export function createSpeaker({ emit, onProblem = () => {}, log = () => {}, FishVoiceImpl = FishVoice, account = fishAccount, providers = {}, beatPhrases = BEATS, bundled = bundledBeats(), beatStore = null }) {
+  const all = { ...PROVIDERS, fish: { ...PROVIDERS.fish, Voice: FishVoiceImpl, account }, ...providers };
+  let P = all.fish; // the service in use
+  let key = null, voice = P.defaultVoice, pref = P.pick ?? P.models[0], model = pref, seq = 0, current = null, checking = null;
+  // The pick and the cheaper ones after it (models run from priciest to free).
+  const chain = () => P.models.slice(Math.max(0, P.models.indexOf(pref)));
+  let beats = new Map(), recent = [], warming = null; // phrase → [base64 PCM], for the current key, voice and model
   // A random beat, not one of the last few: one that's already made if there is one, so it plays instantly.
   const shipped = () => bundled(voice, model);
   const ready = (p) => beats.has(p) || !!shipped()?.has(p);
@@ -56,36 +80,56 @@ export function createSpeaker({ emit, onProblem = () => {}, log = () => {}, Fish
     return phrase;
   };
 
-  // Make the beats once, one at a time (well under Fish's concurrency limit). Failures just leave a gap:
-  // that beat is then spoken live instead.
+  // Make the beats once, one at a time (well under the services' concurrency limits), and keep them for next time.
+  // Failures just leave a gap: that beat is then spoken live instead. Three in a row and it stops for now (no
+  // credit, or too many requests): the next account check starts it again.
   function warm() {
-    const k = key, vo = voice;
-    warming ??= (async () => {
+    if (warming) return warming;
+    const k = key, vo = voice, mo = model, p = P;
+    const same = () => key === k && voice === vo && model === mo && P === p;
+    const name = `${p.id}.${vo}.${mo}`.replace(/[^\w.-]/g, '_');
+    const mine = warming = (async () => {
+      if (p.warmDelay) await new Promise((r) => { setTimeout(r, p.warmDelay).unref?.(); });
+      if (!same()) return;
+      const kept = await Promise.resolve().then(() => beatStore?.read(name)).catch(() => null);
+      if (!same()) return;
+      for (const [phrase, pcm] of Object.entries(kept?.beats ?? {})) if (beatPhrases.includes(phrase) && typeof pcm === 'string' && !beats.has(phrase)) beats.set(phrase, [pcm]);
+      let made = 0, failed = 0;
       for (const phrase of beatPhrases) {
-        if (key !== k || voice !== vo) break;
-        if (beats.has(phrase) || bundled(vo, model)?.has(phrase)) continue; // shipped with the app
+        if (!same() || failed >= 3) break;
+        if (beats.has(phrase) || bundled(vo, mo)?.has(phrase)) continue; // kept, or shipped with the app
         const chunks = await new Promise((done) => {
           const got = [];
-          const v = new FishVoiceImpl({ key: k, voice: vo, model, onAudio: (pcm) => got.push(Buffer.from(pcm.buffer, pcm.byteOffset, pcm.byteLength).toString('base64')), onEnd: () => done(got), onError: () => done(null) }).open();
+          const v = new p.Voice({ key: k, voice: vo, model: mo, onAudio: (pcm) => got.push(Buffer.from(pcm.buffer, pcm.byteOffset, pcm.byteLength)), onEnd: () => done(got), onError: () => done(null) }).open();
           v.say(phrase); v.end();
         });
-        if (chunks?.length && key === k && voice === vo) beats.set(phrase, chunks);
+        if (!chunks?.length) { failed++; continue; }
+        failed = 0;
+        if (same()) { beats.set(phrase, [trimSilence(Buffer.concat(chunks), p.rate).toString('base64')]); made++; }
       }
-    })().finally(() => { warming = null; });
-    return warming;
+      if (made && same()) await Promise.resolve().then(() => beatStore?.write(name, { rate: p.rate, beats: Object.fromEntries([...beats].map(([phrase, c]) => [phrase, c.join('')])) })).catch(() => {});
+    })().finally(() => {
+      if (warming !== mine) return; // the service was changed: its own key starts this again
+      warming = null;
+      if (key && !same()) warm(); // the key, voice or model changed meanwhile: make the new one's
+    });
+    return mine;
   }
 
   // Returns the account check: { ok, credit } or { ok: false, reason: 'key' | 'network' }.
   async function check() {
     if (!key) return { ok: false, reason: 'key' };
-    checking ??= account(key).then((a) => {
+    if (checking) return checking;
+    const p = P;
+    const mine = checking = p.account(key).then((a) => {
+      if (P !== p) return a; // the service was changed while this was out: its answer is about the old one
       // No credit: the free tier. Credit again: back to the best model, else keep the paid one that worked.
-      if (a.ok) model = a.credit != null && a.credit <= 0.01 ? FREE_MODEL : model === FREE_MODEL ? pref : model;
-      log('fish_account', { ok: a.ok, reason: a.reason, model });
+      if (a.ok) model = a.credit != null && a.credit <= 0.01 && p.freeModel ? p.freeModel : model === p.freeModel ? pref : model;
+      log(`${p.id}_account`, { ok: a.ok, reason: a.reason, model });
       if (a.ok) warm();
       return a;
-    }).finally(() => { checking = null; });
-    return checking;
+    }).finally(() => { if (checking === mine) checking = null; });
+    return mine;
   }
 
   function stopAll() {
@@ -110,7 +154,7 @@ export function createSpeaker({ emit, onProblem = () => {}, log = () => {}, Fish
         if (!shippedBeat && !chunks) { me.say(phrase); return true; }
         log('speech_beat', { id, ms: Date.now() - t0 });
         if (shippedBeat) emit({ kind: 'speech', id, rate: shippedBeat.rate, pcm: shippedBeat.pcm });
-        else for (const pcm of chunks) emit({ kind: 'speech', id, rate: RATE, pcm });
+        else for (const pcm of chunks) emit({ kind: 'speech', id, rate: P.play ?? P.rate, pcm });
         return true;
       },
       end() { if (done || ended) return; ended = true; v.end(); },
@@ -127,30 +171,33 @@ export function createSpeaker({ emit, onProblem = () => {}, log = () => {}, Fish
     };
     const connect = (m) => {
       tries++;
-      v = new FishVoiceImpl({
+      v = new P.Voice({
         key, voice, model: m,
         onAudio: (pcm) => {
           if (done) return;
           if (!heard) { heard = true; if (m !== model) model = m; log('speech_first_audio', { id, model: m, ms: Date.now() - t0 }); }
-          emit({ kind: 'speech', id, rate: RATE, pcm: Buffer.from(pcm.buffer, pcm.byteOffset, pcm.byteLength).toString('base64') });
+          emit({ kind: 'speech', id, rate: P.play ?? P.rate, pcm: Buffer.from(pcm.buffer, pcm.byteOffset, pcm.byteLength).toString('base64') });
         },
         onEnd: () => finish(true),
         onError: async (err) => {
           if (done) return;
           log('speech_error', { id, model: m, heard: err.heard, message: err.message });
-          if (!err.heard && !heard && tries < chain().length) {
+          if (!err.heard && !heard) {
+            // Is it the key? Asked whether or not there's another model to try (Gemini has just the one).
             const a = await check();
             if (done) return;
             if (!a.ok && a.reason === 'key') { onProblem('key'); return finish(); }
-            // Retry: the free tier when there's no credit, else the next model down (the free one again once at the bottom).
-            const c = chain();
-            const next = a.ok && model === FREE_MODEL ? FREE_MODEL : c[Math.min(c.indexOf(m) + 1, c.length - 1)];
-            connect(next);
-            for (const s of said) v.say(s);
-            if (ended) v.end();
-            return;
+            if (tries < chain().length) {
+              // Retry: the free tier when there's no credit, else the next model down (the free one again once at the bottom).
+              const c = chain();
+              const next = a.ok && P.freeModel && model === P.freeModel ? P.freeModel : c[Math.min(c.indexOf(m) + 1, c.length - 1)];
+              connect(next);
+              for (const s of said) v.say(s);
+              if (ended) v.end();
+              return;
+            }
+            onProblem(err.message);
           }
-          if (!heard) onProblem(err.message);
           finish();
         },
       }).open();
@@ -165,13 +212,22 @@ export function createSpeaker({ emit, onProblem = () => {}, log = () => {}, Fish
     setKey(k) { if ((k || null) !== key) { beats = new Map(); if (!k) stopAll(); } key = k || null; if (key) check(); },
     // The user's pick. Beats are remade in it; with no credit it stays on the free tier until there is some.
     setModel(m) {
-      if (!FISH_MODELS.includes(m) || m === FREE_MODEL || m === pref) return;
+      if (!P.models.includes(m) || m === P.freeModel || m === pref) return;
       pref = m; beats = new Map();
-      if (model !== FREE_MODEL) model = m;
+      if (model !== P.freeModel) model = m;
       if (key) warm();
     },
     get pick() { return pref; },
-    setVoice(v) { if ((v || DEFAULT_VOICE) !== voice) beats = new Map(); voice = v || DEFAULT_VOICE; if (key) warm(); },
+    setVoice(v) { if ((v || P.defaultVoice) !== voice) beats = new Map(); voice = v || P.defaultVoice; if (key) warm(); },
+    // Fish Audio or Gemini. Starts clean: the key, voice and model are the old service's, so set them again after.
+    setProvider(id) {
+      const p = all[id];
+      if (!p || p === P) return;
+      if (key) stopAll(); // nothing can be playing without a key (and nothing is sent when the app is just starting)
+      P = p; key = null; checking = null; warming = null; beats = new Map();
+      voice = p.defaultVoice; pref = p.pick ?? p.models[0]; model = pref;
+    },
+    get provider() { return P.id; },
     get ready() { return beats.size + beatPhrases.filter((p) => !beats.has(p) && shipped()?.has(p)).length; },
     get model() { return model; },
     get on() { return !!key; },

@@ -30,7 +30,7 @@ voice, keeps track of what you said you'd do and nudges you when it's due.
 ## Why Roamies
 
 - **Talk, don't type.** Hold ⌃⌥ (Ctrl+Alt on Windows and Linux), say it, let go. On macOS and Windows, circle something with the cursor while you talk and it sees what you mean.
-- **It talks back.** Spoken replies in its own voice, with real feeling, through [Fish Audio](https://fish.audio).
+- **It talks back.** Spoken replies in its own voice, with real feeling, through [Fish Audio](https://fish.audio), or in a Gemini voice you pick, with your own [Google AI Studio](https://aistudio.google.com/apikey) key (the one you already use for a Gemini model works).
 - **It remembers.** What you said you'd do, reminders down to the second, and what matters to you.
 - **It draws on your screen.** Rings the exact button to click, walks you through each step, and sketches answers beside what you're reading.
 - **It does the clicking.** Opens apps, sites and files, and on macOS and Windows clicks or types in other apps for you.
@@ -70,7 +70,7 @@ clear it all in one go.
 - **The Roamies panel:** click the menu bar or tray icon (on Linux, **Open Panel** in its menu) for what it's doing, what it remembers, and every setting.
 - **Safe by default:** file edits, commands and app control stay off until you turn them on, and risky steps always ask.
 - **Shows its work:** every tool plays its own animation, so you can see what it's doing.
-- **Where keys live:** your Fish Audio key stays in the macOS Keychain (encrypted with Windows DPAPI on Windows, in your desktop's keyring on Linux). AI sign-ins are stored in `~/.gg/auth.json`, shared with GG Coder.
+- **Where keys live:** your Fish Audio or Gemini voice key stays in the macOS Keychain (encrypted with Windows DPAPI on Windows, in your desktop's keyring on Linux). AI sign-ins are stored in `~/.gg/auth.json`, shared with GG Coder.
 - **Out of the way:** no Dock or taskbar button, a shortcut shows or hides it (see the table), Esc stops a reply.
 - **Updates itself:** updates are signature-checked before they install, then it restarts itself. The Windows installer isn't code-signed yet, so SmartScreen warns the first time. On Linux only the AppImage updates itself.
 - **Quick setup:** permissions, sign-in and a short chat so it gets to know you.
@@ -79,7 +79,7 @@ clear it all in one go.
 | ---------------------- | -------------------------- | --------------------------- | ---------------------------------- |
 | Talk to it             | Yes, best on macOS 26+     | Yes, speech runs on your PC | Yes, speech runs on your PC        |
 | Circle while talking   | Yes                        | Yes                         | No                                 |
-| Spoken replies         | Yes, with a Fish Audio key | Yes, with a Fish Audio key  | Yes, with a Fish Audio key         |
+| Spoken replies         | Fish Audio or Gemini key   | Fish Audio or Gemini key    | Fish Audio or Gemini key           |
 | Memory and reminders   | Yes                        | Yes                         | Yes                                |
 | Read windows and point | Yes                        | Yes                         | Points from screenshots only       |
 | Cards and diagrams     | Yes                        | Yes                         | Yes                                |
@@ -99,7 +99,7 @@ recognition (it needs a Windows language with text recognition, which most have)
 running as administrator, and it borrows your cursor for real clicks, keys and scrolling, giving it back when it's done.
 Windows also leaves Roamies out of every screen capture, so it won't show in your screenshots or screen shares.</sub>
 
-<sub>Spoken replies are billed to your own Fish Audio account; the panel shows what each voice model costs. Voice on
+<sub>Spoken replies are billed to your own Fish Audio or Google AI Studio account; the panel shows what each voice model costs. Voice on
 Windows and Linux uses [NVIDIA Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3)
 ([CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)), in the ONNX export by
 [istupakov](https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx), run with
@@ -190,7 +190,7 @@ about the screen, go to the AI provider you pick. [PRIVACY.md](PRIVACY.md) lists
 1. Turn off **Open at login** (panel > Behavior), then quit Roamies from the menu bar.
 2. Drag Roamies from Applications to the Trash.
 3. Delete `~/.gg/sidekick` and `~/.gg/sidekick.json`. Keep `~/.gg/auth.json` if you use GG Coder.
-4. Open Keychain Access, search for "Roamies" and delete the Fish Audio key.
+4. Open Keychain Access, search for "Roamies" and delete the Fish Audio and Gemini voice keys.
 
 **Windows:**
 

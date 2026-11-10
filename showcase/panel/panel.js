@@ -14,7 +14,7 @@
   const act = (id, away = false) => { if (away) hide(); send({ type: 'menu', id }); };
 
   let state = null, tab = 'home', deferred = false;
-  // What's open in the panel itself: a key field (provider id or 'fish'), the row action waiting for its
+  // What's open in the panel itself: a key field (provider id, 'fish' or 'gemini'), the row action waiting for its
   // Confirm, each long list's page (pg) and how many rows fit on one (per, measured), Memory's tab and its search.
   const ui = { key: null, kind: {}, arm: null, pg: {}, per: {}, mtab: 'facts', q: '', bindShown: new Set() };
   let armTimer = 0;
@@ -115,6 +115,13 @@
       ? ` (${per100(c.promo.perM)} until ${new Date(Date.parse(c.promo.until) - 1).toLocaleDateString(undefined, { day: 'numeric', month: 'short', timeZone: 'America/Los_Angeles' })})` : '';
     return `$${c.perM} per million characters: about ${per100(c.perM)} per 100 replies${promo}. Billed to your Fish Audio account.`;
   };
+  // Gemini's two: a reply is about 12 seconds of speech, so 100 replies are about 20 minutes.
+  const GEMINI_WHY = { 'gemini-3.8-flash-lite-tts': 'Quick. Costs less.', 'gemini-3.8-flash-tts': 'Studio quality. Costs more.' };
+  const GEMINI_WHY_LONG = {
+    'gemini-3.8-flash-lite-tts': 'The quick, cheaper one: good for everyday replies.',
+    'gemini-3.8-flash-tts': "Google's best voice quality, with more feeling in it.",
+  };
+  const geminiPrice = (c) => `About $${(c.per10s * 120).toFixed(2)} per 100 replies, billed to your Google AI Studio account (it has a free tier).`;
   const where = () => (state?.os === 'mac' ? 'your Keychain' : state?.os === 'win' ? 'Windows, encrypted for your account' : state?.os === 'linux' ? 'your keyring' : 'this computer');
 
   // ---------------------------------------------------------------- header
@@ -383,7 +390,7 @@
   const refresh = (focusKey) => (tab === 'memory' && ui.mtab === 'facts' && document.activeElement?.id === 'find-facts' ? refreshFacts() : render(focusKey));
 
   // ---------------------------------------------------------------- Settings
-  // A masked key field that opens in place. id: a provider, or 'fish'. kinds: the kinds of key it takes
+  // A masked key field that opens in place. id: a provider, or a voice service ('fish', 'gemini'). kinds: the kinds of key it takes
   // (Kimi and Xiaomi: a plan key or a pay-per-token key), picked above the field; onsave gets the kind's id.
   function keyForm(id, label, onsave, kinds = null) {
     const kind = kinds?.find((x) => x.id === ui.kind[id]) ?? kinds?.[0];
@@ -463,24 +470,46 @@
   }
   function voicePage() {
     const v = state.voice;
+    // The service that speaks (Fish Audio or Gemini), each with its own key. Fish Audio's voice is the look's and
+    // it has models to pick from; Gemini has one model and a list of voices.
+    const tts = state.tts === 'gemini' ? 'gemini' : 'fish', T = tts === 'gemini' ? 'Gemini' : 'Fish Audio', hasKey = !!state[`${tts}Key`];
+    // Gemini can speak with the key the AI already has (the Model page), until the voice gets one of its own.
+    const shared = tts === 'gemini' && hasKey && !!state.geminiShared;
     return [
       group('Spoken replies', 'Hear me as well as read me.', null,
         picks('Replies', [['text', 'Text only'], ['voice', 'Voice and text']], state.replies, (x) => {
-          if (x === 'voice' && !state.fishKey) { ui.key = 'fish'; render('key-fish'); note('Add a Fish Audio key to hear me talk.'); return; }
+          if (x === 'voice' && !hasKey) { ui.key = tts; render(`key-${tts}`); note(`Add a ${T} key to hear me talk.`); return; }
           act(`replies:${x}`);
         }, 'replies'),
-        state.replies === 'voice' && state.fishModels?.length ? [
+        el('p', { className: 'sub', textContent: 'Voice provider' }),
+        picks('Voice provider', [['fish', 'Fish Audio'], ['gemini', 'Gemini']], tts, (x) => {
+          if (!state[`${x}Key`]) { ui.key = x; note(`Add a ${x === 'gemini' ? 'Gemini' : 'Fish Audio'} key to hear me talk.`); } // its key field opens with it
+          act(`tts:${x}`);
+        }, 'tts', { fish: 'A voice for each look, acted out with feeling. Billed to your Fish Audio account.', gemini: "Google's voices: pick one of 30. Billed to your Google AI Studio account." }),
+        tts === 'gemini' && hasKey && state.geminiVoices?.length ? [
+          el('p', { className: 'sub', textContent: 'Voice' }),
+          el('span', { className: 'px field select' },
+            el('select', { 'aria-label': 'Gemini voice', 'data-k': 'geminivoice', on: { change: (e) => act(`geminivoice:${e.target.value}`) } },
+              state.geminiVoices.map((g) => el('option', { value: g.id, textContent: `${g.id} · ${g.style}`, selected: g.id === state.geminiVoice })))),
+        ] : null,
+        tts === 'gemini' && hasKey && state.geminiModels?.length ? [
+          el('p', { className: 'sub', textContent: 'Voice model' }),
+          picks('Voice model', state.geminiModels.map((c) => [c.id, c.name]), state.geminiModel, (x) => act(`geminimodel:${x}`), 'geminimodel',
+            Object.fromEntries(state.geminiModels.map((c) => [c.id, `${GEMINI_WHY_LONG[c.id] ?? ''} ${geminiPrice(c)}`.trim()]))),
+          el('p', { className: 'why', textContent: GEMINI_WHY[state.geminiModel] ?? '' }),
+        ] : null,
+        tts === 'fish' && state.replies === 'voice' && state.fishModels?.length ? [
           el('p', { className: 'sub', textContent: 'Voice model' }),
           picks('Voice model', state.fishModels.map((c) => [c.id, c.name]), state.fishModel, (x) => act(`fishmodel:${x}`), 'fishmodel',
             Object.fromEntries(state.fishModels.map((c) => [c.id, `${WHY_LONG[c.id] ?? ''} ${price(c)}`.trim()]))),
           el('p', { className: `why${state.fishFree ? ' late' : ''}`, textContent: state.fishFree ? "No credit left, so it's on Fish's free tier" : WHY[state.fishModel] ?? '' }),
         ] : null,
         el('div', { className: 'setting' },
-          el('span', {}, 'Fish Audio key', el('small', { textContent: state.fishKey ? `Saved in ${where()}` : 'Needed for spoken replies' })),
+          el('span', {}, `${T} key`, el('small', { textContent: shared ? 'Using your Gemini key from the Model page' : hasKey ? `Saved in ${where()}` : 'Needed for spoken replies' })),
           el('span', { className: 'row-btns' },
-            link(ui.key === 'fish' ? 'Cancel' : state.fishKey ? 'Change' : 'Add', () => { ui.key = ui.key === 'fish' ? null : 'fish'; render(ui.key ? 'key-fish' : 'addkey:fish'); }, { k: 'addkey:fish', aria: state.fishKey ? 'Change the Fish Audio key' : 'Add a Fish Audio key' }),
-            state.fishKey && ui.key !== 'fish' ? armed('Remove', 'Confirm', 'fishkey-remove', 'fishkey_remove', 'Remove the Fish Audio key') : null)),
-        keyForm('fish', 'Fish Audio', (key) => send({ type: 'panel_fishkey', key }))),
+            link(ui.key === tts ? 'Cancel' : shared ? 'Use another' : hasKey ? 'Change' : 'Add', () => { ui.key = ui.key === tts ? null : tts; render(ui.key ? `key-${tts}` : `addkey:${tts}`); }, { k: `addkey:${tts}`, aria: hasKey ? `Change the ${T} key` : `Add a ${T} key` }),
+            hasKey && !shared && ui.key !== tts ? armed('Remove', 'Confirm', `${tts}key-remove`, `${tts}key_remove`, `Remove the ${T} key`) : null)),
+        keyForm(tts, T, (key) => send({ type: `panel_${tts}key`, key }))),
       v ? group('Talking to me', 'Speak instead of typing.', null,
         toggle('Voice control', v.download
           ? (v.download.status === 'downloading' ? `Downloading the voice model… ${v.download.pct}%` : v.download.status === 'error' ? 'The download failed' : `Needs a ${v.download.size} download`)
@@ -714,6 +743,12 @@
       name: 'Roamie', look: 'classic', looks: [['classic', 'Roamie'], ['jarvis', 'JARVIS'], ['anime', 'Anime Girl'], ['sarah', 'Sarah'], ['adrian', 'Adrian']],
       size: 'default', sizes: [['default', 'Default'], ['small', 'Small'], ['cursor', 'Cursor']],
       replies: 'voice', fishKey: true, fishModel: 'drama-3', fishFree: false,
+      // ?tts=gemini: Gemini as the voice, its key saved.
+      tts: new URLSearchParams(location.search).get('tts') === 'gemini' ? 'gemini' : 'fish', geminiKey: new URLSearchParams(location.search).get('tts') === 'gemini', geminiVoice: 'Kore',
+      geminiVoices: [['Zephyr', 'Bright'], ['Puck', 'Upbeat'], ['Charon', 'Informative'], ['Kore', 'Firm']].map(([id, style]) => ({ id, style })),
+      // &shared: speaking with the AI's Gemini key, none saved for the voice.
+      geminiShared: new URLSearchParams(location.search).has('shared'), geminiModel: 'gemini-3.8-flash-lite-tts',
+      geminiModels: [{ id: 'gemini-3.8-flash-lite-tts', name: 'Flash Lite', per10s: 0.0015 }, { id: 'gemini-3.8-flash-tts', name: 'Flash', per10s: 0.00225 }],
       fishModels: [{ id: 'drama-3', name: 'Drama 3', perM: 50, promo: { perM: 10, until: '2026-12-01T08:00:00Z' } }, { id: 's2.1-pro', name: 'S2.1 Pro', perM: 15 }],
       voice: { on: true, keys: '⌃⌥', ready: true, mac: true, mute: true, download: null },
       sound: true, actions: false, login: { on: true },

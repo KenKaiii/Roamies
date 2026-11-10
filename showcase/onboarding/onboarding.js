@@ -473,20 +473,30 @@
   });
 
   // ---------------------------------------------------------------- step 3: how replies come
-  // Text only, or Voice + text (spoken with Fish Audio). Voice needs the user's own Fish Audio key: picking it
-  // opens the field, and the key is checked before voice turns on.
+  // Text only, or Voice + text (spoken with Fish Audio or Gemini). Voice needs the user's own key for the one
+  // they pick: picking it opens the field, and the key is checked before voice turns on. With Gemini there's
+  // also a voice to choose (Fish Audio's comes with the look).
+  // link: where a key comes from. Gemini's is Google AI Studio's key page.
   // Ken's Fish Audio affiliate link (sign-up lands on their site; keys are under Developers). It's disclosed in
   // the UI: the #fish-link button in index.html reads "Get a free key (affiliate link)".
   const FISH_URL = 'https://fish.audio/?fpr=o3gtlu';
+  const TTS = {
+    fish: { name: 'Fish Audio', link: FISH_URL, get: 'Get a free key (affiliate link)', note: 'Spoken replies are billed to your own Fish Audio account.', send: 'ob_fishkey' },
+    gemini: { name: 'Gemini', link: 'https://aistudio.google.com/apikey', get: 'Get a free key', note: 'Spoken replies are billed to your own Google AI Studio account.', send: 'ob_geminikey' },
+  };
   const replies = {
-    pick: null, saving: false, changing: false, // changing: replacing a key that's already saved
+    pick: null, prov: null, saving: false, changing: false, // prov: the service picked here, before its key is saved // changing: replacing a key that's already saved
     mode: () => replies.pick ?? (state?.replies === 'voice' ? 'voice' : 'text'),
-    ready: () => replies.mode() === 'text' || (!!state?.fishKey && state.replies === 'voice'),
+    tts: () => replies.prov ?? (state?.tts === 'gemini' ? 'gemini' : 'fish'),
+    hasKey: (p = replies.tts()) => !!state?.[`${p}Key`],
+    // Voice is on with the service shown here.
+    on: () => state?.replies === 'voice' && replies.hasKey() && (state?.tts ?? 'fish') === replies.tts(),
+    ready: () => replies.mode() === 'text' || replies.on(),
     render() {
-      const mode = replies.mode(), on = state?.replies === 'voice' && state?.fishKey;
+      const mode = replies.mode(), on = replies.on(), t = TTS[replies.tts()];
       const CARDS = [
         ['text', 'Text only', 'Answers in my bubbles'],
-        ['voice', 'Voice + text', on ? 'Voice is on' : mode === 'voice' ? 'Needs a Fish Audio key' : 'Said out loud too'],
+        ['voice', 'Voice + text', on ? 'Voice is on' : mode === 'voice' ? `Needs a ${t.name} key` : 'Said out loud too'],
       ];
       $('replies').replaceChildren(...CARDS.map(([id, name, sub]) => {
         const checked = mode === id;
@@ -496,12 +506,21 @@
         b.onclick = () => replies.choose(id);
         return b;
       }));
-      const saved = !!state?.fishKey;
+      const saved = replies.hasKey();
       if (!saved || mode !== 'voice') replies.changing = false;
+      $('tts-row').hidden = mode !== 'voice';
+      look.radios('tts', [['fish', TTS.fish.name], ['gemini', TTS.gemini.name]], replies.tts(), replies.provider);
+      // Gemini's voices, once its key is in ("Kore · Firm").
+      $('gvoice-row').hidden = mode !== 'voice' || replies.tts() !== 'gemini' || !saved;
+      if (!$('gvoice').options.length && state?.geminiVoices?.length) $('gvoice').replaceChildren(...state.geminiVoices.map((v) => el('option', { value: v.id, textContent: `${v.id} · ${v.style}` })));
+      if (state?.geminiVoice) $('gvoice').value = state.geminiVoice;
+      $('fish-link').textContent = t.get;
+      $('fish-note').textContent = t.note;
       $('fish-form').hidden = mode !== 'voice' || (saved && !replies.changing);
       $('fish-change').hidden = !saved || mode !== 'voice';
-      $('fish-change').textContent = replies.changing ? 'Keep my current key' : 'Change key';
-      $('fish-label').textContent = replies.changing ? 'New Fish Audio API key' : 'Fish Audio API key';
+      // Gemini can already be speaking with the key added for the AI in the step before.
+      $('fish-change').textContent = replies.changing ? 'Keep my current key' : replies.tts() === 'gemini' && state?.geminiShared ? 'Using your Gemini AI key. Use a different one' : 'Change key';
+      $('fish-label').textContent = replies.changing ? `New ${t.name} API key` : `${t.name} API key`;
       $('fish-change').setAttribute('aria-expanded', String(replies.changing));
       $('fish-save').disabled = replies.saving;
       $('fish-save').textContent = replies.saving ? 'Checking…' : 'Save';
@@ -510,16 +529,23 @@
     choose(id) {
       if (replies.mode() === id && (id === 'text' || state?.replies === 'voice')) return;
       replies.pick = id; $('fish-error').hidden = true;
-      if (id === 'text' || state?.fishKey) {
+      if (id === 'text' || replies.hasKey()) {
         if (state?.replies === id) quip(id === 'text' ? 'Text it is!' : 'Voice it is!');
         send({ type: 'ob_replies', mode: id });
       }
       replies.render();
-      if (id === 'voice' && !state?.fishKey) { $('fish-input').focus(); quip('Got a Fish Audio key?', 3); }
+      if (id === 'voice' && !replies.hasKey()) { $('fish-input').focus(); quip(`Got a ${TTS[replies.tts()].name} key?`, 3); }
+    },
+    // Fish Audio or Gemini. One with a key saved speaks straight away; the other asks for its key first.
+    provider(p) {
+      replies.prov = p; replies.changing = false; $('fish-error').hidden = true; $('fish-input').value = '';
+      if (replies.hasKey(p)) send({ type: 'ob_tts', provider: p });
+      replies.render();
+      if (!replies.hasKey(p)) { $('fish-input').focus(); quip(`Got a ${TTS[p].name} key?`, 3); }
     },
     onFish(msg) {
       replies.saving = false;
-      if (msg.ok) { act('hype'); $('fish-error').hidden = true; replies.changing = false; }
+      if (msg.ok) { act('hype'); $('fish-error').hidden = true; replies.changing = false; replies.prov = null; }
       else { const e = $('fish-error'); e.hidden = false; e.textContent = e.title = msg.error || "That key didn't work."; }
       replies.render();
     },
@@ -543,14 +569,15 @@
     replies.render();
     if (replies.changing) $('fish-input').focus();
   });
-  $('fish-link').addEventListener('click', () => { send({ type: 'open_link', url: FISH_URL }); quip('Copy it, then paste here'); });
+  $('fish-link').addEventListener('click', () => { send({ type: 'open_link', url: TTS[replies.tts()].link }); quip('Copy it, then paste here'); });
+  $('gvoice').addEventListener('change', () => { state.geminiVoice = $('gvoice').value; send({ type: 'ob_geminivoice', voice: state.geminiVoice }); });
   $('fish-form').addEventListener('submit', (e) => {
     e.preventDefault();
     const key = $('fish-input').value.trim();
     if (!key || replies.saving) return $('fish-input').focus();
     replies.saving = true; $('fish-error').hidden = true; replies.render();
     poseFn = POSE.think();
-    send({ type: 'ob_fishkey', key });
+    send({ type: TTS[replies.tts()].send, key });
     $('fish-input').value = '';
   });
 
@@ -1227,8 +1254,11 @@
     const st = {
       // &filesAsked=1: Allow was tapped for the folders in an earlier run. &replies=voice&fish=1: voice already on.
       kind: 'state', platform: q.get('platform') || 'darwin', step: +(q.get('step') || 0), sound: true, look: q.get('look') || 'classic', size: q.get('size') || 'default', voice: true, actions: false, login: true, filesAsked: q.get('filesAsked') === '1',
+      // &tts=gemini&gemini=1: Gemini as the voice, its key saved.
       replies: q.get('replies') === 'voice' ? 'voice' : 'text', fishKey: q.get('fish') === '1',
       bind: q.get('session') === 'wayland' ? Object.fromEntries(['summon', 'talk', 'ask', 'list', 'panel'].map((k) => [k, `'/home/sam/Apps/Roamies 0.1.33.AppImage' --${k}`])) : null,
+      tts: q.get('tts') === 'gemini' ? 'gemini' : 'fish', geminiKey: q.get('gemini') === '1', geminiVoice: 'Kore',
+      geminiVoices: [['Zephyr', 'Bright'], ['Puck', 'Upbeat'], ['Charon', 'Informative'], ['Kore', 'Firm']].map(([id, style]) => ({ id, style })),
       keys: q.get('platform') === 'win32' ? { talk: ['control', 'option'], summon: 'Control+Shift+KeyS', snap: 'Control+Shift+KeyA' } : { talk: ['control', 'option'], summon: 'Control+Alt+KeyS', snap: 'Control+Alt+KeyA' }, connected: null,
       voiceModel: win ? { status: q.get('model') || 'missing', done: q.get('model') === 'downloading' ? 281601575 : 0, total: 670479942, error: q.get('model') === 'error' ? 'Download failed. Check your internet.' : null, size: '670 MB' } : null,
       oauth: [['anthropic', 'Claude', 'Anthropic'], ['openai', 'ChatGPT', 'OpenAI']].map(([id, name, company]) => ({ id, name, company, connected: false })),
@@ -1267,13 +1297,15 @@
           window.__onboard?.({ kind: 'login', provider: m.provider, phase: 'done' }); window.__onboard?.({ ...st });
         }, 900);
       } else if (m.type === 'ob_replies') { st.replies = m.mode; reply({ ...st }); reply({ kind: 'say', text: m.mode === 'voice' ? 'Voice is on!' : 'Text only from now on.' }, 50); }
-      else if (m.type === 'ob_fishkey') {
+      else if (m.type === 'ob_fishkey' || m.type === 'ob_geminikey') {
         // A key of "bad" is refused, like a wrong one.
+        const p = m.type === 'ob_geminikey' ? 'gemini' : 'fish';
         setTimeout(() => {
-          if (m.key === 'bad') return window.__onboard?.({ kind: 'fish', ok: false, error: "That key didn't work. Copy it again from fish.audio and retry." });
-          Object.assign(st, { fishKey: true, replies: 'voice' }); window.__onboard?.({ kind: 'fish', ok: true }); window.__onboard?.({ ...st });
+          if (m.key === 'bad') return window.__onboard?.({ kind: 'fish', ok: false, error: `That key didn't work. Copy it again from ${p === 'gemini' ? 'aistudio.google.com' : 'fish.audio'} and retry.` });
+          Object.assign(st, { [`${p}Key`]: true, tts: p, replies: 'voice' }); window.__onboard?.({ kind: 'fish', ok: true }); window.__onboard?.({ ...st });
         }, 900);
-      } else if (m.type === 'set_keys') { if (m.talk) st.keys.talk = m.talk; if (m.summon) st.keys.summon = m.summon; if (m.snap) st.keys.snap = m.snap; reply({ kind: 'keys', keys: st.keys }); }
+      } else if (m.type === 'ob_tts') { st.tts = m.provider; if (st[`${m.provider}Key`]) st.replies = 'voice'; reply({ ...st }); }
+      else if (m.type === 'ob_geminivoice') { st.geminiVoice = m.voice; reply({ ...st }); reply({ kind: 'say', text: 'This is how I sound.' }, 50); } else if (m.type === 'set_keys') { if (m.talk) st.keys.talk = m.talk; if (m.summon) st.keys.summon = m.summon; if (m.snap) st.keys.snap = m.snap; reply({ kind: 'keys', keys: st.keys }); }
       else if (m.type === 'chat_start' || m.type === 'chat_answer') {
         // A canned chat: &chat=nomodel previews not being signed in.
         if (q.get('chat') === 'nomodel') return reply({ kind: 'chat_state', status: 'no_model' }, 300);

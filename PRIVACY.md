@@ -21,7 +21,7 @@ key) receives:
   and the facts and commitments Roamies has saved in memory
 - screenshots or window text, when Roamies looks at your screen to answer
 
-**Fish Audio** receives the text of each reply to speak it, only if spoken replies are on. It uses your own key.
+**Fish Audio** or **Google** (Gemini), whichever you pick as the voice, receives the text of each reply to speak it, only if spoken replies are on. It uses your own key for that service (for Gemini, the Gemini key you added for the AI is used unless you save a separate one for the voice).
 
 **GitHub** is used to check for and download updates.
 
@@ -63,7 +63,7 @@ permission states, and your settings. Keys, tokens, email addresses, names, your
 first. Nothing is uploaded: it stays on your computer unless you choose to send it (for example by attaching it to a
 GitHub issue).
 
-Your Fish Audio key is kept in the macOS Keychain, encrypted with DPAPI on Windows, or in your desktop's keyring
+Your Fish Audio key and your Gemini voice key are kept in the macOS Keychain, encrypted with DPAPI on Windows, or in your desktop's keyring
 (through the Secret Service) on Linux.
 
 You can see what Roamies remembers on the panel's **Memory** page, and remove it with **Forget** or

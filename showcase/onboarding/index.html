@@ -71,6 +71,14 @@
       <h1 id="h-voice">How should I reply?</h1>
       <p class="lead">Text shows in my bubbles. Voice also says it out loud. Change it any time in the Roamies panel.</p>
       <div class="providers two" id="replies" role="radiogroup" aria-labelledby="h-voice"></div>
+      <div class="tts-row" id="tts-row" hidden>
+        <span id="tts-h">Spoken by</span>
+        <div class="chords" id="tts" role="radiogroup" aria-labelledby="tts-h"></div>
+      </div>
+      <div class="tts-row" id="gvoice-row" hidden>
+        <label for="gvoice">Voice</label>
+        <span class="px field"><select id="gvoice"></select></span>
+      </div>
       <button class="link" type="button" id="fish-change" aria-controls="fish-form" aria-expanded="false" hidden>Change key</button>
       <form class="inline" id="fish-form" hidden>
         <div class="label-row">
