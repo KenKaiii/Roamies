@@ -98,11 +98,11 @@
 
     <section class="step" id="step-keys" data-name="Shortcuts" aria-labelledby="h-3" hidden>
       <h1 id="h-3">Your shortcuts</h1>
-      <p class="lead">These work from anywhere. Change them if you like.</p>
+      <p class="lead" id="keys-lead">These work from anywhere. Change them if you like.</p>
       <div class="px keyrow" id="talk-row">
         <div class="keyrow-head">
           <h2>Talk to me</h2>
-          <p>Hold to talk. Tap to listen hands-free.</p>
+          <p id="talk-hint">Hold to talk. Tap to listen hands-free.</p>
           <p id="draw-tip" hidden>Hold and circle something to mark it.</p>
         </div>
         <div class="chords" id="chords" role="radiogroup" aria-label="Talk shortcut"></div>
@@ -112,7 +112,7 @@
           <span class="heard" id="heard" role="status"></span>
         </div>
       </div>
-      <div class="px keyrow">
+      <div class="px keyrow" id="hotkey-row">
         <div class="kline">
           <div><h2>Show or hide me</h2><p>Bring me back any time.</p></div>
           <div class="summon">
@@ -127,6 +127,13 @@
             <button class="px btn ghost" type="button" id="snap-change" aria-label="Change the ask about an area shortcut">Change</button>
           </div>
         </div>
+      </div>
+      <div class="px keyrow" id="bind-row" hidden>
+        <div class="keyrow-head">
+          <h2>Pick your keys</h2>
+          <p>Your desktop doesn't let apps grab keys, so add each as a custom shortcut in its keyboard settings (GNOME: Settings › Keyboard; KDE: System Settings › Shortcuts).</p>
+        </div>
+        <div id="bind-list"></div>
       </div>
       <p class="error" id="keys-error" role="alert" hidden></p>
     </section>

@@ -51,3 +51,49 @@ if (process.platform === 'darwin') {
   // ...but when the user asks for the page's own search box, it uses the box.
   assert.match(actInApp, /unless the user asks you to use the box: then fill it/);
 }
+
+// Linux: apps are opened by name through their .desktop files.
+{
+  const { parseDesktopEntry, findDesktopApp } = await import('../tools.mjs');
+  const e = parseDesktopEntry('# a comment\n[Desktop Entry]\nType=Application\nName=Files\nName[de]=Dateien\nGenericName=File Manager\nExec=nautilus --new-window %U\n\n[Desktop Action new-window]\nName=New Window\nExec=nautilus --new-window\n');
+  assert.equal(e.Name, 'Files', 'the main name, not a translation');
+  assert.equal(e.Exec, 'nautilus --new-window %U', 'keys from [Desktop Entry] only, not its actions');
+  assert.equal(e.GenericName, 'File Manager');
+  const app = (id, entry) => ({ id, file: `/usr/share/applications/${id}.desktop`, entry: { Type: 'Application', Exec: id, ...entry } });
+  const apps = [
+    app('org.gnome.Nautilus', { Name: 'Files', GenericName: 'File Manager' }),
+    app('google-chrome', { Name: 'Google Chrome', GenericName: 'Web Browser' }),
+    app('firefox', { Name: 'Firefox Web Browser', GenericName: 'Web Browser' }),
+    app('secret-tool-helper', { Name: 'Hidden Helper', NoDisplay: 'true' }),
+    app('gone', { Name: 'Gone', Hidden: 'true' }),
+    { id: 'a-link', file: '/x/a-link.desktop', entry: { Type: 'Link', Name: 'A Link', URL: 'https://example.com' } },
+  ];
+  const find = (n) => findDesktopApp(apps, n)?.id ?? null;
+  assert.equal(find('Files'), 'org.gnome.Nautilus', 'by the name in the menus');
+  assert.equal(find('files'), 'org.gnome.Nautilus', 'any case');
+  assert.equal(find('nautilus'), 'org.gnome.Nautilus', 'by the last part of its id');
+  assert.equal(find('org.gnome.Nautilus.desktop'), 'org.gnome.Nautilus', 'by its file name');
+  assert.equal(find('chrome'), 'google-chrome', 'a word of its name');
+  assert.equal(find('firefox'), 'firefox');
+  assert.equal(find('Web Browser'), 'google-chrome', 'by its kind when nothing is named that');
+  assert.equal(find('Hidden Helper'), null, 'never one hidden from the menus');
+  assert.equal(find('Gone'), null);
+  assert.equal(find('A Link'), null, 'only apps');
+  assert.equal(find('Photoshop'), null);
+  assert.equal(find('  '), null);
+  console.log('linux app tests: passed');
+}
+
+// Regression: a launcher's output is inherited by the app it starts, so waiting for it to close waited for the app.
+{
+  const { launch } = await import('../tools.mjs');
+  const t0 = Date.now();
+  const r = await launch(process.execPath, ['-e', "require('child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 4000)'], { stdio: 'inherit', detached: true }).unref()"]);
+  assert.equal(r.err, null);
+  assert.ok(Date.now() - t0 < 2500, 'done when the launcher exits, not when the app it started does');
+  const bad = await launch(process.execPath, ['-e', "process.stderr.write('Unable to find application'); process.exit(2)"]);
+  assert.equal(bad.err.code, 2);
+  assert.match(bad.stderr, /Unable to find application/);
+  assert.equal((await launch('/no/such/launcher', [])).err.code, 'ENOENT');
+  console.log('launch tests: passed');
+}

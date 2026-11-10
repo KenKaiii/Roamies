@@ -2,6 +2,7 @@
 // - macOS: the login keychain, through the signed roamies-hands helper (secret-get/-set/-delete). Encrypted,
 //   locked with their Mac login, readable without a prompt only by that helper.
 // - Windows: DPAPI (encrypted for this Windows user only), stored in ~/.gg/sidekick/secrets.json.
+// - Linux: the desktop's keyring (GNOME Keyring, KWallet or KeePassXC, through the Secret Service), with secret-tool.
 // The secret travels on stdin/stdout, never in a command line. There's no plain-text fallback: if the safe
 // store fails, the key isn't saved. ROAMIES_DATA_DIR test runs without the helper use a file in that folder.
 import { spawn } from 'node:child_process';
@@ -95,6 +96,37 @@ export function createSecrets({ platform = process.platform, hands = '', dataDir
       (b) => dpapi("[Text.Encoding]::UTF8.GetString([Security.Cryptography.ProtectedData]::Unprotect([Convert]::FromBase64String($i),$null,'CurrentUser'))", b),
       'dpapi',
     );
+  }
+
+  if (platform === 'linux') {
+    const attrs = (name) => ['service', 'com.kenkai.roamies', 'account', name];
+    // secret-tool missing, or no keyring answering on the session bus: say which, so it can be fixed.
+    const problem = (r) => {
+      if (r.code === -1 && /ENOENT/.test(r.stderr)) return 'secret-tool isn\'t installed (it comes in libsecret-tools on Debian and Ubuntu, libsecret on Fedora and Arch)';
+      const why = String(r.stderr || '').trim().split('\n').pop().slice(0, 160);
+      return `the keyring didn't answer${why ? ` (${why})` : ''}; a keyring app such as GNOME Keyring or KWallet needs to be running`;
+    };
+    return {
+      kind: 'keyring',
+      async get(name) {
+        check(name);
+        const r = await exec('secret-tool', ['lookup', ...attrs(name)]);
+        if (r.code === 0) return r.stdout || null;
+        // Not found: exit 1 with nothing said. Anything said is a keyring that couldn't be reached.
+        if (r.code === 1 && !String(r.stderr).trim()) return null;
+        throw new Error(problem(r));
+      },
+      async set(name, value) {
+        check(name);
+        const r = await exec('secret-tool', ['store', '--label', `Roamies: ${name}`, ...attrs(name)], value);
+        if (r.code !== 0) throw new Error(problem(r));
+      },
+      async delete(name) {
+        check(name);
+        const r = await exec('secret-tool', ['clear', ...attrs(name)]);
+        if (r.code !== 0 && String(r.stderr).trim()) throw new Error(problem(r));
+      },
+    };
   }
 
   if (process.env.ROAMIES_DATA_DIR) return fileStore(path.join(dataDir, 'test-secrets.json'), (v) => v, (v) => v, 'test-file');

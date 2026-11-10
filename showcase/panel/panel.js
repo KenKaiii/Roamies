@@ -116,7 +116,7 @@
       ? ` (${per100(c.promo.perM)} until ${new Date(Date.parse(c.promo.until) - 1).toLocaleDateString(undefined, { day: 'numeric', month: 'short', timeZone: 'America/Los_Angeles' })})` : '';
     return `$${c.perM} per million characters: about ${per100(c.perM)} per 100 replies${promo}. Billed to your Fish Audio account.`;
   };
-  const where = () => (state?.os === 'mac' ? 'your Keychain' : state?.os === 'win' ? 'Windows, encrypted for your account' : 'this computer');
+  const where = () => (state?.os === 'mac' ? 'your Keychain' : state?.os === 'win' ? 'Windows, encrypted for your account' : state?.os === 'linux' ? 'your keyring' : 'this computer');
 
   // ---------------------------------------------------------------- header
   function head() {
@@ -129,9 +129,9 @@
     const u = state.update, up = $('head-update');
     up.hidden = !u.available;
     if (u.available) {
-      up.textContent = u.installing ? 'Installing…' : `Update to ${u.available}`;
+      up.textContent = u.installing ? 'Installing…' : u.page ? `Get ${u.available}` : `Update to ${u.available}`;
       up.disabled = u.installing;
-      up.setAttribute('aria-label', u.installing ? `Installing Roamies ${u.available}` : `Install Roamies ${u.available} and restart`);
+      up.setAttribute('aria-label', u.installing ? `Installing Roamies ${u.available}` : u.page ? `Open the download page for Roamies ${u.available}` : `Install Roamies ${u.available} and restart`);
     }
     // The sidebar marks a page that needs you: an update to install, or no account to answer with.
     mark('about', u.available ? 'update ready' : null);
@@ -408,17 +408,24 @@
       v ? group('Talking to me', 'Speak instead of typing.', null,
         toggle('Voice control', v.download
           ? (v.download.status === 'downloading' ? `Downloading the voice model… ${v.download.pct}%` : v.download.status === 'error' ? 'The download failed' : `Needs a ${v.download.size} download`)
-          : `Hold ${v.keys} to talk`, v.on, () => act('voice'), 'voice'),
+          : v.keys ? `Hold ${v.keys} to talk` : 'Press your talk shortcut to talk', v.on, () => act('voice'), 'voice'),
         v.download && v.download.status !== 'downloading' ? el('div', { className: 'links' }, link(v.download.status === 'error' ? 'Retry the download' : `Download (${v.download.size})`, () => act('voicedl'), { k: 'voicedl' })) : null,
         v.mac ? toggle('Mute Mac while talking', 'Other sounds go quiet while you talk', v.mute, () => act('mutetalk'), 'mutetalk') : null) : null,
     ];
   }
+  // Wayland: the commands to bind to keys in the desktop's settings (no app may hold its own shortcuts there).
+  const BIND_ROWS = [['talk', 'Talk to me'], ['summon', 'Show or hide me'], ['ask', 'Ask me'], ['list', 'Your list'], ['panel', 'This panel']];
   function behaviorPage() {
+    const b = state.bind;
     return [
       group('Behavior', 'What I may do, and when I start.', null,
         toggle('Sound effects', null, state.sound, () => act('sound'), 'sound'),
         toggle('Allow file edits and commands', 'Change files and run commands', state.actions, () => act('actions'), 'actions'),
         state.login ? toggle('Open at login', null, state.login.on, () => act('login'), 'login') : null),
+      b ? group('Shortcuts', 'Add these as custom shortcuts in your keyboard settings, with any keys you like.', null,
+        BIND_ROWS.filter(([k]) => b[k]).map(([k, label]) => el('div', { className: 'setting' },
+          el('span', {}, label, el('small', { textContent: b[k], title: b[k] })),
+          link('Copy', () => send({ type: 'copy_bind', which: k }), { k: `bind-${k}`, aria: `Copy the command for ${label.toLowerCase()}` })))) : null,
     ];
   }
   // Who made Roamies: Ken, live (he's drawn like the looks but isn't one), and where to find him.
@@ -451,9 +458,9 @@
       group('Updates', null, null,
         el('div', { className: 'setting' },
           el('span', {}, `Roamies ${state.version}`, el('small', { className: u.result && !u.result.ok && !u.available ? 'late' : '', role: 'status',
-            textContent: u.available ? `${u.available} is ready to install` : u.checking ? 'Checking for updates…' : u.result?.ok ? "You're up to date" : u.result ? "Couldn't check just now. Try again in a bit." : 'Updates install by themselves' })),
+            textContent: u.available ? (u.page ? `${u.available} is out` : `${u.available} is ready to install`) : u.checking ? 'Checking for updates…' : u.result?.ok ? "You're up to date" : u.result ? "Couldn't check just now. Try again in a bit." : 'Updates install by themselves' })),
           u.available ? null : link('Check now', () => act('update'), { k: 'update', disabled: u.checking, aria: 'Check for updates' })),
-        u.available ? btn(u.installing ? 'Installing…' : `Install ${u.available} and restart`, () => act('install_update'), { k: 'install-s', disabled: u.installing }) : null),
+        u.available ? btn(u.installing ? 'Installing…' : u.page ? `Get ${u.available}` : `Install ${u.available} and restart`, () => act('install_update'), { k: 'install-s', disabled: u.installing }) : null),
       group('Help', null, null,
         el('div', { className: 'links' },
           link('Setup guide', () => act('setup', true), { k: 'setup' }),
@@ -580,6 +587,7 @@
       render(null, first);
     }
     else if (m.kind === 'note') note(m.text, m.bad);
+    else if (m.kind === 'copied') note(m.ok ? 'Copied. Paste it into a new custom shortcut.' : "Couldn't copy it. Select the command and copy it instead.", !m.ok);
   };
   send({ type: 'panel_open' });
   // The first show: the window was made hidden, so the switch-on is played here (main.rs's call may land

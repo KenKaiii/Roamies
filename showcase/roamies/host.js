@@ -1,6 +1,6 @@
 // Tauri host bridge. The shell calls __roamiePtr(x, y) with the real cursor each frame and
 // __roamieHost(msg) with messages from the sidekick's brain (the gg-agent sidecar).
-// The page answers through set_hot (click-through), set_typing (keyboard focus) and sidecar_send.
+// The page answers through set_hot (click-through; set_hit_rects on Linux), set_typing (keyboard focus) and sidecar_send.
 // A no-op outside Tauri.
 (() => {
   const invoke = window.__TAURI__?.core?.invoke;
@@ -25,7 +25,9 @@
   window.__roamieBuddy = (m) => { Roamie.wake?.(); Roamie.buddy.onEvent?.(m); };
   // handsBusy: Roamies is acting in another app (it may take the real cursor), so clicks always go through.
   let hot = null, cursor = null, handsBusy = false;
-  const setHot = (h) => { if (h !== hot) { hot = h; invoke('set_hot', { hot: h }).catch(() => { hot = null; }); } };
+  // Linux ("x11" or "wayland", set by the shell): clicks are let through by region instead (below).
+  const LINUX = !!window.ROAMIE_LINUX;
+  const setHot = (h) => { if (!LINUX && h !== hot) { hot = h; invoke('set_hot', { hot: h }).catch(() => { hot = null; }); } };
   window.__roamiePtr = (x, y, t) => {
     if (!window.Roamie?.ptr) return;
     cursor = [x, y];
@@ -33,6 +35,29 @@
     const h = Roamie.ptr(x, y, t);
     setHot(h && !handsBusy);
   };
+
+  // Linux: click-through by region. On Wayland the cursor can't be followed over other apps, so instead of flipping
+  // the whole window as the cursor comes and goes, the page says which rectangles take clicks (the Roamie, its
+  // bubbles, cards and buttons) and the shell makes them the window's input shape. X11 sessions work the same way.
+  if (LINUX) {
+    let sent = '', sentAt = 0;
+    setInterval(() => {
+      if (!window.Roamie?.hitTest) return;
+      const rects = [];
+      const grown = (r) => rects.push(Math.floor(r[0]) - 8, Math.floor(r[1]) - 8, Math.ceil(r[2]) + 16, Math.ceil(r[3]) + 16);
+      for (const r of Roamie.inkRects?.() ?? []) grown(r);
+      const card = Roamie.panelRect?.();
+      if (card) grown(card);
+      // Sampled a little past the canvas: hit areas can reach beyond what's drawn.
+      const box = Roamie.hitBox();
+      if (box) rects.push(...Roamie.hitRects(Roamie.hitTest, [box[0] - 48, box[1] - 48, box[2] + 96, box[3] + 96]));
+      const key = rects.join(','), now = performance.now();
+      // Sent when it changes, and again every couple of seconds in case the window's shape was reset under it.
+      if (key === sent && now - sentAt < 2000) return;
+      sent = key; sentAt = now;
+      invoke('set_hit_rects', { rects }).catch(() => { sent = ''; });
+    }, 120);
+  }
 
   let agent = null;
   const getAgent = () => (agent ??= Roamie.tiles?.find((t) => t.creature?.agent)?.creature.agent ?? null);

@@ -19,6 +19,9 @@ const SECRET = [
   /(^|\/)\.env(\.[\w-]+)?$/, /\.(pem|p12|pfx|key|keystore|jks)$/i, /(^|\/)id_(rsa|ed25519|ecdsa|dsa)(\.pub)?$/,
   /(^|\/)\.(bash|zsh|fish)_history$/, /(^|\/)\.zsh_sessions(\/|$)/,
   /(^|\/)AppData\/(Roaming\/Microsoft\/(Credentials|Protect|Crypto)|Local\/Microsoft\/Credentials)(\/|$)/i, /\/(User Data|Profiles)\/.*\/(Cookies|Login Data|logins\.json|key4\.db)$/i,
+  // Linux: GNOME's keyring and KDE's wallet, pass, the NSS certificate store and Firefox's saved logins and cookies.
+  /(^|\/)\.local\/share\/(keyrings|kwalletd)(\/|$)/, /(^|\/)\.password-store(\/|$)/, /(^|\/)\.pki(\/|$)/,
+  /(^|\/)\.mozilla\/.*\/(cookies\.sqlite|logins\.json|key4\.db|cert9\.db)$/,
 ];
 // Other apps' private data and synced libraries: reading these sets off macOS privacy prompts.
 const PRIVATE = [
@@ -32,6 +35,11 @@ const NO_WRITE = [
   /(^|\/)Library\/(LaunchAgents|LaunchDaemons|StartupItems|Preferences|Keychains|Application Support\/com\.apple)(\/|$)/,
   /(^|\/)\.gitconfig$/, /(^|\/)\.ssh(\/|$)/, /(^|\/)\.gg(\/|$)/, /(^|\/)\.tauri(\/|$)/, /\.app(\/|$)/, /(^|\/)crontab$/,
   /\/Start Menu\/Programs\/Startup(\/|$)/i, /(^|\/)Documents\/(Windows)?PowerShell\/.*profile\.ps1$/i, /^[a-z]:\/(Windows|Program Files( \(x86\))?|ProgramData)(\/|$)/i,
+  // Linux: what starts at login (autostart entries, systemd user units, session environment), app launchers and
+  // D-Bus services (each names a program the desktop runs), and the X session's startup files.
+  /(^|\/)\.config\/(autostart|autostart-scripts|systemd|environment\.d|plasma-workspace\/(env|shutdown))(\/|$)/,
+  /(^|\/)\.local\/share\/(systemd|dbus-1|applications|kservices[56]?)(\/|$)/, /\.desktop$/i,
+  /(^|\/)\.(xprofile|xinitrc|xsession|xsessionrc|pam_environment|bash_login|bash_logout)$/,
 ];
 const SYSTEM_ROOTS = ['/System', '/usr', '/bin', '/sbin', '/etc', '/private', '/Library', '/Applications', '/var', '/opt', '/cores'];
 
@@ -90,7 +98,7 @@ export function checkRead(p, home, { recursive = false } = {}) {
   const abs = norm(p, home), all = bothOf(abs), hit = (list) => all.some((a) => list.some((re) => re.test(rel(a, home)) || re.test(a)));
   if (hit(SECRET)) return { ...verdict(BLOCK, `${p} holds passwords or keys, so I never read it.`), path: abs };
   if (hit(PRIVATE)) return { ...verdict(BLOCK, `${p} is another app's private data. Reading it sets off macOS privacy prompts.`), path: abs };
-  if (recursive && (abs === home || abs === '/' || /^[a-z]:$/i.test(abs) || abs === path.join(home, 'Library') || abs === path.join(home, 'AppData') || /^(\/Users|\/Volumes|[a-z]:\/Users)$/i.test(abs))) {
+  if (recursive && (abs === home || abs === '/' || /^[a-z]:$/i.test(abs) || abs === path.join(home, 'Library') || abs === path.join(home, 'AppData') || /^(\/Users|\/Volumes|\/home|[a-z]:\/Users)$/i.test(abs))) {
     return { ...verdict(BLOCK, `Searching all of ${p} reaches into other apps' data and sets off macOS privacy prompts. Pick a specific folder, or use Spotlight (mdfind) to find files by name.`), path: abs };
   }
   return { ...verdict(SAFE), path: abs };
@@ -184,6 +192,9 @@ const BLOCKED_PROGRAMS = {
   format: 'erases disks', diskpart: 'edits disks', bcdedit: 'changes how Windows boots', vssadmin: 'deletes backups', wbadmin: 'deletes backups',
   schtasks: 'schedules commands to run on their own', takeown: 'takes over protected files', runas: 'needs admin rights', cipher: 'can wipe disk space',
   sc: 'installs or stops services', netsh: 'changes network and firewall settings', setx: 'changes system settings for good',
+  // Linux
+  pkexec: 'needs admin rights', 'systemd-run': 'starts programs as background services', at: 'schedules commands to run on their own',
+  batch: 'schedules commands to run on their own', 'kwallet-query': 'reads your saved passwords',
 };
 const SHELLS = new Set(['powershell', 'pwsh', 'cmd', 'sh', 'bash', 'zsh', 'fish', 'dash', 'ksh', 'csh', 'tcsh', 'python', 'python3', 'node', 'perl', 'ruby', 'php', 'osascript', 'swift', 'deno', 'bun', 'lua']);
 // Read-only programs that are fine to run without asking (paths still checked).
@@ -222,6 +233,10 @@ function checkSimple(text, pipeIn, home, cwd = home) {
   if (name === 'dd' && /\bof=/.test(joined)) return verdict(BLOCK, '`dd` writing to a file or disk can wipe it.');
   if (name === 'security' && /\b(find-(generic|internet)-password|dump-keychain|export|delete-keychain|unlock-keychain|set-keychain|add-trusted-cert|authorizationdb)\b/.test(joined)) return verdict(BLOCK, '`security` would read or change your saved passwords and certificates.');
   if (name === 'reg' && /^(delete|add|import|restore|load|copy)\b/i.test(joined)) return verdict(BLOCK, '`reg` would change the Windows registry.');
+  // Linux: the desktop's keyring, background services and the D-Bus calls that reach either.
+  if (name === 'secret-tool') return verdict(BLOCK, '`secret-tool` reads or changes your saved passwords.');
+  if (name === 'systemctl' && /\b(enable|disable|reenable|preset|start|stop|restart|reload|try-restart|kill|mask|unmask|link|edit|revert|set-default|isolate|daemon-reload|reboot|poweroff|halt|suspend|hibernate|set-environment|import-environment)\b/.test(joined)) return verdict(BLOCK, '`systemctl` here installs, starts or stops background services.');
+  if (['gdbus', 'dbus-send', 'busctl', 'qdbus', 'qdbus6'].includes(name) && /org\.freedesktop\.(secrets|impl\.portal\.Secret)|org\.kde\.kwalletd|org\.gnome\.keyring|org\.freedesktop\.systemd1/i.test(joined)) return verdict(BLOCK, `\`${name}\` here would reach your saved passwords or background services.`);
   if ((name === 'powershell' || name === 'pwsh') && /(-e(nc(odedcommand)?)?\s|iex\b|invoke-expression|downloadstring|downloadfile|invoke-webrequest|\biwr\b|start-bitstransfer|set-executionpolicy|remove-item\b.*-recurse)/i.test(joined)) return verdict(BLOCK, 'that PowerShell command downloads and runs code, or deletes whole folders.');
   if (['rd', 'rmdir', 'del', 'erase'].includes(name) && /\/s\b/i.test(joined)) {
     const t = args.filter((a) => !a.startsWith('/'));
@@ -371,8 +386,9 @@ export function classifyCommand(cmd, home, { exists } = {}) {
 
 // ---------- opening things and fetching pages ----------
 
-const RUNNABLE = /\.(app|command|sh|bash|zsh|tool|terminal|scpt|scptd|applescript|workflow|action|pkg|mpkg|dmg|jar|py|rb|pl|js|mjs|exe|bat|cmd|ps1|shortcut|mobileconfig|kext|plugin|prefPane|saver)\/?$/i;
-const APP_DIRS = ['/Applications/', '/System/Applications/', '/System/Library/CoreServices/'];
+const RUNNABLE = /\.(app|command|sh|bash|zsh|tool|terminal|scpt|scptd|applescript|workflow|action|pkg|mpkg|dmg|jar|py|rb|pl|js|mjs|exe|bat|cmd|ps1|shortcut|mobileconfig|kext|plugin|prefPane|saver|desktop|appimage|deb|rpm|run|flatpakref|flatpak|snap)\/?$/i;
+// Where installed apps live: opening one there just starts it. Linux lists them as .desktop files.
+const APP_DIRS = ['/Applications/', '/System/Applications/', '/System/Library/CoreServices/', '/usr/share/applications/', '/usr/local/share/applications/', '/var/lib/flatpak/exports/share/applications/', '/var/lib/snapd/desktop/applications/'];
 
 /** open: websites and mail, documents and folders, and apps by name. Not scripts, installers or odd links. */
 export function checkOpen(target, home, { executable = false } = {}) {

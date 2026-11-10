@@ -40,6 +40,11 @@ pub(crate) fn start_voice(app: &AppHandle) {
     if let Some(dir) = app.state::<VoiceModel>().0.lock().unwrap().clone() {
         cmd.arg("--model").arg(dir);
     }
+    // Debug builds: ROAMIES_TEST_AUDIO=<wav> stands in for the microphone, to test talking with no mic (CI, Docker).
+    #[cfg(debug_assertions)]
+    if let Some(wav) = std::env::var_os("ROAMIES_TEST_AUDIO") {
+        cmd.arg("--test-audio").arg(wav);
+    }
     let mut child = match hide_console(&mut cmd).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(log_stdio("sidekick-voice.log")).spawn() {
         Ok(c) => c,
         Err(e) => {

@@ -3,6 +3,8 @@
 // No Dock icon (LSUIElement + Accessory policy) and no taskbar entries on Windows/Linux.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+#[cfg(target_os = "linux")]
+mod linux;
 mod sidecar;
 #[cfg(target_os = "macos")]
 mod snapshot;
@@ -152,7 +154,11 @@ fn left_button_down() -> bool {
     // VK_LBUTTON; the high bit is set while it's held.
     unsafe { (GetAsyncKeyState(0x01) as u16 & 0x8000) != 0 }
 }
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[cfg(target_os = "linux")]
+fn left_button_down() -> bool {
+    linux::left_button_down()
+}
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 fn left_button_down() -> bool {
     false
 }
@@ -174,8 +180,22 @@ fn exclude_from_capture(w: &WebviewWindow) {
 /// Cursor entered or left something clickable: flip click-through.
 #[tauri::command]
 fn set_hot(window: WebviewWindow, hot: bool) {
+    // Linux lets clicks through by region (set_hit_rects); switching the whole window would undo its shape.
+    if cfg!(target_os = "linux") {
+        return;
+    }
     OVERLAY_HOT.store(hot, Ordering::Relaxed);
     let _ = window.set_ignore_cursor_events(!hot);
+}
+
+/// Linux: the parts of this overlay that take clicks, as [x, y, w, h, …] in CSS px (host.js). Everything else
+/// passes through to whatever is below.
+#[tauri::command]
+fn set_hit_rects(window: WebviewWindow, rects: Vec<f64>) {
+    #[cfg(target_os = "linux")]
+    linux::set_hit_rects(&window, &rects);
+    #[cfg(not(target_os = "linux"))]
+    let _ = (window, rects);
 }
 
 /// macOS: hand the cursor-form sidekick to the voice helper to draw while it just follows the cursor (on: true, with
@@ -290,8 +310,9 @@ fn accessibility(prompt: bool) -> &'static str {
 
 #[tauri::command]
 async fn perm_status() -> Value {
-    // Windows: only the microphone privacy switch, read by the voice helper.
-    if cfg!(windows) {
+    // Windows: only the microphone privacy switch, read by the voice helper. Linux has no switch: the helper says
+    // whether there's a microphone at all.
+    if cfg!(windows) || cfg!(target_os = "linux") {
         return tauri::async_runtime::spawn_blocking(|| helper_perms(&["--perms"])).await.unwrap_or(Value::Null);
     }
     if !cfg!(target_os = "macos") {
@@ -889,7 +910,9 @@ fn move_sidekick_to(app: &AppHandle, x: f64, y: f64) {
     #[cfg(not(target_os = "macos"))]
     {
         let _ = w.set_position(*mon.position());
-        let _ = w.set_size(*mon.size());
+        // Linux: a pixel short, as when it was made (build_overlays).
+        let short = if cfg!(target_os = "linux") { 1 } else { 0 };
+        let _ = w.set_size(tauri::PhysicalSize::new(mon.size().width, mon.size().height.saturating_sub(short)));
     }
     let _ = w.eval(safe_js(&mon));
     let _ = w.eval("window.__roamieMoved&&__roamieMoved()");
@@ -914,6 +937,11 @@ fn build_overlays(app: &AppHandle) -> tauri::Result<()> {
         let pos = mon.position().to_logical::<f64>(scale);
         let size = mon.size().to_logical::<f64>(scale);
         let init = format!("window.ROAMIE_ONLY=[{}];window.ROAMIE_AUTOSOUND=true;window.ROAMIE_UNIT=400;", mine.join(","));
+        // Linux: the page reports its click areas (host.js), and the window stops a pixel short of the screen:
+        // window managers take an undecorated window of exactly the screen's size for a fullscreen app (GNOME
+        // then hides its top bar).
+        #[cfg(target_os = "linux")]
+        let (init, size) = (format!("{init}window.ROAMIE_LINUX={:?};", linux::session().name()), tauri::LogicalSize::new(size.width, size.height - 1.0));
         let label = format!("overlay-{gen}-{i}");
         if mine.iter().any(|id| id == "\"sidekick\"") {
             *SIDEKICK_OVERLAY.lock().unwrap() = Some(label.clone());
@@ -1154,8 +1182,11 @@ fn log_stdio(name: &str) -> Stdio {
 /// so stray copies never end up starting at login. `set`: None just reports. Replies login_item_status.
 fn login_item(app: &AppHandle, set: Option<bool>) {
     let exe = std::env::current_exe().unwrap_or_default();
+    // Linux: an AppImage runs from a temporary mount, so where it is means the AppImage file.
+    #[cfg(target_os = "linux")]
+    let exe = linux::appimage().unwrap_or(exe);
     let exe_s = exe.to_string_lossy().replace('\\', "/");
-    let installed = !exe_s.contains("/target/") && !exe_s.starts_with("/Volumes/") && !exe_s.contains("/AppTranslocation/");
+    let installed = !exe_s.contains("/target/") && !exe_s.starts_with("/Volumes/") && !exe_s.contains("/AppTranslocation/") && !exe_s.starts_with("/tmp/");
     #[cfg(target_os = "macos")]
     let (supported, on, approval) = {
         use objc2_service_management::{SMAppService, SMAppServiceStatus};
@@ -1193,7 +1224,12 @@ fn login_item(app: &AppHandle, set: Option<bool>) {
             (true, reg(&["query", KEY, "/v", "Roamies"]), false)
         }
     };
-    #[cfg(not(any(target_os = "macos", windows)))]
+    #[cfg(target_os = "linux")]
+    let (supported, on, approval) = {
+        let (supported, on) = linux::login_item(set, installed);
+        (supported, on, false)
+    };
+    #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
     let (supported, on, approval) = { let _ = (set, installed); (false, false, false) };
     to_sidecar(app, &json!({ "type": "login_item_status", "supported": supported, "on": on, "approval": approval }));
 }
@@ -1203,6 +1239,12 @@ fn login_item(app: &AppHandle, set: Option<bool>) {
 fn update(app: &AppHandle, install: bool) {
     use tauri_plugin_updater::UpdaterExt;
     let app = app.clone();
+    // Linux: only an AppImage can swap itself in place. A copy from a .deb or .rpm is told about the new version
+    // (page: true) and "install" opens the releases page instead.
+    #[cfg(target_os = "linux")]
+    let by_page = linux::appimage().is_none();
+    #[cfg(not(target_os = "linux"))]
+    let by_page = false;
     tauri::async_runtime::spawn(async move {
         let status = |state: &str, extra: Value| {
             let mut m = json!({ "type": "update_status", "state": state });
@@ -1217,7 +1259,12 @@ fn update(app: &AppHandle, install: bool) {
         };
         match found {
             Ok(None) => status("none", json!({})),
-            Ok(Some(u)) if !install => status("available", json!({ "version": u.version })),
+            Ok(Some(u)) if !install => status("available", json!({ "version": u.version, "page": by_page })),
+            #[cfg(target_os = "linux")]
+            Ok(Some(u)) if by_page => {
+                linux::open_releases_page();
+                status("page", json!({ "version": u.version }));
+            }
             Ok(Some(u)) => {
                 status("downloading", json!({ "version": u.version }));
                 match u.download_and_install(|_, _| {}, || {}).await {
@@ -1286,6 +1333,22 @@ fn handle_sidecar(app: &AppHandle, msg: Value) {
         }
         // Listen right away, hands-free (after an area snap: snap, then just talk).
         Some("listen") => to_voice(app, &json!({ "cmd": "listen" })),
+        // Linux: the sidecar's screenshot and copy go through the shell (GTK, X11 and the desktop portal).
+        #[cfg(target_os = "linux")]
+        Some("screenshot") => {
+            if let Some(file) = msg.get("file").and_then(Value::as_str) {
+                linux::screenshot(app, msg.get("id").cloned().unwrap_or(Value::Null), file.to_owned());
+            }
+        }
+        #[cfg(target_os = "linux")]
+        Some("clipboard") => {
+            if let Some(text) = msg.get("text").and_then(Value::as_str) {
+                linux::set_clipboard(text);
+            }
+            to_sidecar(app, &json!({ "type": "clipboard_done", "id": msg.get("id"), "ok": msg.get("text").is_some_and(Value::is_string) }));
+        }
+        // `roamies --talk` (Linux): start a take, or send the one under way.
+        Some("talk_toggle") => to_voice(app, &json!({ "cmd": "toggle" })),
         // Esc while it's listening: drop the take.
         Some("listen_cancel") => to_voice(app, &json!({ "cmd": "cancel" })),
         Some("voice_config") => {
@@ -1320,12 +1383,35 @@ fn handle_sidecar(app: &AppHandle, msg: Value) {
     }
 }
 
+/// What a second launch asks the running app to do: `roamies --summon | --list | --talk | --ask | --panel`. They're
+/// for binding to keys in the desktop's keyboard settings, the one kind of global shortcut Wayland lets every app
+/// have. None: a plain launch.
+fn cli_action(args: &[String]) -> Option<&'static str> {
+    const ACTIONS: [&str; 5] = ["summon", "list", "talk", "ask", "panel"];
+    args.iter().skip(1).find_map(|a| ACTIONS.into_iter().find(|f| a.strip_prefix("--") == Some(*f)))
+}
+
+/// A second launch quit and handed its arguments over (the single-instance plugin). A plain one summons the
+/// Roamie; on Linux it opens the panel instead, since many desktops there show no tray icon to click.
+fn second_launch(app: &AppHandle, args: &[String]) {
+    match cli_action(args) {
+        Some("summon") => to_overlays(app, &json!({ "kind": "summon" })),
+        Some("panel") => show_panel(app, None, false),
+        // The sidecar's to do: it knows whether voice is on and ready, and owns the ask bubble and the list.
+        Some(action) => to_sidecar(app, &json!({ "type": "cli", "action": action })),
+        None if cfg!(target_os = "linux") => show_panel(app, None, false),
+        None => to_overlays(app, &json!({ "kind": "summon" })),
+    }
+}
+
 fn main() {
+    #[cfg(target_os = "linux")]
+    linux::init();
     tauri::Builder::default()
-        // Must be the first plugin. A second launch (say, straight from the DMG) quits and summons this one instead.
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        // Must be the first plugin. A second launch (say, straight from the DMG) quits and tells this one what it wanted.
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             let app2 = app.clone();
-            let _ = app.run_on_main_thread(move || to_overlays(&app2, &json!({ "kind": "summon" })));
+            let _ = app.run_on_main_thread(move || second_launch(&app2, &args));
         }))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Sidecar(Mutex::new(None)))
@@ -1334,7 +1420,7 @@ fn main() {
         .manage(TalkChord(Mutex::new(vec!["control".into(), "option".into()])))
         .manage(VoiceModel(Mutex::new(None)))
         .manage(PermGuide(Mutex::new(None)))
-        .invoke_handler(tauri::generate_handler![buddy, ink_wait, set_hot, sidecar_send, set_typing, perm_status, perm_request, perm_guide, screen_check, open_settings, onboarding_finish, guide_close, panel_hide, esc_watch, relaunch, focus_guide, guide_aside, drag_window])
+        .invoke_handler(tauri::generate_handler![buddy, ink_wait, set_hot, set_hit_rects, sidecar_send, set_typing, perm_status, perm_request, perm_guide, screen_check, open_settings, onboarding_finish, guide_close, panel_hide, esc_watch, relaunch, focus_guide, guide_aside, drag_window])
         .on_menu_event(|app, e| match e.id.as_ref() {
             "quit" => app.exit(0),
             "restart" => spawn_sidecar(app),
@@ -1392,4 +1478,23 @@ fn main() {
                 sidecar::QUITTING.store(true, Ordering::SeqCst);
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_second_launch_says_what_it_wants_with_one_flag() {
+        let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(cli_action(&args(&["roamies"])), None, "a plain launch");
+        for f in ["summon", "list", "talk", "ask", "panel"] {
+            assert_eq!(cli_action(&args(&["/usr/bin/roamies", &format!("--{f}")])), Some(f));
+        }
+        assert_eq!(cli_action(&args(&["roamies", "--verbose", "--talk"])), Some("talk"), "other arguments are skipped");
+        assert_eq!(cli_action(&args(&["roamies", "talk"])), None, "only as a flag");
+        assert_eq!(cli_action(&args(&["roamies", "--talks"])), None);
+        assert_eq!(cli_action(&args(&["--talk"])), None, "the first argument is the program");
+        assert_eq!(cli_action(&args(&[])), None);
+    }
 }

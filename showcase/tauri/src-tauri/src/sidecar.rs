@@ -57,6 +57,9 @@ pub(crate) fn spawn_sidecar(app: &AppHandle) {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(stderr);
+    // Linux: "x11" or "wayland", for what the sidecar offers and how it words things (platform.mjs).
+    #[cfg(target_os = "linux")]
+    cmd.env("ROAMIES_SESSION", crate::linux::session().name()).env("ROAMIES_LAUNCH", crate::linux::launch_command());
     if let Some(dir) = script.parent() {
         cmd.current_dir(dir);
     }

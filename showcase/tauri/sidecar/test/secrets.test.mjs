@@ -58,10 +58,42 @@ import { createSecrets, retryLoad, runInput } from '../secrets.mjs';
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
+// Linux: the desktop's keyring through secret-tool, secret on stdin only.
+{
+  const calls = [], ring = new Map();
+  const exec = async (cmd, args, input = '') => {
+    calls.push({ cmd, args, input });
+    const [c] = args, name = args.at(-1);
+    if (c === 'store') { ring.set(name, input); return { code: 0, stdout: '', stderr: '' }; }
+    if (c === 'lookup') return ring.has(name) ? { code: 0, stdout: ring.get(name), stderr: '' } : { code: 1, stdout: '', stderr: '' };
+    if (c === 'clear') { ring.delete(name); return { code: 0, stdout: '', stderr: '' }; }
+  };
+  const s = createSecrets({ platform: 'linux', exec });
+  assert.equal(s.kind, 'keyring');
+  assert.equal(await s.get('fish-audio'), null, 'nothing saved yet');
+  await s.set('fish-audio', 'sk-fish-SECRET');
+  assert.equal(await s.get('fish-audio'), 'sk-fish-SECRET');
+  assert.ok(calls.every((c) => c.cmd === 'secret-tool' && !c.args.join(' ').includes('SECRET')), 'never in argv');
+  const store = calls.find((c) => c.args[0] === 'store');
+  assert.equal(store.input, 'sk-fish-SECRET', 'on stdin, with no newline added');
+  assert.deepEqual(store.args, ['store', '--label', 'Roamies: fish-audio', 'service', 'com.kenkai.roamies', 'account', 'fish-audio']);
+  await s.delete('fish-audio');
+  assert.equal(await s.get('fish-audio'), null);
+  await assert.rejects(s.get('../etc'), /bad secret name/);
+  // No secret-tool: a clear message, and nothing saved anywhere else.
+  const missing = createSecrets({ platform: 'linux', exec: async () => ({ code: -1, stdout: '', stderr: 'Error: spawn secret-tool ENOENT' }) });
+  await assert.rejects(missing.set('fish-audio', 'k'), /secret-tool isn't installed .*libsecret-tools/);
+  await assert.rejects(missing.get('fish-audio'), /secret-tool isn't installed/);
+  // No keyring running: not "no key", an error saying why.
+  const locked = createSecrets({ platform: 'linux', exec: async () => ({ code: 1, stdout: '', stderr: 'secret-tool: The name org.freedesktop.secrets was not provided by any .service files\n' }) });
+  await assert.rejects(locked.get('fish-audio'), /keyring didn't answer \(secret-tool: The name org\.freedesktop\.secrets was not provided/);
+  await assert.rejects(locked.set('fish-audio', 'k'), /keyring app such as GNOME Keyring or KWallet/);
+}
+
 // Anywhere else (no safe store): refuses to save rather than writing plain text.
 {
   const prev = process.env.ROAMIES_DATA_DIR; delete process.env.ROAMIES_DATA_DIR;
-  const s = createSecrets({ platform: 'linux', dataDir: '/tmp' });
+  const s = createSecrets({ platform: 'freebsd', dataDir: '/tmp' });
   assert.equal(s.kind, 'none');
   await assert.rejects(s.set('fish-audio', 'k'), /no safe place/);
   if (prev) process.env.ROAMIES_DATA_DIR = prev;

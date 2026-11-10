@@ -472,6 +472,30 @@
   document.addEventListener('pointerleave', () => { pointer.active = false; });
   addEventListener('blur', () => { pointer.active = false; });
 
+  // Rectangles covering where test(x, y) is true inside box [x, y, w, h], sampled every `cell` px: a run of hits
+  // along a row is one rectangle, and the same run on the rows below grows it. Flat [x, y, w, h, …] in whole px,
+  // each grown by `pad` all round (what's sampled moves, and the shape made from these is set a moment later).
+  R.hitRects = (test, box, cell = 12, pad = 8) => {
+    const out = [];
+    const x0 = Math.floor(box[0]), y0 = Math.floor(box[1]), cols = Math.ceil(box[2] / cell), rows = Math.ceil(box[3] / cell);
+    const hit = (i, j) => !!test(x0 + i * cell + cell / 2, y0 + j * cell + cell / 2);
+    let open = new Map(); // "first:last" column of a run on the row above → where its rectangle starts in out
+    for (let j = 0; j < rows; j++) {
+      const next = new Map();
+      for (let i = 0; i < cols; i++) {
+        if (!hit(i, j)) continue;
+        const a = i;
+        while (i + 1 < cols && hit(i + 1, j)) i++;
+        const key = `${a}:${i}`, k = open.get(key);
+        if (k != null) out[k + 3] += cell;
+        else out.push(x0 + a * cell - pad, y0 + j * cell - pad, (i - a + 1) * cell + 2 * pad, cell + 2 * pad);
+        next.set(key, k ?? out.length - 4);
+      }
+      open = next;
+    }
+    return out;
+  };
+
   // Desktop overlay: every roamie shares one transparent canvas, cut down to (and moved with) what's drawn. The host app calls
   // Roamie.ptr(x, y) each frame with the real cursor and makes the window click-through unless it returns true.
   R.bootDesktop = (canvas) => {
@@ -554,6 +578,10 @@
       } else if (x !== pointer.x || y !== pointer.y) setPointer(x, y);
       return !!down || list.some((o) => o.c.mover.dragging || o.c.hit?.(x, y)) || !!hitAt(x, y) || !!R.panelHit?.(x, y) || !!R.inkHit?.(x, y);
     };
+    // Linux hosts shape the window's click area from these instead of following the cursor (host.js): ptr's answer
+    // for a point without moving the pointer, and the patch of screen the canvas covers now (null: nothing drawn).
+    R.hitTest = (x, y) => list.some((o) => o.c.hit?.(x, y)) || !!hitAt(x, y) || !!R.panelHit?.(x, y) || !!R.inkHit?.(x, y);
+    R.hitBox = () => (cw && ch ? [vx, vy, cw, ch] : null);
     // On the window, not the canvas: the canvas is only as big as what's drawn, and hit areas can reach past it.
     // Clicks on other page elements (the research card) are theirs.
     const ours = (e) => e.target === canvas || e.target === document.body || e.target === document.documentElement;

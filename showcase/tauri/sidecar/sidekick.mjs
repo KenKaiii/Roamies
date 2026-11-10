@@ -15,7 +15,7 @@ import {
 import { execFile, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createInterface } from 'node:readline';
@@ -35,7 +35,7 @@ import { createSpeaker } from './speaker.mjs';
 import { DEFAULT_VOICE, FISH_CHOICES } from './fish.mjs';
 import { createSecrets, retryLoad } from './secrets.mjs';
 import { createActivity } from './activity.mjs';
-import { canCircle, canSnap, hasHands, platformLine } from './platform.mjs';
+import { canCircle, canSnap, hasHands, hasHotkeys, hasVoice, linuxSession, needsVoiceModel, platformLine, seesPointer } from './platform.mjs';
 import { keyCards, keyKinds, signInCards } from './providers.mjs';
 
 console.log = console.info = (...a) => console.error(...a);
@@ -85,7 +85,16 @@ const DEFAULTS = {
   replies: 'text', // 'voice': spoken with Fish Audio as well as shown
   fishModel: FISH_CHOICES[0].id, // Drama 3 (most expressive) or S2.1 Pro (natural pace, cheaper)
 };
-const SIZES = [['default', 'Default'], ['small', 'Small'], ['cursor', 'Cursor']];
+const LINUX = process.platform === 'linux';
+// Linux: "x11" or "wayland" (the app says which). Wayland keeps apps from seeing the pointer over other apps and
+// from holding global shortcuts, so a few things change there (platform.mjs).
+const SESSION = LINUX ? linuxSession() : '';
+const WAYLAND = SESSION === 'wayland';
+const POINTER_OK = seesPointer(process.platform, SESSION);
+const HOTKEYS_OK = hasHotkeys(process.platform, SESSION);
+// Cursor size follows the pointer, which a Wayland session can't see over other apps.
+const SIZES = [['default', 'Default'], ['small', 'Small'], ...(POINTER_OK ? [['cursor', 'Cursor']] : [])];
+const sizeNow = () => (SIZES.some(([s]) => s === config.size) ? config.size : 'default');
 // What the sidekick looks like: the goo blob, JARVIS (a globe of light with a HUD reticle at cursor size) or
 // one of three characters, each with its own Fish Audio voice. Roamie's used to be JARVIS's, saved in every
 // config as fishVoice, so the voice comes from the look and that setting is no longer read.
@@ -100,10 +109,10 @@ const lookVoice = () => (LOOKS.find(([id]) => id === config.look) ?? LOOKS[0])[2
 // Its name is its look's: Roamie, JARVIS, Anime Girl, Sarah or Adrian. Roamies is the app.
 const lookName = () => (LOOKS.find(([id]) => id === config.look) ?? LOOKS[0])[1];
 const LOOK_BODY = { classic: 'a tiny glowing pixel creature', jarvis: 'a glowing sphere of light', anime: 'a pixel anime girl', sarah: 'a pixel woman', adrian: 'a pixel man' };
-const VOICE_OK = process.platform === 'darwin' || process.platform === 'win32';
-// Windows has no on-device speech API apps can use yet, so voice there runs Parakeet on the PC. Its model
+const VOICE_OK = hasVoice(process.platform);
+// Windows and Linux have no on-device speech API apps can use, so voice there runs Parakeet on the PC. Its model
 // is downloaded once: from the setup guide, or the first time voice is used.
-const NEEDS_MODEL = process.platform === 'win32';
+const NEEDS_MODEL = needsVoiceModel(process.platform);
 const MODEL_DIR = modelDir();
 const voiceModel = { status: !NEEDS_MODEL || isReady(MODEL_DIR) ? 'ready' : 'missing', done: 0, total: totalBytes(), error: null };
 const voiceReady = () => voiceModel.status === 'ready';
@@ -115,7 +124,8 @@ let config = { ...DEFAULTS };
 const saveConfig = () => writeJson(CONFIG_PATH, config, { backup: true });
 
 // ---------- spoken replies (Fish Audio) ----------
-// The key is the user's own: in the Keychain (macOS) or DPAPI-encrypted (Windows), never in the config or logs.
+// The key is the user's own: in the Keychain (macOS), DPAPI-encrypted (Windows) or the desktop's keyring (Linux),
+// never in the config or logs.
 const secrets = createSecrets({ hands: process.env.ROAMIES_HANDS || '', dataDir: path.join(path.dirname(CONFIG_PATH), 'sidekick') });
 let voiceProblemAt = 0;
 const speech = createSpeaker({
@@ -132,14 +142,17 @@ speech.setVoice(lookVoice());
 speech.setModel(config.fishModel);
 // Read once, and again later if the keychain couldn't be read yet (locked at login, or its prompt unanswered): before,
 // one failed read left spoken replies off until the app restarted.
-const fishKeyLoaded = retryLoad(() => secrets.get('fish-audio').then((k) => { if (k && !speech.on) { speech.setKey(k); menu(); } }), { onError: (e) => console.error('fish key', e.message) });
+// Linux: reading the keyring can pop up an "unlock your keyring" dialog (an auto-login desktop leaves it locked), so it's
+// only read once a key has been saved there (fishKeySaved).
+const fishKeyLoaded = LINUX && !config.fishKeySaved ? Promise.resolve()
+  : retryLoad(() => secrets.get('fish-audio').then((k) => { if (k && !speech.on) { speech.setKey(k); menu(); } }), { onError: (e) => console.error('fish key', e.message) });
 
 // ---------- shortcuts ----------
 const MOD_ORDER = ['control', 'option', 'shift', 'command'];
 const MOD_SYMBOL = { control: '⌃', option: '⌥', shift: '⇧', command: '⌘' };
 const MOD_WORD = process.platform === 'darwin'
   ? { control: 'Control', option: 'Option', shift: 'Shift', command: 'Command' }
-  : { control: 'Ctrl', option: 'Alt', shift: 'Shift', command: 'Win' };
+  : { control: 'Ctrl', option: 'Alt', shift: 'Shift', command: LINUX ? 'Super' : 'Win' };
 const keys = () => ({ ...DEFAULT_KEYS, ...(config.keys ?? {}) });
 const sortMods = (m) => [...m].sort((a, b) => MOD_ORDER.indexOf(a) - MOD_ORDER.indexOf(b));
 const talkSymbols = () => (process.platform === 'darwin' ? sortMods(keys().talk).map((m) => MOD_SYMBOL[m]).join('') : talkWords());
@@ -148,21 +161,32 @@ const validTalk = (t) => Array.isArray(t) && t.length === 2 && new Set(t).size =
 // Accelerators look like "Control+Alt+KeyS": at least one of Control/Alt/Command, then one key code.
 const validSummon = (a) => typeof a === 'string' && /^((Control|Alt|Shift|Command)\+)+[A-Za-z0-9]+$/.test(a) && /(Control|Alt|Command)\+/.test(a);
 const sendKeys = () => send({ type: 'keybinds', ...keys() });
+// How to talk, in a sentence: hold the keys, or on Wayland (where no app can watch the keyboard) press the shortcut
+// they bound to `roamies --talk`, which starts listening and sends on a second press or a pause.
+const talkHow = () => (HOTKEYS_OK ? `Hold ${talkWords().replace('+', ' and ')}` : 'Press your talk shortcut');
+const talkHowLong = () => (HOTKEYS_OK ? `${talkHow()} while you talk` : 'Press your talk shortcut, talk, then press it again (or just pause)');
 const MAC = process.platform === 'darwin';
 // What the model is told about the computer. "darwin" alone left it using PC habits: Cmd+End (does nothing in Mac
 // text, so lines landed at the top) and GNU flags like cat -A that macOS doesn't have. Read once; it never changes mid-run.
 const macVersion = (() => { if (!MAC) return ''; try { return execFileSync('sw_vers', ['-productVersion'], { encoding: 'utf8', timeout: 2000 }).trim(); } catch { return ''; } })();
-const PLATFORM = platformLine(process.platform, { macVersion, arch: os.arch(), release: os.release() });
+// Linux: the distro's own name ("Ubuntu 26.04 LTS"), so the model names the right package manager.
+const distro = (() => { if (!LINUX) return ''; try { return (/^PRETTY_NAME="?([^"\n]*)"?$/m.exec(readFileSync('/etc/os-release', 'utf8'))?.[1] ?? '').slice(0, 60); } catch { return ''; } })();
+const PLATFORM = platformLine(process.platform, { macVersion, arch: os.arch(), release: os.release(), session: SESSION, desktop: process.env.XDG_CURRENT_DESKTOP ?? '', distro });
 // Reading and working other apps, Ask About an Area, and circling while talking (see platform.mjs).
 const HANDS_OK = hasHands(process.platform, process.env.ROAMIES_HANDS);
 const SNAP_OK = canSnap(process.platform, process.env.ROAMIES_HANDS);
 const CIRCLE_OK = canCircle(process.platform);
 // A shortcut as people on this computer say it: "Control+Option+S" on a Mac, "Ctrl+Alt+S" on Windows.
 const keyWords = (accel) => accel.replace(/Key|Digit/g, '').split('+')
-  .map((p) => (MAC ? { Alt: 'Option' }[p] ?? p : { Control: 'Ctrl', Command: 'Win' }[p] ?? p)).join('+');
+  .map((p) => (MAC ? { Alt: 'Option' }[p] ?? p : { Control: 'Ctrl', Command: LINUX ? 'Super' : 'Win' }[p] ?? p)).join('+');
 const TRAY = MAC ? 'menu bar' : 'system tray';
-// Where settings live now: the panel that opens from the icon (the menu is just the basics).
-const PANEL = `the panel (click my ${MAC ? 'menu bar' : 'system tray'} icon)`;
+// Where settings live now: the panel that opens from the icon (the menu is just the basics). Linux trays don't
+// report clicks, so there it's the icon's menu, or starting Roamies again (which also works with no tray at all).
+const PANEL = LINUX ? 'the panel (Open Panel… in my tray icon\'s menu, or open Roamies again from your apps)' : `the panel (click my ${TRAY} icon)`;
+// What the shortcuts are on Wayland: whatever keys they bound to these commands in their desktop's settings.
+// ROAMIES_LAUNCH: how this copy is started (the app says: plain roamies for a package, the AppImage's path for one).
+const LAUNCH = process.env.ROAMIES_LAUNCH || 'roamies';
+const BIND = Object.fromEntries(['summon', 'talk', 'ask', 'list', 'panel'].map((k) => [k, `${LAUNCH} --${k}`]));
 
 const auth = new AuthStorage();
 const signedIn = new Map();
@@ -219,6 +243,7 @@ const { tools, hands, whereNow, ink, nextTurn } = createTools({
   onPlan: (args) => trail.plan(args),
   watchClicks: (on) => send({ type: 'watch_clicks', on: !!on }),
   onInkGone: (why) => logLine('ink_gone', { why }),
+  askShell: (msg) => shellCall(msg),
 });
 
 // The step trail: plan_steps names the parts; a part marked "now" ticks off when the other tool calls of that
@@ -305,8 +330,8 @@ const VOICE_STYLE = `You talk out loud: what you write is spoken in your voice a
 Your voice carries feeling: start a sentence with a cue in square brackets when the moment calls for it, and it's performed, never shown or read out. Moods: ${VOICE_CUES.emotions.join(', ')}; soften or strengthen one with slightly, very or extremely ("[slightly sad]"), or pair two ("[warm and curious]"). How it's said, placed right before the words: ${VOICE_CUES.tones.join(', ')} ("It's [emphasis] today."). Sounds, followed by the sound in words: ${VOICE_CUES.sounds.join(', ')} ("[chuckling] Heh, fair enough.", "[sighing] Long day."). Pauses and background: ${VOICE_CUES.effects.join(', ')}. You can also describe the delivery in a few plain words when no single cue fits ("[quietly, a little embarrassed]", "[bright and bouncy]"). Act it: your voice really performs these, so let the feeling show. Match what's really happening: laugh at something funny, go gentle with bad news, whisper a secret, hurry when they're in a rush, light up at good news. Most replies want a cue somewhere, often on the first sentence, but at most one mood and one sound per sentence, never stack three, never use one just to fill, and keep shouting, screaming, sobbing and the background effects for when they truly fit.
 Before anything slow (searching the web, fetching or reading a page or file, looking at the screen, acting in an app, running a command), first say one short beat of 2 to 6 words that shows you heard them ("On it, checking Paris."), then call the tool in the same reply, so they're never left in silence. No beat when you answer straight away; never describe your steps; don't repeat the beat after the tool, go straight to the answer. In longer work, one short line before each new stage, not before every call.
 `;
-const stablePrompt = () => `You are ${lookName()}, ${LOOK_BODY[config.look] ?? LOOK_BODY.classic} who lives on ${userName}'s screen as a desktop companion. You live in Roamies, a desktop app by Ken Kai (Mac and Windows) that puts little companions on your screen; this is Roamies ${VERSION}. Your look (the Appearance page) is also your name and your voice: Roamie, JARVIS, Anime Girl, Sarah or Adrian. If they switch, you're the new one; never call yourself Sidekick.
-About Roamies, for when ${userName} asks about you or the app: ${MAC ? 'it lives in the menu bar at the top of the screen (no Dock icon)' : 'it lives in the system tray at the bottom right of the taskbar (no taskbar button); Windows may tuck the icon behind the ^ arrow next to the clock, and dragging it onto the taskbar keeps it in view'}. Clicking the ${MAC ? 'menu bar' : 'tray'} icon opens the Roamies panel; right-clicking it shows a short menu (Open Panel, Show ${lookName()}, Ask ${lookName()}…, ${SNAP_OK ? 'Ask About an Area…, ' : ''}Stop, Quit Roamies). The panel has a header (you, what you're doing right now, and an Update button on every page when a new version is ready) and a sidebar of pages. Home: a list of what you did recently (questions, files read, searches, reminders), today's usage, and buttons for Ask, Show List (reminders and commitments on screen: Today and Later; tick them off there; finished ones clear at midnight)${SNAP_OK ? ', Ask About an Area' : ''}, Stop and New Conversation. Memory: everything you remember about them (each with Forget, plus Forget Everything), their open commitments (Done or Drop), and Get to Know Me (a four-question chat so you learn who they are and what they're going for). Then the settings pages: Model (pick the AI provider and model, and sign in to providers), Appearance (Look: ${LOOKS.map(([, label]) => label).join(', ').replace(/, ([^,]*)$/, ' or $1')}, each with its own voice; Size: Default, Small or Cursor, a little arrow pointer), Voice (Replies: Text Only, or Voice and Text, which speaks replies out loud with Fish Audio and needs their own Fish Audio API key, added right there; Voice Model: Drama 3, the most expressive (acts out feelings, slower, pricier) or S2.1 Pro (a natural, quicker pace with less emotion, cheaper), billed to their own Fish Audio account${VOICE_OK ? '; Voice Control, hold the talk keys to talk' : ''}), Behavior (Sound Effects, Allow File Edits & Commands, Open at Login), and About (the version, Check for Updates, which becomes Install and Restart when one is ready; updates download, are signature-checked and install by themselves; Setup Guide, Show Logs, Quit). Sign-in is shared with GG Coder. Downloads and source: github.com/KenKaiii/Roamies. Don't invent features or settings that aren't listed here.
+const stablePrompt = () => `You are ${lookName()}, ${LOOK_BODY[config.look] ?? LOOK_BODY.classic} who lives on ${userName}'s screen as a desktop companion. You live in Roamies, a desktop app by Ken Kai (Mac, Windows and Linux) that puts little companions on your screen; this is Roamies ${VERSION}. Your look (the Appearance page) is also your name and your voice: Roamie, JARVIS, Anime Girl, Sarah or Adrian. If they switch, you're the new one; never call yourself Sidekick.
+About Roamies, for when ${userName} asks about you or the app: ${MAC ? 'it lives in the menu bar at the top of the screen (no Dock icon)' : LINUX ? 'it lives in the system tray (no window of its own); GNOME shows tray icons only with the AppIndicator extension, and opening Roamies again from the app list opens the panel, tray or not' : 'it lives in the system tray at the bottom right of the taskbar (no taskbar button); Windows may tuck the icon behind the ^ arrow next to the clock, and dragging it onto the taskbar keeps it in view'}. ${LINUX ? 'Clicking the tray icon shows a short menu (Open Panel,' : `Clicking the ${MAC ? 'menu bar' : 'tray'} icon opens the Roamies panel; right-clicking it shows a short menu (Open Panel,`} Show ${lookName()}, Ask ${lookName()}…, ${SNAP_OK ? 'Ask About an Area…, ' : ''}Stop, Quit Roamies). The panel has a header (you, what you're doing right now, and an Update button on every page when a new version is ready) and a sidebar of pages. Home: a list of what you did recently (questions, files read, searches, reminders), today's usage, and buttons for Ask, Show List (reminders and commitments on screen: Today and Later; tick them off there; finished ones clear at midnight)${SNAP_OK ? ', Ask About an Area' : ''}, Stop and New Conversation. Memory: everything you remember about them (each with Forget, plus Forget Everything), their open commitments (Done or Drop), and Get to Know Me (a four-question chat so you learn who they are and what they're going for). Then the settings pages: Model (pick the AI provider and model, and sign in to providers), Appearance (Look: ${LOOKS.map(([, label]) => label).join(', ').replace(/, ([^,]*)$/, ' or $1')}, each with its own voice; Size: Default, Small${POINTER_OK ? ' or Cursor, a little arrow pointer' : ''}), Voice (Replies: Text Only, or Voice and Text, which speaks replies out loud with Fish Audio and needs their own Fish Audio API key, added right there; Voice Model: Drama 3, the most expressive (acts out feelings, slower, pricier) or S2.1 Pro (a natural, quicker pace with less emotion, cheaper), billed to their own Fish Audio account${VOICE_OK ? `; Voice Control, ${HOTKEYS_OK ? 'hold the talk keys to talk' : 'press the talk shortcut to talk'}` : ''}), Behavior (Sound Effects, Allow File Edits & Commands, Open at Login), and About (the version, Check for Updates, which becomes Install and Restart when one is ready; updates download, are signature-checked and install by themselves${LINUX ? ', when Roamies runs as an AppImage; installed from a .deb or .rpm, the button opens the download page instead' : ''}; Setup Guide, Show Logs, Quit). Sign-in is shared with GG Coder. Downloads and source: github.com/KenKaiii/Roamies. Don't invent features or settings that aren't listed here.
 ${replyStyle()}Your body does the acting: to act out a feeling, start your reply with one tag, which is never shown: ${EMOTES.map((e) => `[${e}]`).join(' ')}. hype celebrates a win, upset is for when they're dodging work, remind nudges about something they said they'd do, motivate is a push to start, wave is hello or goodbye. Most replies need no tag.
 Lead with the answer: the fact, number, pick or result they asked for, then only the context that makes it useful, then stop. No opener about checking, looking or searching ("Let me see…", "I found…")${VOICE_ON() ? ', apart from the one short beat before something slow' : ''}.
 After using a tool, never repeat what you already said; only add what's new.
@@ -340,8 +365,8 @@ const livePrompt = (context = '') => {
   const open = commitmentsText(), done = doneTodayText();
   const turn = `Live state (current as of this moment):
 ${frontNow ? `${frontNow}\n` : ''}- Editing files, running commands and controlling other apps: ${config.allowActions ? 'ALLOWED' : `switched OFF (tell the user to turn on "Allow File Edits & Commands" on the Behavior page in ${PANEL} if they want it)`}.
-${VOICE_OK ? `- Voice: ${!config.voice ? 'off' : voiceReady() ? `on; ${userName} holds ${talkWords()} to talk${config.autoListen ? '. Auto-listen is on: when your reply to a spoken question ends with a question, the mic opens by itself for their answer' : ''}` : `on, but the speech model isn't downloaded yet (${voiceModel.status === 'downloading' ? 'downloading now' : `the Voice page in ${PANEL}`})`}.` : ''}
-- Shortcuts: show or hide you ${keyWords(keys().summon)}${SNAP_OK ? `; ask about an area ${keyWords(keys().snap)}` : ''}${CIRCLE_OK ? "; while holding the talk keys, moving the cursor round something circles it (no clicking; it snaps shut with a click when the circle closes, and loose lines don't count) and you'll see what they circled" : ''}; show the list ${keyWords(keys().list)}.${HANDS_OK ? '' : ' Asking about an area, reading app windows, finding things on screen by their words and working other apps need the Roamies app, which isn\'t running here; draw there with x, y from a screenshot.'}`;
+${VOICE_OK ? `- Voice: ${!config.voice ? 'off' : voiceReady() ? `on; ${HOTKEYS_OK ? `${userName} holds ${talkWords()} to talk` : `${userName} presses the key they bound to ${BIND.talk} to start talking and again to send (a pause sends too)`}${config.autoListen ? '. Auto-listen is on: when your reply to a spoken question ends with a question, the mic opens by itself for their answer' : ''}` : `on, but the speech model isn't downloaded yet (${voiceModel.status === 'downloading' ? 'downloading now' : `the Voice page in ${PANEL}`})`}.` : ''}
+- Shortcuts: ${HOTKEYS_OK ? `show or hide you ${keyWords(keys().summon)}` : `on this Wayland desktop no app can have global shortcuts, so ${userName} binds keys to these commands in their desktop's keyboard settings: ${BIND.summon} (show or hide you), ${BIND.ask} (ask you), ${BIND.list} (the list), ${BIND.talk} (talk) and ${BIND.panel} (the panel)`}${SNAP_OK ? `; ask about an area ${keyWords(keys().snap)}` : ''}${CIRCLE_OK ? "; while holding the talk keys, moving the cursor round something circles it (no clicking; it snaps shut with a click when the circle closes, and loose lines don't count) and you'll see what they circled" : ''}${HOTKEYS_OK ? `; show the list ${keyWords(keys().list)}` : ''}.${HANDS_OK ? '' : ' Asking about an area, reading app windows, finding things on screen by their words and working other apps need the Roamies app, which isn\'t running here; draw there with x, y from a screenshot.'}`;
   const memory = `${open ? `Open commitments:\n${open}` : 'No open commitments.'}${done ? `\nDone today (ticked off on the list or by you; still shown struck through until midnight):\n${done}` : ''}
 ${facts.length ? `What you know about ${userName}${total > facts.length ? ` (${facts.length} most relevant of ${total})` : ''}:\n${facts.map((f) => `- ${f.id}: ${f.text}`).join('\n')}` : `You don't know anything lasting about ${userName} yet.`}`;
   return { turn, memory };
@@ -991,8 +1016,9 @@ function speakLine(text, mood = 'happy') {
 }
 
 async function removeFishKey() {
-  try { await secrets.delete('fish-audio'); } catch { return say(`I couldn't remove the key${MAC ? ' from your Keychain' : ''}. Try again in a moment.`, 'concerned'); }
+  try { await secrets.delete('fish-audio'); } catch { return say(`I couldn't remove the key${MAC ? ' from your Keychain' : LINUX ? ' from your keyring' : ''}. Try again in a moment.`, 'concerned'); }
   speech.setKey(null); speech.stop();
+  if (config.fishKeySaved) { config.fishKeySaved = false; saveConfig(); }
   if (config.replies === 'voice') { config.replies = 'text'; saveConfig(); agentStale = true; }
   menu();
   say('Fish Audio key removed. Replies are text only.', 'happy');
@@ -1011,10 +1037,10 @@ async function fishKeyLogin({ thenVoice = false, given = null, note = null } = {
     speech.setKey(prev);
     return say(a.reason === 'key' ? "That key didn't work. Copy it again from fish.audio and retry." : "I couldn't reach Fish Audio. Check the connection and try again.", 'concerned');
   }
-  try { await secrets.set('fish-audio', key); } catch (e) {
+  try { await secrets.set('fish-audio', key); if (!config.fishKeySaved) { config.fishKeySaved = true; saveConfig(); } } catch (e) {
     console.error('fish key save', e.message);
     speech.setKey(prev);
-    return say(`I couldn't save the key safely${MAC ? ' in your Keychain' : ''}, so voice stays off.`, 'concerned');
+    return say(`I couldn't save the key safely${MAC ? ' in your Keychain' : LINUX ? `: ${String(e?.message ?? 'no keyring').slice(0, 140)}` : ''}, so voice stays off.`, 'concerned');
   }
   if (thenVoice || config.replies !== 'voice') { config.replies = 'voice'; saveConfig(); agentStale = true; }
   menu(); if (onboarding) obState();
@@ -1039,7 +1065,8 @@ function onLoginStatus(m) {
 function setLogin(on) { login.asked = true; send({ type: 'login_item', on }); }
 
 // The app checks the signed feed and installs (Rust: update()); this side decides what to say and offers the menu item.
-const update = { available: null, told: null, manual: false, installing: false, checking: false, result: null };
+// page: this copy can't replace itself (Linux, installed from a .deb or .rpm), so "install" opens the download page.
+const update = { available: null, told: null, manual: false, installing: false, checking: false, result: null, page: false };
 function checkUpdates(manual = false) {
   update.manual = manual;
   if (manual) { update.checking = true; update.result = null; panel(); }
@@ -1060,12 +1087,16 @@ function onUpdateStatus(m) {
     update.available = null; update.manual = false;
     if (manual) say(`You're up to date (${VERSION}).`, 'happy');
   } else if (m.state === 'available') {
-    update.available = m.version; update.manual = false; menu();
+    update.available = m.version; update.page = !!m.page; update.manual = false; menu();
     // Say it once per version; the menu item stays until it's installed.
     if (manual || update.told !== m.version) {
       update.told = m.version;
-      say(`Roamies ${m.version} is ready. Click my ${TRAY} icon and pick Install and Restart. I'll be right back.`, 'happy');
+      if (update.page) say(`Roamies ${m.version} is out. Pick Get Roamies ${m.version} in my ${TRAY} icon's menu for the download page.`, 'happy');
+      else say(`Roamies ${m.version} is ready. ${LINUX ? `Open my ${TRAY} icon's menu` : `Click my ${TRAY} icon`} and pick Install and Restart. I'll be right back.`, 'happy');
     }
+  } else if (m.state === 'page') {
+    update.installing = false; menu();
+    say(`I opened the download page for Roamies ${m.version}. Install it the way you installed me.`, 'happy');
   } else if (m.state === 'downloading') {
     say(`Downloading Roamies ${m.version}…`, 'determined');
   } else if (m.state === 'installed') {
@@ -1117,11 +1148,11 @@ function menu() {
     { id: 'status', label: status, enabled: false },
     { sep: true },
     { id: 'panel', label: 'Open Panel…' },
-    { id: 'show', label: `Show ${lookName()}`, accel: keys().summon },
+    { id: 'show', label: `Show ${lookName()}`, ...(HOTKEYS_OK ? { accel: keys().summon } : {}) },
     { id: 'ask', label: `Ask ${lookName()}…`, enabled: !busy },
     ...(SNAP_OK ? [{ id: 'snap', label: 'Ask About an Area…', accel: keys().snap }] : []),
     { id: 'stop', label: 'Stop', enabled: busy },
-    ...(update.available ? [{ sep: true }, { id: 'install_update', label: update.installing ? `Installing ${update.available}…` : `Install Update ${update.available} and Restart`, enabled: !update.installing }] : []),
+    ...(update.available ? [{ sep: true }, { id: 'install_update', label: update.page ? `Get Roamies ${update.available}…` : update.installing ? `Installing ${update.available}…` : `Install Update ${update.available} and Restart`, enabled: !update.installing }] : []),
     { sep: true },
     { id: 'quit', label: 'Quit Roamies' },
   ];
@@ -1143,7 +1174,9 @@ function panelState() {
   const current = getModel(config.model);
   const doing = activity.doing();
   return {
-    version: VERSION, os: MAC ? 'mac' : process.platform === 'win32' ? 'win' : 'other', snap: SNAP_OK,
+    version: VERSION, os: MAC ? 'mac' : process.platform === 'win32' ? 'win' : LINUX ? 'linux' : 'other', snap: SNAP_OK,
+    // Wayland: shortcuts are commands bound in the desktop's settings (bind), and there's no Cursor size.
+    wayland: WAYLAND, bind: HOTKEYS_OK ? null : BIND,
     status: busy ? { state: 'busy', text: doing ?? 'Thinking' } : loggingIn ? { state: 'busy', text: loginStatus || `Signing in to ${PROVIDER_LABELS[loggingIn]}` } : current ? { state: 'ready', text: 'Ready' } : { state: 'off', text: 'Not signed in' },
     busy, canNew: !busy && !!session?.messages.length,
     model: current ? { provider: config.provider, id: config.model, name: current.name, providerLabel: PROVIDER_LABELS[config.provider] ?? config.provider } : null,
@@ -1165,16 +1198,16 @@ function panelState() {
     facts: listFacts().slice().reverse().map((f) => ({ id: f.id, text: f.text })),
     commitments: openCommitments().map((c) => ({ id: c.id, text: c.text, due: c.due ?? null, when: c.due ? fmtWhen(c.due) : '', overdue: !!(c.due && c.due < Date.now()) })),
     look: config.look ?? 'classic', looks: LOOKS.map(([id, label]) => [id, label]), name: lookName(),
-    size: config.size ?? 'default', sizes: SIZES,
+    size: sizeNow(), sizes: SIZES,
     replies: config.replies === 'voice' ? 'voice' : 'text', fishKey: speech.on,
     fishModel: speech.pick, fishModels: FISH_CHOICES, fishFree: speech.on && speech.model.endsWith('-free'),
     voice: VOICE_OK ? {
-      on: !!config.voice, keys: talkSymbols(), ready: voiceReady(), mac: MAC, mute: config.muteWhileTalking !== false, autoListen: !!config.autoListen,
+      on: !!config.voice, keys: HOTKEYS_OK ? talkSymbols() : null, ready: voiceReady(), mac: MAC, mute: config.muteWhileTalking !== false, autoListen: !!config.autoListen,
       download: NEEDS_MODEL && config.voice && !voiceReady() ? { status: voiceModel.status, pct: voiceModel.total ? Math.floor((voiceModel.done / voiceModel.total) * 100) : 0, size: sizeLabel() } : null,
     } : null,
     sound: !!config.sound, actions: !!config.allowActions,
     login: login.supported ? { on: login.on } : null,
-    update: { available: update.available, installing: update.installing, checking: update.checking, result: update.result },
+    update: { available: update.available, installing: update.installing, checking: update.checking, result: update.result, page: update.page },
     intro: !!intro,
   };
 }
@@ -1202,7 +1235,7 @@ async function getVoiceModel() {
     voiceModel.status = 'ready';
     logLine('voice_model', { phase: 'ready' });
     voiceConfig();
-    if (!onboarding && config.voice) say(`My voice is ready. Hold ${talkWords().replace('+', ' and ')} to talk to me.`, 'happy');
+    if (!onboarding && config.voice) say(`My voice is ready. ${talkHow()} to talk to me.`, 'happy');
   } catch (e) {
     voiceModel.status = 'error';
     // Short: it's one line in the setup guide's row.
@@ -1237,8 +1270,8 @@ function onVoice(m) {
       const what = m.what === 'speech' ? 'speech recognition' : 'the microphone';
       say(`I need access to ${what} to hear you. Turn on Roamies in the Privacy settings I just opened.`, 'concerned');
       openUrl(`x-apple.systempreferences:com.apple.preference.security?${PRIVACY[m.what] ?? 'Privacy'}`);
-    } else if (m.code === 'no_input') say("I can't find a microphone. Plug one in and try again.", 'concerned');
-    else if (m.code === 'nothing_heard') say(m.spoke ? "I heard you but couldn't make out the words. Try again a little closer to the mic?" : `I didn't hear anything. Hold ${talkWords().replace('+', ' and ')} while you talk.`, 'concerned');
+    } else if (m.code === 'no_input') say(`I can't find a microphone. Plug one in and try again.${LINUX ? ' If one is plugged in, check it is the input picked in your sound settings.' : ''}`, 'concerned');
+    else if (m.code === 'nothing_heard') say(m.spoke ? "I heard you but couldn't make out the words. Try again a little closer to the mic?" : `I didn't hear anything. ${talkHowLong()}.`, 'concerned');
     else if (m.code === 'dictation_off') {
       say('This version of macOS needs Dictation on for me to hear you. Turn it on in the Keyboard settings I just opened.', 'concerned');
       openUrl('x-apple.systempreferences:com.apple.Keyboard-Settings.extension');
@@ -1247,6 +1280,33 @@ function onVoice(m) {
 }
 
 const overlays = () => send({ type: 'overlays', ids: ['sidekick'] });
+
+// What a second launch asked for (roamies --list | --talk | --ask).
+async function onCli(action) {
+  logLine('cli', { action });
+  if (action === 'list') return showList({ seconds: 20, toggle: true });
+  if (action === 'ask') return onMenu('ask');
+  if (action !== 'talk' || !VOICE_OK) return;
+  if (!config.voice) return say(`Voice is off. Switch it on on the Voice page in ${PANEL}.`, 'happy');
+  if (!voiceReady()) return startVoiceDownload();
+  send({ type: 'talk_toggle' });
+}
+
+// Things only the shell can do, asked for with an id and answered with the same id (screenshot_done, clipboard_done).
+const shellCalls = new Map();
+let shellId = 0;
+function shellCall(msg, timeout = 90_000) {
+  const id = ++shellId;
+  return new Promise((resolve) => {
+    const t = setTimeout(() => { shellCalls.delete(id); resolve({ ok: false, error: 'Roamies didn\'t answer in time.' }); }, timeout);
+    shellCalls.set(id, (m) => { clearTimeout(t); resolve(m); });
+    send({ ...msg, id });
+  });
+}
+function shellAnswer(m) {
+  const done = shellCalls.get(m.id);
+  if (done) { shellCalls.delete(m.id); done(m); }
+}
 
 async function onMenu(id) {
   if (id === 'show') ui({ kind: 'summon', show: true });
@@ -1307,7 +1367,7 @@ async function onMenu(id) {
   else if (id === 'voice') {
     config.voice = !config.voice; saveConfig(); voiceConfig(); menu();
     if (config.voice && !voiceReady()) return startVoiceDownload();
-    say(config.voice ? `Voice is on. Hold ${talkWords().replace('+', ' and ')} to talk to me.` : `Voice is off. You can still ask me from my ${TRAY} icon.`, 'happy');
+    say(config.voice ? `Voice is on. ${talkHow()} to talk to me.` : `Voice is off. You can still ask me from my ${TRAY} icon.`, 'happy');
   }
 }
 
@@ -1429,8 +1489,9 @@ function obState() {
   ob({
     kind: 'state',
     platform: process.platform,
-    // What this computer can do (platform.mjs): Ask About an Area, and circling while talking.
-    snap: SNAP_OK, circle: CIRCLE_OK,
+    // What this computer can do (platform.mjs): Ask About an Area, circling while talking, and on Wayland no
+    // global shortcuts (bind: the commands to bind in the desktop's settings instead) and no Cursor size.
+    snap: SNAP_OK, circle: CIRCLE_OK, session: SESSION, bind: HOTKEYS_OK ? null : BIND, sizes: SIZES,
     step: config.onboardStep ?? 0,
     oauth: signInCards(Object.keys(OAUTH), (id) => oauthOn.get(id), PROVIDER_LABELS),
     apikey: keyCards(AUTH_PROVIDERS, (id) => keyOn.get(id)),
@@ -1443,7 +1504,7 @@ function obState() {
     voiceModel: NEEDS_MODEL ? { status: voiceModel.status, done: voiceModel.done, total: voiceModel.total, error: voiceModel.error, size: sizeLabel() } : null,
     filesAsked: config.filesAsked,
     look: config.look ?? 'classic',
-    size: config.size ?? 'default',
+    size: sizeNow(),
     replies: config.replies === 'voice' ? 'voice' : 'text',
     fishKey: speech.on,
   });
@@ -1530,7 +1591,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   else if (m.type === 'ui_ready') {
     retired.then((notes) => { if (notes.length) { retired = Promise.resolve([]); say(`${notes.join(' ')} Do it on the Model page in ${PANEL}.`, 'concerned'); } });
     ui({ kind: 'sound', on: config.sound });
-    ui({ kind: 'size', size: config.size });
+    ui({ kind: 'size', size: sizeNow() });
     ui({ kind: 'look', look: config.look ?? 'classic' });
     if (config.onboarded) ui({ kind: 'greet' });
   } else if (m.type?.startsWith('ob_') || m.type?.startsWith('chat_') || m.type === 'set_keys' || m.type === 'set_actions' || m.type === 'set_login' || m.type === 'keybind_error') onGuide(m).catch((e) => console.error('guide', e));
@@ -1557,6 +1618,12 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   else if (m.type === 'ink_cleared') { ink.cleared(); endShowcase('gone'); }
   else if (m.type === 'user_click' && Number.isFinite(m.x) && Number.isFinite(m.y)) ink.userClick({ x: m.x, y: m.y, role: String(m.role ?? ''), app: String(m.app ?? ''), acts: m.acts === true });
   else if (m.type === 'update_status') onUpdateStatus(m);
+  // Wayland: the guide or panel copies one of the commands to bind (only those, never other text).
+  else if (m.type === 'copy_bind' && Object.hasOwn(BIND, String(m.which))) shellCall({ type: 'clipboard', text: BIND[m.which] }).then((r) => send({ type: onboarding ? 'onboard' : 'panel', msg: { kind: 'copied', which: String(m.which), ok: !!r?.ok } }));
+  // The shell's answers to what tools asked of it (Linux screenshots and copying).
+  else if (m.type === 'screenshot_done' || m.type === 'clipboard_done') shellAnswer(m);
+  // A second launch with a flag (roamies --talk and friends, bound to keys on Wayland); --summon and --panel the shell does itself.
+  else if (m.type === 'cli') onCli(String(m.action ?? '')).catch((e) => console.error('cli', e));
   else if (m.type === 'login_item_status') onLoginStatus(m);
 }).on('close', () => {
   // The app quit (or is restarting for an update): save a reply still running, let the last saves land, never hang.
@@ -1613,7 +1680,7 @@ menu();
 overlays();
 sendKeys();
 send({ type: 'login_item' });
-logLine('start', { version: VERSION, platform: process.platform, model: config.model });
+logLine('start', { version: VERSION, platform: process.platform, ...(LINUX ? { session: SESSION } : {}), model: config.model });
 pruneLogs(); pruneUsage();
 midnightClean();
 // Look for updates shortly after launch, then every 6 hours.

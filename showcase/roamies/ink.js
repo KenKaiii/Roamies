@@ -1383,6 +1383,15 @@
 
   // ---------------------------------------------------------------- the host's way in (host.js)
   R.inkHit = (x, y) => !!drag || !!hitAt(x, y);
+  // Every clickable area as [x, y, w, h]: Linux hosts make these part of the window's click shape (host.js).
+  R.inkRects = () => {
+    const out = [];
+    for (const m of marks) {
+      if (!m.alive || !m.hits || m.alpha < 0.5) continue;
+      for (const h of m.hits()) out.push([h.rect[0] + m.dx, h.rect[1] + m.dy, h.rect[2], h.rect[3]]);
+    }
+    return out;
+  };
   R.ink = {
     send: null, invoke: null,
     // A segment of a drawing from the sidecar: { id, seg, beats, edits, last, win, busy }.

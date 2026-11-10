@@ -9,6 +9,13 @@ commands and JSON, over Win32, UI Automation and Windows OCR). Only hands-win's 
 `cargo test` there runs its checks anywhere; `roamies-hands --smoke` drives Notepad on a real Windows desktop (CI).
 From a Mac, `cargo xwin check --target x86_64-pc-windows-msvc` type-checks the Windows code with the real SDK.
 
+Linux (beta) uses the same voice helper (`voice-win` builds for Linux too: ALSA mic, talk keys over X11, and a
+`toggle` command for `roamies --talk` on Wayland) and no hands helper. Its shell code is `src-tauri/src/linux.rs`:
+every window is an X11 window (`GDK_BACKEND=x11` on Wayland, through XWayland), the overlay lets clicks through by
+region (the page reports its click areas, `host.js` → `set_hit_rects`) instead of following the cursor, and
+screenshots, copying, Open at Login and AppImage-only updates live there. Debug aids: `ROAMIES_TRACE=1` prints the
+overlay's click areas, and in debug builds `ROAMIES_TEST_AUDIO=<wav>` stands in for the microphone.
+
 ## Commands
 
 ```sh
@@ -22,7 +29,9 @@ cd .. && ./build.sh dev                 # web files + sidecar + debug `cargo bui
 There is no linter configured yet.
 
 Releases: push a `v*` tag (or run `.github/workflows/release.yml` by hand). It builds a signed, notarized
-macOS DMG (Apple silicon and Intel) and an unsigned Windows installer into a draft GitHub release.
+macOS DMG (Apple silicon and Intel), an unsigned Windows installer and the Linux beta (AppImage, .deb, .rpm, built on
+Ubuntu 24.04 because ONNX Runtime needs glibc 2.38) into a draft GitHub release. The Linux leg may fail without
+stopping the release; `latest.json` lists Linux only when its AppImage is there.
 
 ## Rules
 

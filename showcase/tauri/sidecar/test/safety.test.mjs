@@ -132,6 +132,37 @@ console.log('safety tests: passed');
   console.log('windows safety tests: passed');
 }
 
+// Linux: the desktop's keyring and wallet, startup entries, launchers and background services.
+{
+  const LH = '/home/ken';
+  const lcases = [
+    [checkRead('~/.local/share/keyrings/login.keyring', LH), BLOCK], [checkRead('/home/ken/.local/share/kwalletd/kdewallet.kwl', LH), BLOCK],
+    [checkRead('~/.password-store/email.gpg', LH), BLOCK], [checkRead('~/.pki/nssdb/key4.db', LH), BLOCK],
+    [checkRead('~/.mozilla/firefox/abcd.default-release/logins.json', LH), BLOCK], [checkRead('~/.mozilla/firefox/abcd.default-release/cookies.sqlite', LH), BLOCK],
+    [checkRead('~/.config/google-chrome/Default/Cookies', LH), BLOCK], [checkRead('~/.config/google-chrome/Default/Login Data', LH), BLOCK],
+    [checkRead('~/Documents/notes.txt', LH), SAFE], [checkRead('/home', LH, { recursive: true }), BLOCK],
+    [checkWrite('~/.config/autostart/updater.desktop', LH), BLOCK], [checkWrite('~/.config/autostart-scripts/run.sh', LH), BLOCK],
+    [checkWrite('~/.config/systemd/user/helper.service', LH), BLOCK], [checkWrite('~/.local/share/systemd/user/helper.timer', LH), BLOCK],
+    [checkWrite('~/.config/environment.d/50-path.conf', LH), BLOCK], [checkWrite('~/.config/plasma-workspace/env/x.sh', LH), BLOCK],
+    [checkWrite('~/.local/share/applications/firefox.desktop', LH), BLOCK], [checkWrite('~/Desktop/Open me.desktop', LH), BLOCK],
+    [checkWrite('~/.local/share/dbus-1/services/org.example.service', LH), BLOCK], [checkWrite('~/.xprofile', LH), BLOCK],
+    [checkWrite('~/.pam_environment', LH), BLOCK], [checkWrite('~/.bashrc', LH), BLOCK], [checkWrite('~/notes/desktop-ideas.md', LH), SAFE],
+    [checkOpen('~/Downloads/Tool.AppImage', LH), BLOCK], [checkOpen('~/Downloads/app.deb', LH), BLOCK], [checkOpen('~/Desktop/launch.desktop', LH), BLOCK],
+    [checkOpen('/usr/share/applications/org.gnome.Nautilus.desktop', LH), SAFE], [checkOpen('/etc/passwd', LH), BLOCK], [checkOpen('Files', LH), SAFE],
+    [classifyCommand('secret-tool lookup service fish', LH), BLOCK], [classifyCommand('secret-tool search --all xdg:schema x', LH), BLOCK],
+    [classifyCommand('kwallet-query -r pass kdewallet', LH), BLOCK], [classifyCommand('pkexec rm -rf /', LH), BLOCK],
+    [classifyCommand('systemctl --user enable --now helper.service', LH), BLOCK], [classifyCommand('systemctl --user start x', LH), BLOCK],
+    [classifyCommand('systemctl status nginx', LH), ASK], [classifyCommand('systemd-run --user sleep 1', LH), BLOCK],
+    [classifyCommand('echo hi | at now + 1 minute', LH), BLOCK],
+    [classifyCommand('gdbus call --session --dest org.freedesktop.secrets --object-path /org/freedesktop/secrets --method x', LH), BLOCK],
+    [classifyCommand('busctl --user call org.freedesktop.systemd1 /org/freedesktop/systemd1 x', LH), BLOCK],
+    [classifyCommand('cat ~/.local/share/keyrings/login.keyring', LH), BLOCK], [classifyCommand('ls ~/Documents', LH), SAFE],
+  ];
+  const bad = lcases.map(([v, want], i) => (v.level === want ? null : `#${i}: ${v.level} (${v.reason}), wanted ${want}`)).filter(Boolean);
+  assert.equal(bad.length, 0, `\n${bad.join('\n')}`);
+  console.log('linux safety tests: passed');
+}
+
 // Regression: asked to "show" the Delete account button, Sidekick clicked it. These clicks now need a yes.
 {
   const { isRiskyClick } = await import('../safety.mjs');

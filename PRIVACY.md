@@ -1,6 +1,6 @@
 # Privacy
 
-Effective date: 8 November 2026
+Effective date: 10 November 2026
 
 Roamies is an open-source desktop app made by an individual developer. This page says, in plain words, what
 data Roamies handles and where it goes.
@@ -25,7 +25,7 @@ key) receives:
 
 **GitHub** is used to check for and download updates.
 
-**Hugging Face** is used once, on Windows, to download the speech model.
+**Hugging Face** is used once, on Windows and Linux, to download the speech model.
 
 **Wikipedia** is used to fetch photos for photo cards, and websites' `favicon.ico` is fetched for source cards.
 
@@ -38,9 +38,11 @@ Each provider's own privacy policy applies to what is sent to it.
 
 - **macOS:** speech is turned into text on your Mac by Apple's on-device recognizer. On Macs where on-device
   recognition isn't available, Apple's recognizer may use Apple's servers, under Apple's terms.
-- **Windows:** speech is turned into text on your PC (Parakeet).
-- The microphone is used only while you hold the talk keys.
-- The screen is captured only when Roamies answers something about your screen, or when you mark an area.
+- **Windows and Linux:** speech is turned into text on your computer (Parakeet).
+- The microphone is used only while you hold the talk keys (or, on Linux with Wayland, from your talk shortcut
+  until you press it again or pause).
+- The screen is captured only when Roamies answers something about your screen, or when you mark an area. On Linux
+  with Wayland it's taken through your desktop's screenshot portal; the copy the portal saves is deleted right away.
 
 ## What's stored on your computer
 
@@ -55,7 +57,8 @@ Everything lives in `~/.gg` (on Windows, `%USERPROFILE%\.gg`) and stays on your 
 | `sidekick/usage.jsonl`   | token counts and timings only, never content                                       |
 | `auth.json`              | your AI sign-ins, shared with GG Coder                                              |
 
-Your Fish Audio key is kept in the macOS Keychain, or encrypted with DPAPI on Windows.
+Your Fish Audio key is kept in the macOS Keychain, encrypted with DPAPI on Windows, or in your desktop's keyring
+(through the Secret Service) on Linux.
 
 You can see what Roamies remembers on the panel's **Memory** page, and remove it with **Forget** or
 **Forget Everything**.

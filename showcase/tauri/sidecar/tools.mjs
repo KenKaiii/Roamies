@@ -1,6 +1,6 @@
 // The agent's tools: screen capture, reading and working other apps (the "hands" helper), files, commands,
 // web pages and memory. Every file, command, URL and open goes through safety.mjs first.
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -11,6 +11,7 @@ import { ASK, BLOCK, checkDrawAction, checkOpen, checkRead, checkUrl, checkWrite
 import dns from 'node:dns/promises';
 import { CARDS, DrawArgs, checkDraw, createParts, faviconFor, photoFor, pickTextMatch, resolveTargets } from './draw.mjs';
 import { plain } from './intro.mjs';
+import { linuxSession, seesPointer } from './platform.mjs';
 import { addCommitment, forgetFact, parseDue, updateCommitment } from './store.mjs';
 
 const HOME = os.homedir();
@@ -33,6 +34,90 @@ export const run = (cmd, args, { onLine, ...opts } = {}) => new Promise((res) =>
 const WIN_OPEN = "try { if ($env:ROAMIES_OPEN_APP) { Start-Process -FilePath $env:ROAMIES_OPEN_APP -ArgumentList ('\"' + $env:ROAMIES_OPEN + '\"') -ErrorAction Stop } else { Start-Process -FilePath $env:ROAMIES_OPEN -ErrorAction Stop } } catch { [Console]::Error.WriteLine('Unable to find application: ' + $_.Exception.Message); exit 1 }";
 export const winOpen = (target, app = '') => run('powershell', ['-NoProfile', '-NonInteractive', '-Command', WIN_OPEN], { env: { ...process.env, ROAMIES_OPEN: target, ROAMIES_OPEN_APP: app } });
 const THIS_COMPUTER = process.platform === 'darwin' ? 'this Mac' : 'this computer';
+const LINUX = process.platform === 'linux';
+// A Wayland session hides the pointer and clicks in other apps, so a drawing can't wait for them (platform.mjs).
+const POINTER_OK = seesPointer(process.platform, LINUX ? linuxSession() : '');
+
+// ---------- Linux: apps by name ----------
+// Apps are listed by their .desktop files (the menus and app grids read the same ones). Opening "Files" or
+// "Firefox" finds its entry and starts it the way the desktop would.
+
+/** The [Desktop Entry] group of a .desktop file: its keys (localised ones like Name[de] left out). */
+export function parseDesktopEntry(text) {
+  const out = {};
+  let inMain = false;
+  for (const raw of String(text).split('\n')) {
+    const line = raw.trim();
+    if (line.startsWith('[')) { inMain = line === '[Desktop Entry]'; continue; }
+    const eq = line.indexOf('=');
+    if (!inMain || eq < 1 || line.startsWith('#')) continue;
+    const k = line.slice(0, eq).trim();
+    if (!k.includes('[') && !(k in out)) out[k] = line.slice(eq + 1).trim();
+  }
+  return out;
+}
+
+/** The best app for a name, from [{ id: 'org.gnome.Nautilus', file, entry }] (entry as parseDesktopEntry gives).
+ *  Hidden ones and anything that isn't an app never match. Best first: the name shown in the menus, the file's
+ *  id (or its last part: "nautilus"), the kind of app ("Web Browser"), then a name holding every word asked for
+ *  ("chrome" finds "Google Chrome"). */
+export function findDesktopApp(apps, name) {
+  const want = String(name).trim().toLowerCase().replace(/\.desktop$/, '');
+  if (!want) return null;
+  const words = want.split(/\s+/);
+  const usable = apps.filter(({ entry: e }) => (e.Type ?? 'Application') === 'Application' && e.Exec && e.NoDisplay !== 'true' && e.Hidden !== 'true');
+  const low = (s) => String(s ?? '').toLowerCase();
+  const tests = [
+    (a) => low(a.entry.Name) === want,
+    (a) => low(a.id) === want || low(a.id).split('.').pop() === want,
+    (a) => low(a.entry.GenericName) === want,
+    (a) => words.every((w) => low(a.entry.Name).split(/[^a-z0-9+]+/).includes(w)),
+  ];
+  for (const t of tests) { const hit = usable.find(t); if (hit) return hit; }
+  return null;
+}
+
+/** Every app in the XDG application folders (the user's own first, so theirs wins over a system one of the same id). */
+async function desktopApps() {
+  const dataHome = process.env.XDG_DATA_HOME || path.join(HOME, '.local', 'share');
+  const dirs = [dataHome, ...(process.env.XDG_DATA_DIRS || '/usr/local/share:/usr/share').split(':'), path.join(HOME, '.local/share/flatpak/exports/share'), '/var/lib/flatpak/exports/share', '/var/lib/snapd/desktop']
+    .filter(Boolean).map((d) => path.join(d, 'applications'));
+  const seen = new Set(), apps = [];
+  for (const dir of dirs) {
+    const files = await fs.readdir(dir).catch(() => []);
+    for (const f of files) {
+      if (!f.endsWith('.desktop') || seen.has(f)) continue;
+      seen.add(f);
+      const file = path.join(dir, f);
+      const text = await fs.readFile(file, 'utf8').catch(() => '');
+      if (text) apps.push({ id: f.slice(0, -'.desktop'.length), file, entry: parseDesktopEntry(text) });
+    }
+  }
+  return apps;
+}
+
+/** Runs a launcher (gio, gtk-launch, xdg-open) and resolves when it exits, like run(). Not when its output closes:
+ *  the app it starts inherits that output and keeps it open for as long as it runs. */
+export const launch = (cmd, args, timeout = 30_000) => new Promise((res) => {
+  let p, stderr = '', done = false;
+  const finish = (r) => { if (done) return; done = true; clearTimeout(t); p?.stderr?.destroy(); res({ stdout: '', stderr, ...r }); };
+  const t = setTimeout(() => { p?.kill(); finish({ err: Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' }) }); }, timeout);
+  try { p = spawn(cmd, args, { stdio: ['ignore', 'ignore', 'pipe'] }); } catch (e) { return finish({ err: e }); }
+  p.stderr.on('data', (d) => { stderr += d; });
+  p.on('error', (e) => finish({ err: e }));
+  p.on('exit', (code, signal) => finish({ err: code === 0 ? null : Object.assign(new Error(`exit ${code ?? signal}`), { code: code ?? signal }) }));
+});
+
+/** Opens an app by name on Linux (gio launch, else gtk-launch). Errors say "Unable to find application" when
+ *  there's no such app, as macOS's open does, so the caller words it the same way. */
+async function openLinuxApp(name) {
+  const app = findDesktopApp(await desktopApps(), name);
+  if (!app) return { err: new Error('not found'), stdout: '', stderr: `Unable to find application named "${name}"` };
+  let r = await launch('gio', ['launch', app.file]);
+  if (r.err?.code === 'ENOENT') r = await launch('gtk-launch', [app.id]);
+  if (r.err?.code === 'ENOENT') return { err: r.err, stdout: '', stderr: `Found ${app.entry.Name}, but this computer has neither gio nor gtk-launch to start it.` };
+  return { ...r, app };
+}
 const actionsOff = `File edits and commands are switched off. Tell the user to turn on "Allow File Edits & Commands" in the ${process.platform === 'darwin' ? 'menu bar' : 'system tray'} menu if they want this.`;
 
 // "hands": the bundled helper that captures one window or area and reads/controls other apps (hands/main.swift on
@@ -117,7 +202,8 @@ const GIT_SAFE = {
   GIT_CONFIG_KEY_3: 'core.hooksPath', GIT_CONFIG_VALUE_3: '/dev/null',
 };
 
-export function createTools({ allowActions, ui, ask, openUrl, onCommitments, showList, fmtWhen, commitmentsText, userName, onPlan = () => {}, speak = () => false, onHandoff = () => {}, watchClicks = () => {}, onInkGone = () => {} }) {
+// askShell: Linux asks the app itself for screenshots and copying ({type:'screenshot'|'clipboard', …} → its answer).
+export function createTools({ allowActions, ui, ask, openUrl, onCommitments, showList, fmtWhen, commitmentsText, userName, onPlan = () => {}, speak = () => false, onHandoff = () => {}, watchClicks = () => {}, onInkGone = () => {}, askShell = async () => ({ ok: false, error: 'Roamies isn\'t running.' }) }) {
   let axNudged = 0;
   let lastShot = null; // how the latest screenshot's pixels map to screen points (see pointing.mjs)
   let lastRead = null; // { win, controls } from the latest read_window, to catch ids that went stale
@@ -245,14 +331,17 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, sho
       const data = (await fs.readFile(file)).toString('base64');
       fs.unlink(file).catch(() => {});
       return { content: [{ type: 'text', text: `Screenshot of the main display${iw ? ` (${iw}×${ih} px; for draw give x, y in this image's pixels)` : ''}.` }, { type: 'image', mediaType: 'image/jpeg', data }] };
-    } else {
-      let r = await run('grim', [file]);
-      if (r.err) r = await run('gnome-screenshot', ['-f', file]);
-      if (r.err) throw new Error('No screenshot tool found (install grim or gnome-screenshot).');
     }
-    const data = (await fs.readFile(file)).toString('base64');
-    fs.unlink(file).catch(() => {});
-    return { content: [{ type: 'text', text: 'Screenshot of the main display.' }, { type: 'image', mediaType: 'image/jpeg', data }] };
+    if (!LINUX) throw new Error(`Screenshots aren't available on ${process.platform}.`);
+    // Linux: the app takes it (the X screen, or the desktop's screenshot portal on Wayland), shrunk to Claude's cap,
+    // and says what part of the desktop it covers, so draw can turn its pixels into places on screen.
+    const res = await askShell({ type: 'screenshot', file });
+    if (!res?.ok) { fs.unlink(file).catch(() => {}); throw new Error(res?.error || 'Screen capture failed.'); }
+    const [iw, ih] = Array.isArray(res.pixels) ? res.pixels : [];
+    const b = Array.isArray(res.bounds) && res.bounds.length === 4 ? res.bounds : null;
+    lastShot = iw && ih && b ? { ...shotMap(b, iw, ih), bounds: b, win: null, turn } : null;
+    const whole = t === 'screen' ? '' : ' (one app\'s window can\'t be captured alone on Linux, so this is the whole desktop)';
+    return { content: [{ type: 'text', text: `Screenshot of the whole desktop${whole}${iw ? ` (${iw}×${ih} px; for draw give x, y in this image's pixels)` : ''}.` }, await imageBlock(file, 'image/jpeg')] };
   }
 
   // ---------- drawing on screen (the draw tool) ----------
@@ -332,11 +421,11 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, sho
   const CHANGING = new Set(['click', 'click_text', 'press_button', 'key', 'click_at', 'choose']);
   const agentChangesScreen = () => { if (windowBound() && !ink.active) screenChanged('agent'); };
   // Copied text goes to the clipboard through stdin, so nothing in it is ever parsed as a command.
-  const toClipboard = (text) => new Promise((res) => {
+  const toClipboard = (text) => (LINUX ? askShell({ type: 'clipboard', text: String(text) }).then((r) => !!r?.ok) : new Promise((res) => {
     const [cmd, args] = process.platform === 'darwin' ? ['pbcopy', []] : process.platform === 'win32' ? ['powershell', ['-NoProfile', '-NonInteractive', '-Command', '$input | Set-Clipboard']] : ['xclip', ['-selection', 'clipboard']];
     const p = execFile(cmd, args, { timeout: 5000, windowsHide: true }, (err) => res(!err));
     p.stdin?.end(String(text));
-  });
+  }));
   // How each kind of place is found. retry: just after a click, when a menu or dialog may still be opening.
   function lookups(spec, retry) {
     let live = null, shotOk = null, controls = null, fitQueue = null, wins = null;
@@ -472,7 +561,10 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, sho
     const problems = checkDraw(args);
     if (problems.length) throw new Error(problems.join('\n'));
     const t = String(args.target || 'front'), spec = t === 'front' ? 'front' : t === 'screen' ? 'screen' : `app:${t}`;
-    const id = ctx.toolCallId, beats = args.beats ?? [], edits = args.edit ?? [], notes = [], said = [];
+    const id = ctx.toolCallId, edits = args.edit ?? [], notes = [], said = [];
+    // Clicks and hovers in other apps can't be seen here (Wayland): the beats play one after another instead.
+    const beats = (args.beats ?? []).map((b) => (POINTER_OK || !b.wait ? b : { ...b, wait: undefined }));
+    if (beats.some((b, i) => b !== (args.beats ?? [])[i])) notes.push("This desktop doesn't let Roamies see clicks in other apps, so the beats played one after another instead of waiting for clicks.");
     for (const e of edits) if (e.do !== 'clear' && !parts.has(e.part)) throw new Error(`There's no ${e.part} on screen now${parts.ids.length ? ` (there is: ${parts.describe()})` : ' (nothing is drawn)'}. Draw it again instead.`);
     // A new drawing in a later request replaces the old one (cards too), unless it's editing what's there.
     if (ink.turn !== turn && !edits.length && parts.ids.length) clearAllInk();
@@ -700,7 +792,7 @@ Which mark: one control they should click: target (with wait 'click' in a walkth
 Walkthroughs ("how do I…"): one beat per step, each a target on that step's control with label and wait 'click'; the next step is found after they click, on the screen as it is then.
 Explanations that a picture makes clearer go on cards beside the window (tie connects a card to what it explains): card (title, heading, text, items, sources), note (text, tone), list (title, items), clip (title, text), sources ([{name, url}]), photo (query: a thing with a Wikipedia page, or url; text = caption), graph (x_range, y_range, plots [{points, tone, label}], dots [{x, y, label}]) for numbers, timeline (events [{when, text}]) for dates, legend (keys [{tone, text}]), molecule (smiles, label) for chemistry, model (parts [{shape: box|sphere|cylinder|cone|torus, at [x,y,z], size [x,y,z], rot [deg x,y,z], tone, label}] within about -1 to 1, title) for objects and machines. Things saved with remember_commitment or update_commitment already show on their reminders list by themselves: never draw a list or note of them; list and note are for things that aren't being saved.
 Actions: type (text into the field at; needs actions allowed), copy (text to the clipboard), open (url), handoff (task), button (text + action {do: ask|open|copy, value}: a likely next step they can click), emote (name: hype, wave, upset, remind, motivate), sfx (name). tone: accent, teal, amber, coral, lilac, sky, lime, red, white.
-A drawing stays until the user clears it or the window changes; your next drawing replaces it. Every drawn piece gets an id (p1, p2 …) in the result. To change what's drawn ("make that red", "move it left", "never mind"): edit [{do: recolor|move|erase|clear, part, tone, dx, dy}] with no beats. Up to 12 beats, 40 marks each.`,
+A drawing stays until the user clears it or the window changes; your next drawing replaces it. Every drawn piece gets an id (p1, p2 …) in the result. To change what's drawn ("make that red", "move it left", "never mind"): edit [{do: recolor|move|erase|clear, part, tone, dx, dy}] with no beats. Up to 12 beats, 40 marks each.${POINTER_OK ? '' : " On this desktop (Wayland) clicks and hovers in other apps can't be seen: never use wait; beats play one after another, so say each step's line in an order that reads well without pausing."}`,
       parameters: DrawArgs, executionMode: 'sequential', timeoutMs: 30 * 60_000,
       execute: draw,
     },
@@ -718,7 +810,7 @@ A drawing stays until the user clears it or the window changes; your next drawin
       },
     },
     {
-      name: 'search_files', description: 'Search file contents under a specific folder for a text pattern (regex). Not your whole home folder: that trips macOS privacy prompts. To find files by name anywhere, use run_command with mdfind.',
+      name: 'search_files', description: `Search file contents under a specific folder for a text pattern (regex). Not your whole home folder: that trips macOS privacy prompts. To find files by name anywhere, use run_command with ${process.platform === 'darwin' ? 'mdfind' : LINUX ? 'find or locate' : 'dir /s'}.`,
       parameters: z.object({ pattern: z.string(), dir: z.string() }),
       execute: async ({ pattern, dir }) => {
         const d = allowed(checkRead(dir, HOME, { recursive: true }));
@@ -752,7 +844,7 @@ A drawing stays until the user clears it or the window changes; your next drawin
         if (v.level === ASK && !(await confirm(`Run \`${command.length > 70 ? command.slice(0, 67) + '…' : command}\`?${v.reason ? ' ' + v.reason : ''}`, ctx))) {
           throw new Error(`${userName} said no, so the command didn't run.`);
         }
-        const shell = process.platform === 'win32' ? ['cmd', ['/c', command]] : [process.env.SHELL || '/bin/zsh', ['-lc', command]];
+        const shell = process.platform === 'win32' ? ['cmd', ['/c', command]] : [process.env.SHELL || (LINUX ? '/bin/bash' : '/bin/zsh'), ['-lc', command]];
         const r = await run(shell[0], shell[1], { cwd: HOME, env: { ...process.env, ...GIT_SAFE } });
         const out = clip((r.stdout + (r.stderr ? `\n[stderr]\n${r.stderr}` : '')).trim() || '(no output)', 12_000);
         if (r.err && r.err.code !== 0) throw new Error(`Exit ${r.err.code ?? r.err.signal}\n${out}`);
@@ -784,7 +876,7 @@ A drawing stays until the user clears it or the window changes; your next drawin
       },
     },
     {
-      name: 'open', description: 'Open a website, a file or folder, or a Mac app by name (e.g. "Safari", "https://skool.com", "~/Documents"). Links open in the default browser; set app to open one in a particular browser or app (e.g. app "Safari" when the user says "in Safari").',
+      name: 'open', description: 'Open a website, a file or folder, or an app by name (e.g. "Safari", "https://skool.com", "~/Documents"). Links open in the default browser; set app to open one in a particular browser or app (e.g. app "Safari" when the user says "in Safari").',
       parameters: z.object({ target: z.string(), app: z.string().optional() }),
       execute: async ({ target, app }) => {
         let t = String(target).trim();
@@ -800,7 +892,9 @@ A drawing stays until the user clears it or the window changes; your next drawin
         const inApp = app && ['darwin', 'win32'].includes(process.platform) && (isUrl || isPath) ? ['-a', String(app)] : [];
         if (process.platform === 'darwin') r = await run('open', isUrl || isPath ? [...inApp, isPath ? expand(t) : t] : ['-a', t]);
         else if (process.platform === 'win32') r = await winOpen(isPath ? expand(t) : t, app && (isUrl || isPath) ? String(app) : '');
-        else r = await run('xdg-open', [isPath ? expand(t) : t]);
+        // Linux: links and files go to xdg-open; a plain name is an app, found by its .desktop file.
+        else if (isUrl || isPath) r = await launch('xdg-open', [isPath ? expand(t) : t]);
+        else r = await openLinuxApp(t);
         // Not installed: say so plainly, so the model doesn't go hunting for it with scripts (which need a yes each).
         if (r.err && /Unable to find application/i.test(r.stderr)) throw new Error(`There's no app called "${inApp.length ? app : t}" on ${THIS_COMPUTER} (not installed, or it has another name). Don't look for it another way; tell ${userName} and carry on with the rest.`);
         if (r.err) throw new Error(r.stderr.trim() || `Couldn't open ${t}.`);

@@ -1,10 +1,13 @@
-// Voice helper for Roamies on Windows: the twin of voice/main.swift, with the same JSON lines in and out.
-// Watches the talk chord with GetAsyncKeyState (needs no permission), records the default microphone and
+// Voice helper for Roamies on Windows and Linux: the twin of voice/main.swift, with the same JSON lines in and out.
+// Watches the talk chord (GetAsyncKeyState on Windows, the X server on Linux X11 sessions; neither needs a
+// permission), records the default microphone and
 // transcribes on this PC with NVIDIA Parakeet TDT 0.6B v3 (int8 ONNX via parakeet-rs). Parakeet isn't a
 // streaming model, so live text comes from re-reading the take about once a second.
 // Hold the chord = push-to-talk (release sends). Quick tap = hands-free (ends on a pause or another tap).
 // While the chord is held, moving the cursor round something circles it (ink.rs); the circled area goes out with
-// what was said, as on macOS. Exits when stdin closes.
+// what was said, as on macOS (Windows only). On Wayland no app can watch the keyboard, so there {"cmd":"toggle"}
+// (sent for `roamies --talk`, which people bind to a key) starts a take, and sends it when it comes again or on a
+// pause. Exits when stdin closes.
 //
 // roamies-voice --model <dir> [--chord control,option]   normal use (Roamies starts it)
 // roamies-voice --perms                                   prints {"type":"perms","mic":…}
@@ -168,6 +171,38 @@ struct Voice {
 }
 
 impl Voice {
+    fn new(engine: Option<Sender<Job>>, test_audio: Option<PathBuf>, tx: Sender<Ev>) -> Voice {
+        Voice {
+            phase: Phase::Idle,
+            chord: keys::mask(&["control".into(), "option".into()]).expect("default chord"),
+            chord_at: 0.0,
+            listen_at: 0.0,
+            heard_at: 0.0,
+            voice_at: 0.0,
+            level_at: 0.0,
+            released_at: None,
+            blocked: false,
+            prev_chord: false,
+            report_empty: false,
+            spoke: false,
+            best: String::new(),
+            take: 0,
+            buf: Arc::new(Mutex::new(Vec::new())),
+            source: None,
+            engine,
+            engine_error: None,
+            reading: false,
+            read_at: 0.0,
+            read_len: 0,
+            tail_until: None,
+            final_until: None,
+            test_audio,
+            ink: ink::Ink::default(),
+            tx,
+            t0: Instant::now(),
+        }
+    }
+
     fn now(&self) -> f64 {
         self.t0.elapsed().as_secs_f64()
     }
@@ -474,6 +509,20 @@ impl Voice {
         self.show_listening("handsfree", now);
     }
 
+    /// The talk shortcut where the keys can't be watched (`roamies --talk`): the first one starts listening
+    /// hands-free, the next one sends what was said (so does a pause).
+    fn toggle(&mut self) {
+        match self.phase {
+            Phase::Idle => self.listen_now(),
+            Phase::Armed | Phase::Holding | Phase::HandsFree => {
+                let now = self.now();
+                self.end("toggled", now);
+                self.finish();
+            }
+            Phase::Finishing => {}
+        }
+    }
+
     /// Roamies saw its show/hide shortcut: that chord press was a shortcut, not a request to talk.
     fn external_cancel(&mut self) {
         if matches!(self.phase, Phase::Armed | Phase::Holding | Phase::HandsFree) {
@@ -488,6 +537,7 @@ impl Voice {
             Ev::Cmd(msg) => match msg.get("cmd").and_then(Value::as_str) {
                 Some("cancel") => self.external_cancel(),
                 Some("listen") => self.listen_now(),
+                Some("toggle") => self.toggle(),
                 Some("chord") => {
                     let mods: Vec<String> = msg.get("mods").and_then(Value::as_array).map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect()).unwrap_or_default();
                     self.set_chord(&mods);
@@ -553,35 +603,7 @@ fn main() {
             (None, None)
         }
     };
-    let mut voice = Voice {
-        phase: Phase::Idle,
-        chord: keys::mask(&["control".into(), "option".into()]).expect("default chord"),
-        chord_at: 0.0,
-        listen_at: 0.0,
-        heard_at: 0.0,
-        voice_at: 0.0,
-        level_at: 0.0,
-        released_at: None,
-        blocked: false,
-        prev_chord: false,
-        report_empty: false,
-        spoke: false,
-        best: String::new(),
-        take: 0,
-        buf: Arc::new(Mutex::new(Vec::new())),
-        source: None,
-        engine,
-        engine_error: None,
-        reading: false,
-        read_at: 0.0,
-        read_len: 0,
-        tail_until: None,
-        final_until: None,
-        test_audio: arg(&args, "--test-audio").map(PathBuf::from),
-        ink: ink::Ink::default(),
-        tx: tx.clone(),
-        t0: Instant::now(),
-    };
+    let mut voice = Voice::new(engine, arg(&args, "--test-audio").map(PathBuf::from), tx.clone());
     if let Some(c) = arg(&args, "--chord") {
         voice.set_chord(&c.split(',').map(str::to_owned).collect::<Vec<_>>());
     }
@@ -619,5 +641,73 @@ fn main() {
     drop(voice);
     if let Some(h) = engine_thread {
         let _ = h.join();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A Voice with a stand-in engine (the test reads its jobs) and a short WAV in place of the microphone.
+    fn voice() -> (Voice, Receiver<Job>, PathBuf) {
+        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let wav = std::env::temp_dir().join(format!("roamies-voice-test-{}-{}.wav", std::process::id(), N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
+        let spec = hound::WavSpec { channels: 1, sample_rate: RATE, bits_per_sample: 16, sample_format: hound::SampleFormat::Int };
+        let mut w = hound::WavWriter::create(&wav, spec).expect("test wav");
+        for i in 0..RATE / 2 {
+            w.write_sample(((i as f32 * 0.2).sin() * 8000.0) as i16).expect("sample");
+        }
+        w.finalize().expect("wav written");
+        let (jobs, jrx) = mpsc::channel();
+        let (tx, _events) = mpsc::channel();
+        (Voice::new(Some(jobs), Some(wav.clone()), tx), jrx, wav)
+    }
+
+    #[test]
+    fn toggle_starts_a_take_and_the_next_one_sends_it() {
+        let (mut v, jobs, wav) = voice();
+        v.toggle();
+        assert_eq!(v.phase, Phase::HandsFree, "the first toggle listens hands-free");
+        assert!(v.source.is_some(), "the microphone is on");
+        v.on_level(0.5);
+        v.on_text(v.take, "hello there".into(), false);
+        v.toggle();
+        assert_eq!(v.phase, Phase::Finishing, "the second toggle ends the take");
+        v.toggle();
+        assert_eq!(v.phase, Phase::Finishing, "a third one while it finishes changes nothing");
+        // The mic's tail is over: the whole take goes for one last read.
+        v.tail_until = Some(0.0);
+        v.tick();
+        let job = jobs.try_recv().expect("a closing read");
+        assert!(job.last && job.take == v.take);
+        assert!(v.source.is_none(), "the microphone is off");
+        v.on_text(job.take, "hello there friend".into(), true);
+        assert_eq!(v.phase, Phase::Idle);
+        assert_eq!(v.best, "hello there friend");
+        // And it's ready to go again.
+        v.toggle();
+        assert_eq!(v.phase, Phase::HandsFree);
+        let _ = std::fs::remove_file(wav);
+    }
+
+    #[test]
+    fn toggle_without_a_speech_model_stays_idle() {
+        let (tx, _events) = mpsc::channel();
+        let mut v = Voice::new(None, None, tx);
+        v.toggle();
+        assert_eq!(v.phase, Phase::Idle);
+        assert!(v.source.is_none());
+    }
+
+    #[test]
+    fn a_toggled_take_with_nothing_said_ends_without_a_read() {
+        let (mut v, jobs, wav) = voice();
+        v.toggle();
+        v.toggle();
+        v.tail_until = Some(0.0);
+        v.tick();
+        assert!(jobs.try_recv().is_err(), "silence isn't read (Parakeet makes words up from it)");
+        assert_eq!(v.phase, Phase::Idle);
+        let _ = std::fs::remove_file(wav);
     }
 }

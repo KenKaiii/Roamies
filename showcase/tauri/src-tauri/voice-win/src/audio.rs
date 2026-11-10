@@ -1,8 +1,9 @@
-// Audio in: the default microphone (Windows, via cpal/WASAPI) or a WAV file played in real time (dev
-// tests), both mixed down to mono 16 kHz for Parakeet and metered for the listening animation.
+// Audio in: the default microphone (cpal: WASAPI on Windows, ALSA on Linux, which PipeWire and PulseAudio
+// both answer) or a WAV file played in real time (dev tests), both mixed down to mono 16 kHz for Parakeet and
+// metered for the listening animation.
 
 use crate::{Ev, RATE};
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 use crate::log;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -87,7 +88,7 @@ impl Sink {
 
 /// Recording stops when this is dropped.
 pub struct Source {
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     _stream: Option<cpal::Stream>,
     stop: Arc<AtomicBool>,
 }
@@ -133,24 +134,24 @@ pub fn play_file(path: &Path, mut sink: Sink) -> Result<Source, String> {
         }
     });
     Ok(Source {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux"))]
         _stream: None,
         stop,
     })
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 pub fn has_input() -> bool {
     use cpal::traits::HostTrait;
     cpal::default_host().default_input_device().is_some()
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn has_input() -> bool {
     false
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 pub fn open_mic(mut sink: Sink) -> Result<Source, String> {
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
     use cpal::{FromSample, SampleFormat, SizedSample};
@@ -196,9 +197,9 @@ pub fn open_mic(mut sink: Sink) -> Result<Source, String> {
     Ok(Source { _stream: Some(stream), stop: Arc::new(AtomicBool::new(false)) })
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn open_mic(_sink: Sink) -> Result<Source, String> {
-    Err("the microphone is only wired up on Windows (use --test-audio)".into())
+    Err("the microphone is only wired up on Windows and Linux (use --test-audio)".into())
 }
 
 #[cfg(test)]

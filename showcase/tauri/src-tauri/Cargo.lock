@@ -2952,6 +2952,7 @@ name = "roamies"
 version = "0.1.32"
 dependencies = [
  "global-hotkey",
+ "gtk",
  "objc2",
  "objc2-service-management",
  "serde_json",
@@ -2959,6 +2960,8 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-single-instance",
  "tauri-plugin-updater",
+ "x11rb",
+ "zbus",
 ]
 
 [[package]]

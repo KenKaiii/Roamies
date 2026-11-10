@@ -251,4 +251,10 @@
     const r = el.getBoundingClientRect();
     return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
   };
+  // Where the card is, as [x, y, w, h] (null when closed): part of the window's click shape on Linux (host.js).
+  R.panelRect = () => {
+    if (!api.isOpen) return null;
+    const r = el.getBoundingClientRect();
+    return [r.left, r.top, r.width, r.height];
+  };
 })();

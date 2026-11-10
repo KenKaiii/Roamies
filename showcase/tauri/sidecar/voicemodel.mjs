@@ -1,4 +1,4 @@
-// The speech model for voice on Windows: NVIDIA Parakeet TDT 0.6B v3, int8 ONNX export (CC-BY-4.0,
+// The speech model for voice on Windows and Linux: NVIDIA Parakeet TDT 0.6B v3, int8 ONNX export (CC-BY-4.0,
 // huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx), pinned to one commit and checked by SHA-256.
 // Downloaded once into the user's local app data; interrupted downloads resume where they stopped.
 import { createHash } from 'node:crypto';

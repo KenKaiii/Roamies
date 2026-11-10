@@ -126,6 +126,10 @@
   const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
   const CHEERS = ['Got it!', 'Nice!', 'Perfect.', 'Yes!'];
   const isMac = () => state?.platform === 'darwin';
+  const isLinux = () => state?.platform === 'linux';
+  // Wayland: no app may hold shortcuts, so these are the commands to bind in the desktop's settings (else null).
+  const bind = () => state?.bind ?? null;
+  const thisPC = () => (isLinux() ? 'this computer' : 'this PC');
   // Ask About an Area and circling while talking: macOS and Windows (the sidecar says which this computer has).
   const canSnap = () => state?.snap ?? isMac();
   const canCircle = () => state?.circle ?? isMac();
@@ -135,7 +139,8 @@
   // Keycaps for shortcuts: Apple's symbols and order on a Mac, the key names on Windows and Linux.
   const MAC_MOD = { control: '⌃', option: '⌥', shift: '⇧', command: '⌘' };
   const PC_MOD = { control: 'Ctrl', option: 'Alt', shift: 'Shift', command: 'Win' };
-  const MOD = new Proxy({}, { get: (_, k) => (isMac() ? MAC_MOD : PC_MOD)[k] });
+  const LINUX_MOD = { ...PC_MOD, command: 'Super' };
+  const MOD = new Proxy({}, { get: (_, k) => (isMac() ? MAC_MOD : isLinux() ? LINUX_MOD : PC_MOD)[k] });
   const ORDER = ['control', 'option', 'shift', 'command'];
   const ACC_MOD = { Control: 'control', Alt: 'option', Shift: 'shift', Command: 'command' };
   const keyLabel = (code) => code.replace(/^Key/, '').replace(/^Digit/, '').replace(/^Arrow/, '') .replace('Backquote', '`').replace('Minus', '-').replace('Equal', '=').replace('BracketLeft', '[').replace('BracketRight', ']').replace('Backslash', '\\').replace('Semicolon', ';').replace('Quote', "'").replace('Comma', ',').replace('Period', '.').replace('Slash', '/');
@@ -159,7 +164,7 @@
         if (!state?.voice || !vm) return [];
         return [
           { id: 'mic', title: 'Microphone', desc: this.sys.input === false ? 'No microphone found yet. Plug one in.' : 'So you can talk to me.', pane: 'privacy-microphone' },
-          { id: 'voice', title: 'My voice', desc: vm.status === 'error' ? vm.error : vm.status === 'downloading' ? `Downloading ${vm.size}. You can keep going.` : vm.status === 'ready' ? 'Speech stays on this PC.' : `One-time download, ${vm.size}. Speech stays on this PC.` },
+          { id: 'voice', title: 'My voice', desc: vm.status === 'error' ? vm.error : vm.status === 'downloading' ? `Downloading ${vm.size}. You can keep going.` : vm.status === 'ready' ? `Speech stays on ${thisPC()}.` : `One-time download, ${vm.size}. Speech stays on this PC.` },
         ];
       }
       return [
@@ -230,7 +235,7 @@
     render() {
       const list = $('perm-rows');
       const rows = this.rows();
-      $('perm-lead').textContent = isMac() ? 'Only used when you ask me something.' : rows.length ? 'One download so I can hear you. Your voice never leaves this PC.' : 'Nothing to allow here. Just one choice below.';
+      $('perm-lead').textContent = isMac() ? 'Only used when you ask me something.' : rows.length ? `One download so I can hear you. Your voice never leaves ${thisPC()}.` : 'Nothing to allow here. Just one choice below.';
       const firstPending = rows.find((r) => this.status(r.id) !== 'granted');
       list.replaceChildren(...rows.map((r) => {
         const st = this.status(r.id);
@@ -588,6 +593,8 @@
         heard.textContent = msg.code === 'permission' ? 'I need the Microphone (step 2) to hear you.' : msg.code === 'nothing_heard' ? "Didn't catch that. Try again?" : 'Something went wrong. Try again?';
         quip(msg.code === 'permission' ? 'I can’t hear you yet' : 'Again?');
       }
+      // Wayland: the Talk button turns into Send while it listens.
+      if (bind() && msg.type === 'state') keys.tryLabel();
     },
   };
   // Recorder for the two letter-key shortcuts: 'summon' (show/hide) and 'snap' (ask about an area).
@@ -596,6 +603,11 @@
     render() {
       const k = state?.keys; if (!k) return;
       $('talk-row').hidden = !state.voice;
+      const b = bind();
+      $('bind-row').hidden = !b; $('hotkey-row').hidden = !!b; $('chords').hidden = !!b;
+      $('talk-hint').textContent = b ? 'Press your talk key, talk, then press it again (or pause) to send.' : 'Hold to talk. Tap to listen hands-free.';
+      $('keys-lead').textContent = b ? 'Pick keys for these, and they work from anywhere.' : 'These work from anywhere. Change them if you like.';
+      if (b) keys.renderBind(b);
       $('chords').replaceChildren(...chords().map((c) => {
         const on = same(c, k.talk);
         const b = el('button', { className: 'px chord', type: 'button', role: 'radio', tabIndex: on ? 0 : -1 }, capsEl(capsFor(c)));
@@ -610,13 +622,27 @@
       for (const w of ['summon', 'snap']) if (keys.recording !== w && k[w]) fillCaps($(`${w}-caps`), accelCaps(k[w]));
       nav();
     },
-    // Windows can only try talking once the speech model is downloaded.
+    // Wayland: one line per command, with a Copy button (drawn again only when the commands change, so focus stays).
+    bound: '',
+    renderBind(b) {
+      const list = [['talk', 'Talk to me'], ['summon', 'Show or hide me'], ['ask', 'Ask me'], ['list', 'Your list'], ['panel', 'My panel']];
+      const sig = JSON.stringify(b);
+      if (keys.bound === sig) return;
+      keys.bound = sig;
+      $('bind-list').replaceChildren(...list.filter(([k]) => b[k]).map(([k, title]) => el('div', { className: 'bind-line' },
+        el('span', { textContent: title }),
+        el('code', { className: 'bind-cmd', id: `bind-${k}`, textContent: b[k], title: b[k] }),
+        el('button', { className: 'link', type: 'button', textContent: 'Copy', ariaLabel: `Copy the command for ${title.toLowerCase()}`, onclick: () => send({ type: 'copy_bind', which: k }) }))));
+    },
+    // Windows and Linux can only try talking once the speech model is downloaded.
     tryLabel() {
       const k = state?.keys, vm = state?.voiceModel; if (!k) return;
       const tl = $('try-label');
       if (!isMac() && vm && vm.status !== 'ready') tl.replaceChildren(vm.status === 'downloading' ? `Try it once my voice has downloaded (${pctOf(vm)}%).` : 'Download my voice in step 2 to try it.');
       // Once talking worked, the next try teaches drawing (circle something while holding the keys).
       else if (canCircle() && keys.heard && !keys.drew) tl.replaceChildren('Now hold ', capsEl(capsFor(k.talk)), ' and circle something as you ask');
+      // Wayland: a button stands in for the talk shortcut, which may not be bound yet.
+      else if (bind()) tl.replaceChildren('Try it: ', el('button', { className: 'px btn ghost', type: 'button', textContent: voice.listening ? 'Send' : 'Talk', onclick: () => send({ type: 'cli', action: 'talk' }) }), voice.listening ? '' : ' and say hi');
       else tl.replaceChildren('Try it: hold ', capsEl(capsFor(k.talk)), ' and say hi');
     },
     record(which) {
@@ -804,15 +830,19 @@
       const k = state?.keys;
       const recap = $('recap');
       recap.replaceChildren();
-      if (state?.voice && k) recap.append(el('dt', {}, capsEl(capsFor(k.talk))), el('dd', { textContent: canCircle() ? 'Hold to talk to me. Circle something to mark it' : 'Hold to talk to me' }));
-      if (k) recap.append(el('dt', {}, capsEl(accelCaps(k.summon))), el('dd', { textContent: 'Show or hide me' }));
+      const b = bind();
+      if (state?.voice && k) recap.append(el('dt', {}, capsEl(b ? ['Your talk key'] : capsFor(k.talk))), el('dd', { textContent: b ? 'Press to talk to me, again to send' : canCircle() ? 'Hold to talk to me. Circle something to mark it' : 'Hold to talk to me' }));
+      if (k) recap.append(el('dt', {}, capsEl(b ? ['Your show key'] : accelCaps(k.summon))), el('dd', { textContent: 'Show or hide me' }));
       if (k?.snap && canSnap()) recap.append(el('dt', {}, capsEl(accelCaps(k.snap))), el('dd', { textContent: 'Ask about an area of the screen' }));
       const tray = el('span', { className: 'caps' }); const cap = el('kbd', { className: 'px cap' }); cap.innerHTML = TRAY_SVG; tray.append(cap);
       recap.append(el('dt', {}, tray), el('dd', { textContent: isMac() ? 'Everything else, in the menu bar' : 'Everything else, in the system tray' }));
       // Windows keeps tray icons at the bottom right, and new ones start hidden behind the ^ arrow.
       const mac = isMac();
-      $('h-4').textContent = mac ? 'Find me up here' : 'Find me down here';
-      $('find-where').textContent = mac ? 'I live in your menu bar. Click ' : 'I live in the system tray, at the bottom right of your taskbar. Click ';
+      const linux = isLinux();
+      $('h-4').textContent = mac ? 'Find me up here' : linux ? 'Find me in the tray' : 'Find me down here';
+      $('find-where').textContent = mac ? 'I live in your menu bar. Click ' : linux ? 'I live in the system tray. Click ' : 'I live in the system tray, at the bottom right of your taskbar. Click ';
+      // Linux: GNOME shows no tray without an extension, and opening Roamies again works anywhere.
+      $('find-tip').innerHTML = linux ? "No tray on your desktop? On GNOME, add the <b>AppIndicator</b> extension. Or just open Roamies again from your apps: that opens my panel." : "Don't see me? Click the <b>^</b> arrow next to the clock. To keep me in view, drag my icon onto the taskbar.";
       $('find-tip').hidden = mac;
       $('find-bar').classList.toggle('taskbar', !mac);
       poseFn = POSE.point(1.25, mac ? -1.45 : 1.2);
@@ -1119,8 +1149,9 @@
     send({ type: 'ob_done' });
     const canTalk = state?.voice && state.keys && (isMac() || state.voiceModel?.status === 'ready');
     const talk = canTalk ? capsFor(state.keys.talk).join(isMac() ? '' : '+') : null;
-    const where = isMac() ? 'up here' : 'down here';
-    invoke('onboarding_finish', { text: talk ? `Here I am! Hold ${talk} to talk, or click my icon ${where} anytime.` : `Here I am! Click my icon ${where} anytime.` });
+    const where = isMac() ? 'click my icon up here' : isLinux() ? "open my tray icon's menu" : 'click my icon down here';
+    const how = bind() ? 'Press your talk shortcut to talk' : `Hold ${talk} to talk`;
+    invoke('onboarding_finish', { text: talk ? `Here I am! ${how}, or ${where} anytime.` : `Here I am! ${where[0].toUpperCase()}${where.slice(1)} anytime.` });
   }
   const forward = () => (cur === STEPS.length - 1 ? finish() : go(cur + 1));
   $('next').addEventListener('click', () => { if (!STEPS[cur]?.onNext?.()) forward(); });
@@ -1130,6 +1161,7 @@
   // ---------------------------------------------------------------- messages from the app
   window.__onboard = (msg) => {
     switch (msg.kind) {
+      case 'copied': quip(msg.ok ? 'Copied!' : "Couldn't copy. Select it instead?"); break;
       case 'state': {
         const first = !state;
         state = msg;
@@ -1182,13 +1214,15 @@
     const q = new URLSearchParams(location.search);
     // ?speech=1 previews an older Mac that also needs Speech recognition; ?granted=1 a Mac that already allowed everything.
     const old = q.get('speech') === '1', pre = q.get('granted') === '1' ? 'granted' : 'unknown';
-    const win = q.get('platform') === 'win32';
+    const win = q.get('platform') === 'win32' || q.get('platform') === 'linux';
     // ?platform=win32 previews Windows (&blocked=1: microphone switched off in Privacy settings; &model=downloading|ready|error).
+    // ?platform=linux&session=wayland previews a Wayland desktop (commands to bind instead of shortcuts).
     const sys = win ? { type: 'perms', mic: q.get('blocked') === '1' ? 'denied' : 'granted', input: true } : { type: 'perms', mic: pre, speech: old ? pre : 'granted', speechNeeded: old, screen: pre, accessibility: pre };
     const st = {
       // &filesAsked=1: Allow was tapped for the folders in an earlier run. &replies=voice&fish=1: voice already on.
       kind: 'state', platform: q.get('platform') || 'darwin', step: +(q.get('step') || 0), sound: true, look: q.get('look') || 'classic', size: q.get('size') || 'default', voice: true, actions: false, login: true, filesAsked: q.get('filesAsked') === '1',
       replies: q.get('replies') === 'voice' ? 'voice' : 'text', fishKey: q.get('fish') === '1',
+      bind: q.get('session') === 'wayland' ? Object.fromEntries(['summon', 'talk', 'ask', 'list', 'panel'].map((k) => [k, `'/home/sam/Apps/Roamies 0.1.33.AppImage' --${k}`])) : null,
       keys: q.get('platform') === 'win32' ? { talk: ['control', 'option'], summon: 'Control+Shift+KeyS', snap: 'Control+Shift+KeyA' } : { talk: ['control', 'option'], summon: 'Control+Alt+KeyS', snap: 'Control+Alt+KeyA' }, connected: null,
       voiceModel: win ? { status: q.get('model') || 'missing', done: q.get('model') === 'downloading' ? 281601575 : 0, total: 670479942, error: q.get('model') === 'error' ? 'Download failed. Check your internet.' : null, size: '670 MB' } : null,
       oauth: [['anthropic', 'Claude', 'Anthropic'], ['openai', 'ChatGPT', 'OpenAI']].map(([id, name, company]) => ({ id, name, company, connected: false })),
