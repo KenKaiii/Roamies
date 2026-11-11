@@ -215,6 +215,14 @@ pub fn kind_word(ct: i32) -> &'static str {
     }
 }
 
+/// One character's key events for KEYEVENTF_UNICODE as (UTF-16 unit, key up): both halves of an emoji go down
+/// before either comes up, so apps join them into one character.
+pub fn unicode_strokes(ch: char) -> Vec<(u16, bool)> {
+    let mut buf = [0u16; 2];
+    let units = ch.encode_utf16(&mut buf);
+    units.iter().map(|&u| (u, false)).chain(units.iter().map(|&u| (u, true))).collect()
+}
+
 /// Whether a type step may go ahead. Typing outside a text field fires page shortcuts, so normally the focused thing
 /// must be editable. Apps that don't show their fields to UI Automation report only the window or a pane as focused:
 /// there, right after a click at a spot, the typing goes into what was clicked.
@@ -759,6 +767,8 @@ pub fn self_test() -> Vec<(&'static str, bool)> {
         ("an app is found by its own name", app_matches("Microsoft Edge", "msedge", "edge") && !app_matches("Microsoft Edge", "msedge", "")),
         ("'browser' finds a browser, not other apps", app_matches("Google Chrome", "chrome", "browser") && !app_matches("Notepad", "notepad", "browser")),
         ("typing after a click in an app that hides its fields", may_type(false, Some(CT_WINDOW), true) && may_type(false, Some(CT_PANE), true)),
+        ("a character types as one key down and up", unicode_strokes('ü') == vec![(0xFC, false), (0xFC, true)]),
+        ("an emoji's two halves go down together, then up", unicode_strokes('\u{1F600}') == vec![(0xD83D, false), (0xDE00, false), (0xD83D, true), (0xDE00, true)]),
         ("no typing in such an app without a click first", !may_type(false, Some(CT_WINDOW), false)),
         ("no typing on a web page outside a field, even after a click", !may_type(false, Some(CT_DOCUMENT), true)),
         ("typing in a real text field", may_type(true, Some(CT_EDIT), false)),
