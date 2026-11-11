@@ -343,10 +343,12 @@
         el('div', { className: 'group' }, state.providers.filter((p) => p.on || p.method).map((p) => [
           el('div', { className: 'setting' },
             el('span', {}, p.label),
-            p.on ? el('span', { className: 'ok' }, el('span', { className: 'led on', 'aria-hidden': 'true' }), 'Signed in')
+            p.on ? el('span', { className: 'ok' }, el('span', { className: 'led on', 'aria-hidden': 'true' }), p.method === 'local' ? 'Connected' : 'Signed in')
+              : p.method === 'local' ? link('Connect', () => act('local:scan'), { k: 'local:scan', aria: 'Connect to Ollama on this computer' })
               : state.loggingIn === p.id ? el('span', { className: 'waiting', textContent: 'Signing in…' })
               : p.method === 'oauth' ? (p.key ? el('span', { className: 'links' }, signIn(p), addKey(p)) : signIn(p))
               : addKey(p)),
+          p.method === 'local' && p.hint ? el('p', { className: 'empty', textContent: p.hint }) : null,
           p.on || !(p.method === 'key' || p.key) ? null : keyForm(p.id, p.label, (key, kind) => send({ type: 'panel_key', provider: p.id, kind, key }), p.kinds),
         ]).flat())),
     ];

@@ -37,6 +37,7 @@ import { createSecrets, retryLoad } from './secrets.mjs';
 import { createActivity } from './activity.mjs';
 import { canCircle, canSnap, hasHands, hasHotkeys, hasVoice, linuxSession, needsVoiceModel, platformLine, seesPointer } from './platform.mjs';
 import { keyCards, keyKinds, signInCards } from './providers.mjs';
+import { LOCAL_LABEL, LOCAL_PROVIDER, MIN_CONTEXT, OLLAMA_KEY, omniModel, scanLocal } from './local.mjs';
 
 console.log = console.info = (...a) => console.error(...a);
 const send = (o) => process.stdout.write(JSON.stringify(o) + '\n');
@@ -70,8 +71,9 @@ const OAUTH = {
   // The current sign-in's ID token skips OpenAI's account picker.
   openai: async (cb) => { const previous = await auth.getCredentials(OPENAI_CHATGPT_KEY).catch(() => null); return loginChatGPT(cb, previous ? { previous } : {}); },
 };
-const PROVIDER_LABELS = Object.fromEntries(AUTH_PROVIDERS.map((p) => [p.value, p.label]));
-const MENU_PROVIDERS = ['anthropic', 'openai', ...AUTH_PROVIDERS.map((p) => p.value)].filter((v, i, a) => a.indexOf(v) === i);
+const PROVIDER_LABELS = { ...Object.fromEntries(AUTH_PROVIDERS.map((p) => [p.value, p.label])), [LOCAL_PROVIDER]: LOCAL_LABEL };
+// Local (Ollama) last: it's picked by default only when nothing else is connected.
+const MENU_PROVIDERS = ['anthropic', 'openai', ...AUTH_PROVIDERS.map((p) => p.value), LOCAL_PROVIDER].filter((v, i, a) => a.indexOf(v) === i);
 const FAST = { anthropic: 'claude-haiku-5-5', openai: 'gpt-6-luna', gemini: 'gemini-3.8-flash' };
 
 // ---------- config ----------
@@ -193,8 +195,12 @@ const signedIn = new Map();
 // Per method, for the guide's cards: Claude and ChatGPT can be signed in, have a key, or both. keyOn is per kind
 // of key (keyCards' ids): Kimi and Xiaomi each take a plan key and a pay-per-token key, saved apart.
 const oauthOn = new Map(), keyOn = new Map(), storedKeys = new Set();
-async function refreshAuth() {
-  for (const p of MENU_PROVIDERS) signedIn.set(p, await auth.hasProviderAuth(p).catch(() => false));
+// What Ollama served at the last scan: { reachable, reason, models, skipped }.
+let local = { reachable: false, models: [], skipped: 0 };
+async function refreshAuth({ force = false } = {}) {
+  local = await scanLocal(auth, { force });
+  if (local.models.length) storedKeys.add(OLLAMA_KEY); else storedKeys.delete(OLLAMA_KEY);
+  for (const p of MENU_PROVIDERS) signedIn.set(p, p === LOCAL_PROVIDER ? local.models.length > 0 : await auth.hasProviderAuth(p).catch(() => false));
   for (const p of Object.keys(OAUTH)) {
     oauthOn.set(p, p === 'anthropic' ? await auth.hasClaudeCodeLogin().catch(() => false) : await auth.hasCredentials(dualAuthProvider(p)?.oauthKey ?? p).catch(() => false));
   }
@@ -207,12 +213,13 @@ async function refreshAuth() {
 // Some models run on only one kind of key (Kimi K2.8 Preview on a Kimi Code plan key, MiMo UltraSpeed on API Credits).
 const canRun = (p, id) => !!signedIn.get(p) && getAuthStorageKeys(p, id).some((k) => k === p || storedKeys.has(k));
 const runnable = (p) => getModelsForProvider(p).filter((m) => canRun(p, m.id));
+const omniModelId = () => { const n = omniModel(local.models); return n && local.models.find((m) => m.name === n)?.id; };
 function ensureModel() {
   if (config.provider && getModel(config.model) && canRun(config.provider, config.model)) return true;
   const p = ['anthropic', 'openai', 'gemini', ...MENU_PROVIDERS].find((x) => runnable(x).length);
   if (!p) return false;
   config.provider = p;
-  config.model = [FAST[p], getDefaultModel(p).id].find((id) => id && canRun(p, id)) ?? runnable(p)[0].id;
+  config.model = [FAST[p], p === LOCAL_PROVIDER ? omniModelId() : getDefaultModel(p).id].find((id) => id && canRun(p, id)) ?? runnable(p)[0].id;
   saveConfig();
   return true;
 }
@@ -979,6 +986,15 @@ async function apiKeyLogin(id, given) {
   else say(`Got it. ${PROVIDER_LABELS[provider]} is connected.`, 'happy');
 }
 
+// Local (Ollama): look again for the server and its models, and use one if nothing else is picked.
+async function connectLocal() {
+  await refreshAuth({ force: true });
+  const ok = signedIn.get(LOCAL_PROVIDER);
+  if (ok && !canRun(config.provider, config.model)) ensureModel();
+  agent = null; menu();
+  panelNote(ok ? `Local AI is connected (${local.models.length} model${local.models.length === 1 ? '' : 's'}).` : (localHint() ?? 'Could not reach Ollama.'), !ok);
+}
+
 function openUrl(url) {
   if (process.platform === 'win32') return void winOpen(url);
   const [cmd, args] = process.platform === 'darwin' ? ['open', [url]] : ['xdg-open', [url]];
@@ -1170,6 +1186,13 @@ function panel() {
   setImmediate(() => { panelQueued = false; if (panelOpen) send({ type: 'panel', msg: { kind: 'state', state: panelState() } }); });
 }
 const panelNote = (text, bad = false) => panelOpen && send({ type: 'panel', msg: { kind: 'note', text, bad } });
+// One line under the Local row: why it isn't connected, or what to know about it.
+function localHint() {
+  if (!local.reachable) return 'Start Ollama, then Connect.';
+  if (!local.models.length) return local.skipped ? 'Ollama has no model that supports tools. Try: ollama pull lfm3-omni' : 'Ollama has no models yet. Try: ollama pull lfm3-omni';
+  const small = local.models.find((m) => m.ctx && m.ctx < MIN_CONTEXT);
+  return small ? `${small.name} runs with a ${small.ctx}-token window, too small for me. Start Ollama with OLLAMA_CONTEXT_LENGTH=16384.` : null;
+}
 function panelState() {
   const current = getModel(config.model);
   const doing = activity.doing();
@@ -1185,7 +1208,8 @@ function panelState() {
       const on = !!signedIn.get(p);
       return {
         id: p, label: PROVIDER_LABELS[p] ?? p, on,
-        method: OAUTH[p] && (!meta || meta.methods.includes('oauth')) ? 'oauth' : meta?.methods?.includes('apikey') ? 'key' : null,
+        method: p === LOCAL_PROVIDER ? 'local' : OAUTH[p] && (!meta || meta.methods.includes('oauth')) ? 'oauth' : meta?.methods?.includes('apikey') ? 'key' : null,
+        ...(p === LOCAL_PROVIDER ? { hint: localHint() } : {}),
         key: !!meta?.methods?.includes('apikey'), // also takes an API key (Claude and ChatGPT next to their sign-in)
         // Kimi and Xiaomi: which kind of key is being added (plan or pay-per-token).
         kinds: meta && keyKinds(meta).length > 1 ? keyKinds(meta).map(([id, label, billing]) => ({ id, label, billing })) : null,
@@ -1340,6 +1364,7 @@ async function onMenu(id) {
     say(`Switched to ${getModel(config.model)?.name ?? config.model}.`, 'happy');
   } else if (id.startsWith('login:')) oauthLogin(id.slice(6));
   else if (id.startsWith('key:')) apiKeyLogin(id.slice(4));
+  else if (id === 'local:scan') await connectLocal();
   else if (id.startsWith('size:') && SIZES.some(([s]) => s === id.slice(5))) { config.size = id.slice(5); saveConfig(); ui({ kind: 'size', size: config.size }); menu(); }
   else if (id.startsWith('look:')) setLook(id.slice(5));
   else if (id === 'replies:text') setReplies('text');
