@@ -616,6 +616,15 @@
         b.onclick = () => { if (!on) { send({ type: 'set_keys', talk: c }); quip('Ooh, fancy.'); } };
         return b;
       }));
+      // Type to me: a quick tap of a pair. Picking the pair the other shortcut has swaps the two (the sidecar does it).
+      $('write-chords').replaceChildren(...chords().map((c) => {
+        const on = !!k.write && same(c, k.write);
+        const b = el('button', { className: 'px chord', type: 'button', role: 'radio', tabIndex: on ? 0 : -1 }, capsEl(capsFor(c)));
+        b.setAttribute('aria-checked', String(on));
+        b.setAttribute('aria-label', `Tap ${c.map((x) => (isMac() ? x[0].toUpperCase() + x.slice(1) : PC_MOD[x])).join(' and ')}`);
+        b.onclick = () => { if (!on) { send({ type: 'set_keys', write: c }); quip('Tap, tap.'); } };
+        return b;
+      }));
       keys.tryLabel();
       $('snap-line').hidden = !canSnap() || !k.snap;
       $('draw-tip').hidden = !canCircle();
@@ -721,7 +730,7 @@
     },
   };
 
-  for (const id of ['chords', 'looks', 'sizes']) $(id).addEventListener('keydown', (e) => {
+  for (const id of ['chords', 'write-chords', 'looks', 'sizes']) $(id).addEventListener('keydown', (e) => {
     if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
     e.preventDefault();
     const btns = [...$(id).children], i = btns.findIndex((b) => b.getAttribute('aria-checked') === 'true');
@@ -833,6 +842,7 @@
       recap.replaceChildren();
       const b = bind();
       if (state?.voice && k) recap.append(el('dt', {}, capsEl(b ? ['Your talk key'] : capsFor(k.talk))), el('dd', { textContent: b ? 'Press to talk to me, again to send' : canCircle() ? 'Hold to talk to me. Circle something to mark it' : 'Hold to talk to me' }));
+      if (k?.write && !b) recap.append(el('dt', {}, capsEl(capsFor(k.write))), el('dd', { textContent: 'Tap, then type to me' }));
       if (k) recap.append(el('dt', {}, capsEl(b ? ['Your show key'] : accelCaps(k.summon))), el('dd', { textContent: 'Show or hide me' }));
       if (k?.snap && canSnap()) recap.append(el('dt', {}, capsEl(accelCaps(k.snap))), el('dd', { textContent: 'Ask about an area of the screen' }));
       const tray = el('span', { className: 'caps' }); const cap = el('kbd', { className: 'px cap' }); cap.innerHTML = TRAY_SVG; tray.append(cap);
@@ -1229,7 +1239,7 @@
       kind: 'state', platform: q.get('platform') || 'darwin', step: +(q.get('step') || 0), sound: true, look: q.get('look') || 'classic', size: q.get('size') || 'default', voice: true, actions: false, login: true, filesAsked: q.get('filesAsked') === '1',
       replies: q.get('replies') === 'voice' ? 'voice' : 'text', fishKey: q.get('fish') === '1',
       bind: q.get('session') === 'wayland' ? Object.fromEntries(['summon', 'talk', 'ask', 'list', 'panel'].map((k) => [k, `'/home/sam/Apps/Roamies 0.1.33.AppImage' --${k}`])) : null,
-      keys: q.get('platform') === 'win32' ? { talk: ['control', 'option'], summon: 'Control+Shift+KeyS', snap: 'Control+Shift+KeyA' } : { talk: ['control', 'option'], summon: 'Control+Alt+KeyS', snap: 'Control+Alt+KeyA' }, connected: null,
+      keys: q.get('platform') === 'win32' ? { talk: ['control', 'option'], write: ['control', 'shift'], summon: 'Control+Shift+KeyS', snap: 'Control+Shift+KeyA' } : { talk: ['control', 'option'], write: win ? ['control', 'shift'] : ['option', 'command'], summon: 'Control+Alt+KeyS', snap: 'Control+Alt+KeyA' }, connected: null,
       voiceModel: win ? { status: q.get('model') || 'missing', done: q.get('model') === 'downloading' ? 281601575 : 0, total: 670479942, error: q.get('model') === 'error' ? 'Download failed. Check your internet.' : null, size: '670 MB' } : null,
       oauth: [['anthropic', 'Claude', 'Anthropic'], ['openai', 'ChatGPT', 'OpenAI']].map(([id, name, company]) => ({ id, name, company, connected: false })),
       apikey: [['anthropic', 'Anthropic'], ['openai', 'OpenAI'], ['gemini', 'Gemini'], ['xai', 'xAI'], ['kimi-code', 'Kimi Code'], ['moonshot', 'Moonshot'], ['glm', 'Z.AI'], ['minimax', 'MiniMax'],
@@ -1273,7 +1283,14 @@
           if (m.key === 'bad') return window.__onboard?.({ kind: 'fish', ok: false, error: "That key didn't work. Copy it again from fish.audio and retry." });
           Object.assign(st, { fishKey: true, replies: 'voice' }); window.__onboard?.({ kind: 'fish', ok: true }); window.__onboard?.({ ...st });
         }, 900);
-      } else if (m.type === 'set_keys') { if (m.talk) st.keys.talk = m.talk; if (m.summon) st.keys.summon = m.summon; if (m.snap) st.keys.snap = m.snap; reply({ kind: 'keys', keys: st.keys }); }
+      } else if (m.type === 'set_keys') {
+        // As the sidecar does: talk and type never share a pair, so picking the other one's pair swaps them.
+        const k = st.keys, both = (a, b) => a.every((x) => b.includes(x));
+        if (m.talk) { if (both(m.talk, k.write)) k.write = k.talk; k.talk = m.talk; }
+        if (m.write) { if (both(m.write, k.talk)) k.talk = k.write; k.write = m.write; }
+        if (m.summon) k.summon = m.summon; if (m.snap) k.snap = m.snap;
+        reply({ kind: 'keys', keys: k });
+      }
       else if (m.type === 'chat_start' || m.type === 'chat_answer') {
         // A canned chat: &chat=nomodel previews not being signed in.
         if (q.get('chat') === 'nomodel') return reply({ kind: 'chat_state', status: 'no_model' }, 300);

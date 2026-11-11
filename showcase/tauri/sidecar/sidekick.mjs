@@ -35,7 +35,7 @@ import { createSpeaker } from './speaker.mjs';
 import { DEFAULT_VOICE, FISH_CHOICES } from './fish.mjs';
 import { createSecrets, retryLoad } from './secrets.mjs';
 import { createActivity } from './activity.mjs';
-import { canCircle, canSnap, hasHands, hasHotkeys, hasVoice, linuxSession, micTrouble, needsVoiceModel, platformLine, seesPointer } from './platform.mjs';
+import { canCircle, canSnap, hasHands, hasHotkeys, hasVoice, linuxSession, micTrouble, needsVoiceModel, platformLine, samePair, seesPointer, writeChord, writeChords } from './platform.mjs';
 import { keyCards, keyKinds, signInCards } from './providers.mjs';
 import { activityLogs, buildReport, reportDir, reportName, reveal, run, scrubConfig, tail } from './diagnostics.mjs';
 
@@ -156,14 +156,18 @@ const MOD_SYMBOL = { control: '⌃', option: '⌥', shift: '⇧', command: '⌘'
 const MOD_WORD = process.platform === 'darwin'
   ? { control: 'Control', option: 'Option', shift: 'Shift', command: 'Command' }
   : { control: 'Ctrl', option: 'Alt', shift: 'Shift', command: LINUX ? 'Super' : 'Win' };
-const keys = () => ({ ...DEFAULT_KEYS, ...(config.keys ?? {}) });
+// write: the type-to-ask pair (a quick tap of two modifier keys), never the same pair as talk (platform.mjs).
+const keys = () => { const k = { ...DEFAULT_KEYS, ...(config.keys ?? {}) }; return { ...k, write: writeChord(process.platform, k.talk, k.write) }; };
 const sortMods = (m) => [...m].sort((a, b) => MOD_ORDER.indexOf(a) - MOD_ORDER.indexOf(b));
 const talkSymbols = () => (process.platform === 'darwin' ? sortMods(keys().talk).map((m) => MOD_SYMBOL[m]).join('') : talkWords());
 const talkWords = () => sortMods(keys().talk).map((m) => MOD_WORD[m]).join('+');
+const writeWords = () => sortMods(keys().write).map((m) => MOD_WORD[m]).join('+');
+const writeSymbols = () => (process.platform === 'darwin' ? sortMods(keys().write).map((m) => MOD_SYMBOL[m]).join('') : writeWords());
 const validTalk = (t) => Array.isArray(t) && t.length === 2 && new Set(t).size === 2 && t.every((m) => MOD_ORDER.includes(m));
 // Accelerators look like "Control+Alt+KeyS": at least one of Control/Alt/Command, then one key code.
 const validSummon = (a) => typeof a === 'string' && /^((Control|Alt|Shift|Command)\+)+[A-Za-z0-9]+$/.test(a) && /(Control|Alt|Command)\+/.test(a);
-const sendKeys = () => send({ type: 'keybinds', ...keys() });
+// The shell watches for the type-to-ask tap itself; on Wayland it can't see the keys, so it gets no pair.
+const sendKeys = () => send({ type: 'keybinds', ...keys(), write: HOTKEYS_OK ? keys().write : undefined });
 // How to talk, in a sentence: hold the keys, or on Wayland (where no app can watch the keyboard) press the shortcut
 // they bound to `roamies --talk`, which starts listening and sends on a second press or a pause.
 const talkHow = () => (HOTKEYS_OK ? `Hold ${talkWords().replace('+', ' and ')}` : 'Press your talk shortcut');
@@ -370,7 +374,7 @@ const livePrompt = (context = '') => {
   const turn = `Live state (current as of this moment):
 ${frontNow ? `${frontNow}\n` : ''}- Editing files, running commands and controlling other apps: ${config.allowActions ? 'ALLOWED' : `switched OFF (tell the user to turn on "Allow File Edits & Commands" on the Behavior page in ${PANEL} if they want it)`}.
 ${VOICE_OK ? `- Voice: ${!config.voice ? 'off' : voiceReady() ? `on; ${HOTKEYS_OK ? `${userName} holds ${talkWords()} to talk` : `${userName} presses the key they bound to ${BIND.talk} to start talking and again to send (a pause sends too)`}${config.autoListen ? '. Auto-listen is on: when your reply to a spoken question ends with a question, the mic opens by itself for their answer' : ''}` : `on, but the speech model isn't downloaded yet (${voiceModel.status === 'downloading' ? 'downloading now' : `the Voice page in ${PANEL}`})`}.` : ''}
-- Shortcuts: ${HOTKEYS_OK ? `show or hide you ${keyWords(keys().summon)}` : `on this Wayland desktop no app can have global shortcuts, so ${userName} binds keys to these commands in their desktop's keyboard settings: ${BIND.summon} (show or hide you), ${BIND.ask} (ask you), ${BIND.list} (the list), ${BIND.talk} (talk) and ${BIND.panel} (the panel)`}${SNAP_OK ? `; ask about an area ${keyWords(keys().snap)}` : ''}${CIRCLE_OK ? "; while holding the talk keys, moving the cursor round something circles it (no clicking; it snaps shut with a click when the circle closes, and loose lines don't count) and you'll see what they circled" : ''}${HOTKEYS_OK ? `; show the list ${keyWords(keys().list)}` : ''}.${HANDS_OK ? '' : ' Asking about an area, reading app windows, finding things on screen by their words and working other apps need the Roamies app, which isn\'t running here; draw there with x, y from a screenshot.'}`;
+- Shortcuts: ${HOTKEYS_OK ? `type a question to you: a quick tap of ${writeWords()} (press both and let go), which opens a text field beside the cursor (Enter sends, Shift+Enter adds a line, Esc or another tap closes it); show or hide you ${keyWords(keys().summon)}` : `on this Wayland desktop no app can have global shortcuts, so ${userName} binds keys to these commands in their desktop's keyboard settings: ${BIND.summon} (show or hide you), ${BIND.ask} (ask you), ${BIND.list} (the list), ${BIND.talk} (talk) and ${BIND.panel} (the panel)`}${SNAP_OK ? `; ask about an area ${keyWords(keys().snap)}` : ''}${CIRCLE_OK ? "; while holding the talk keys, moving the cursor round something circles it (no clicking; it snaps shut with a click when the circle closes, and loose lines don't count) and you'll see what they circled" : ''}${HOTKEYS_OK ? `; show the list ${keyWords(keys().list)}` : ''}.${HANDS_OK ? '' : ' Asking about an area, reading app windows, finding things on screen by their words and working other apps need the Roamies app, which isn\'t running here; draw there with x, y from a screenshot.'}`;
   const memory = `${open ? `Open commitments:\n${open}` : 'No open commitments.'}${done ? `\nDone today (ticked off on the list or by you; still shown struck through until midnight):\n${done}` : ''}
 ${facts.length ? `What you know about ${userName}${total > facts.length ? ` (${facts.length} most relevant of ${total})` : ''}:\n${facts.map((f) => `- ${f.id}: ${f.text}`).join('\n')}` : `You don't know anything lasting about ${userName} yet.`}`;
   return { turn, memory };
@@ -1253,6 +1257,8 @@ function panelState() {
     wayland: WAYLAND, bind: HOTKEYS_OK ? null : BIND,
     status: busy ? { state: 'busy', text: doing ?? 'Thinking' } : loggingIn ? { state: 'busy', text: loginStatus || `Signing in to ${PROVIDER_LABELS[loggingIn]}` } : current ? { state: 'ready', text: 'Ready' } : { state: 'off', text: 'Not signed in' },
     busy, canNew: !busy && !!session?.messages.length,
+    // The type-to-ask shortcut, for the Ask button's tooltip (none on Wayland).
+    askKeys: HOTKEYS_OK ? writeSymbols() : null,
     model: current ? { provider: config.provider, id: config.model, name: current.name, providerLabel: PROVIDER_LABELS[config.provider] ?? config.provider } : null,
     providers: MENU_PROVIDERS.map((p) => {
       const meta = AUTH_PROVIDERS.find((x) => x.value === p);
@@ -1385,13 +1391,28 @@ function shellAnswer(m) {
   if (done) { shellCalls.delete(m.id); done(m); }
 }
 
+// Type to ask: a text field beside the cursor (bar: the overlay's ask-bar.js), from the Ask button, the tray,
+// roamies --ask, or a tap of the typing shortcut. That tap opens it, or closes it when it's open, and what's sent
+// from it interrupts a reply that's still running, as talking over it does.
+let barAsk = null;
+async function typeToAsk({ interrupt = false } = {}) {
+  warmUp();
+  const ctl = barAsk = new AbortController();
+  const text = await ask({ placeholder: 'Ask me anything…', bar: true }, ctl.signal);
+  if (barAsk === ctl) barAsk = null;
+  if (text?.trim()) enqueue(text.trim(), { interrupt });
+}
+function onWriteTap() {
+  if (onboarding) return;
+  logLine('write_tap', { open: !!barAsk });
+  if (barAsk) barAsk.abort();
+  else typeToAsk({ interrupt: true }).catch((e) => console.error('ask', e));
+}
+
 async function onMenu(id) {
   if (id === 'show') ui({ kind: 'summon', show: true });
-  else if (id === 'ask') {
-    warmUp();
-    const text = await ask({ placeholder: 'Ask me anything…' });
-    if (text?.trim()) enqueue(text.trim());
-  } else if (id === 'stop') { const cancelled = busy; endIntro(); controller?.abort(); speech.stop(); ink.stop(cancelled); }
+  else if (id === 'ask') await typeToAsk();
+  else if (id === 'stop') { const cancelled = busy; endIntro(); controller?.abort(); speech.stop(); ink.stop(cancelled); }
   else if (id === 'new') {
     endIntro();
     freshSession('new'); menu();
@@ -1631,8 +1652,18 @@ async function onGuide(m) {
   else if (m.type === 'ob_look') setLook(m.look);
   else if (m.type === 'ob_size' && SIZES.some(([s]) => s === m.size)) { config.size = m.size; saveConfig(); ui({ kind: 'size', size: config.size }); menu(); }
   else if (m.type === 'set_keys') {
-    const next = { ...keys() };
-    if (m.talk !== undefined) { if (!validTalk(m.talk)) return ob({ kind: 'keys', keys: keys(), error: 'Pick two different modifier keys.' }); next.talk = m.talk; }
+    const now = keys(), next = { ...now };
+    // Talk and type-to-ask never share a pair: picking the pair the other one has swaps the two.
+    if (m.talk !== undefined) {
+      if (!validTalk(m.talk)) return ob({ kind: 'keys', keys: keys(), error: 'Pick two different modifier keys.' });
+      if (samePair(m.talk, now.write)) next.write = now.talk;
+      next.talk = m.talk;
+    }
+    if (m.write !== undefined) {
+      if (!writeChords(process.platform).some((c) => samePair(c, m.write))) return ob({ kind: 'keys', keys: keys(), error: 'Pick one of the pairs shown.' });
+      if (samePair(m.write, next.talk)) next.talk = now.write;
+      next.write = m.write;
+    }
     for (const which of ['summon', 'snap', 'list']) {
       if (m[which] === undefined) continue;
       if (!validSummon(m[which])) return ob({ kind: 'keys', keys: keys(), error: 'Use at least one of Control, Option or Command, plus a key.' });
@@ -1641,7 +1672,7 @@ async function onGuide(m) {
     }
     keysBefore = keys();
     config.keys = next; saveConfig(); sendKeys(); menu();
-    ob({ kind: 'keys', keys: next });
+    ob({ kind: 'keys', keys: keys() });
   } else if (m.type === 'keybind_error') {
     // The OS refused the new show/hide shortcut (another app owns it): put the old one back.
     if (keysBefore && ['summon', 'snap', 'list'].includes(m.which)) { config.keys = { ...keys(), [m.which]: keysBefore[m.which] }; saveConfig(); sendKeys(); menu(); }
@@ -1676,6 +1707,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   } else if (m.type?.startsWith('ob_') || m.type?.startsWith('chat_') || m.type === 'set_keys' || m.type === 'set_actions' || m.type === 'set_login' || m.type === 'keybind_error') onGuide(m).catch((e) => console.error('guide', e));
   else if (m.type?.startsWith('voice')) onVoice(m);
   else if (m.type === 'snap') areaSnap();
+  else if (m.type === 'write_tap') onWriteTap();
   else if (m.type === 'auto_listen') {
     // Still the latest reply, nothing running since, and still switched on: listen once, hands-free.
     if (m.turn !== autoTurn || busy || !autoListenOn()) return;

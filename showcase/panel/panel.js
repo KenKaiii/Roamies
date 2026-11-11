@@ -31,8 +31,8 @@
     n.append(...kids.flat().filter((c) => c != null && c !== false));
     return n;
   };
-  const btn = (label, onclick, { kind = 'ghost', k, disabled, wide, aria } = {}) =>
-    el('button', { className: `px btn ${kind}${wide ? ' wide' : ''}`, type: 'button', textContent: label, disabled, 'data-k': k, 'aria-label': aria, on: { click: onclick } });
+  const btn = (label, onclick, { kind = 'ghost', k, disabled, wide, aria, title } = {}) =>
+    el('button', { className: `px btn ${kind}${wide ? ' wide' : ''}`, type: 'button', textContent: label, disabled, title, 'data-k': k, 'aria-label': aria, on: { click: onclick } });
   const link = (label, onclick, { k, danger, aria, disabled } = {}) =>
     el('button', { className: `link${danger ? ' danger' : ''}`, type: 'button', textContent: label, 'data-k': k, 'aria-label': aria, disabled, on: { click: onclick } });
   // A row's action, played out: the row steps out, then the action goes. Re-rendering brings the list in line.
@@ -267,7 +267,9 @@
       el('div', { className: 'group' },
         el('h2', { className: 'sr-only', textContent: 'Actions' }),
         el('div', { className: 'actions' },
-          btn('Ask', () => act('ask', true), { kind: u.available ? 'ghost' : 'primary', k: 'ask', disabled: state.busy, aria: `Ask ${state.name}` }),
+          // askKeys: the type-to-ask shortcut (a tap of two modifier keys), so it can be learnt from the button.
+          btn('Ask', () => act('ask', true), { kind: u.available ? 'ghost' : 'primary', k: 'ask', disabled: state.busy,
+            aria: state.askKeys ? `Ask ${state.name}, or tap ${state.askKeys} anywhere` : `Ask ${state.name}`, title: state.askKeys ? `Or tap ${state.askKeys} anywhere` : null }),
           btn('Show list', () => act('list', true), { k: 'list' }),
           state.snap ?? mac ? btn('Ask about an area', () => act('snap', true), { k: 'snap' }) : null,
           state.busy ? btn('Stop', () => act('stop'), { k: 'stop' }) : btn('New chat', () => act('new'), { k: 'new', disabled: !state.canNew, aria: 'Start a new conversation' }),
@@ -715,7 +717,7 @@
       size: 'default', sizes: [['default', 'Default'], ['small', 'Small'], ['cursor', 'Cursor']],
       replies: 'voice', fishKey: true, fishModel: 'drama-3', fishFree: false,
       fishModels: [{ id: 'drama-3', name: 'Drama 3', perM: 50, promo: { perM: 10, until: '2026-12-01T08:00:00Z' } }, { id: 's2.1-pro', name: 'S2.1 Pro', perM: 15 }],
-      voice: { on: true, keys: '⌃⌥', ready: true, mac: true, mute: true, download: null },
+      voice: { on: true, keys: '⌃⌥', ready: true, mac: true, mute: true, download: null }, askKeys: '⌥⌘',
       sound: true, actions: false, login: { on: true },
       update: { available: new URLSearchParams(location.search).has('update') ? '0.9.1' : null, installing: false, checking: false, result: null },
       intro: false,
