@@ -202,6 +202,14 @@ const GIT_SAFE = {
   GIT_CONFIG_KEY_3: 'core.hooksPath', GIT_CONFIG_VALUE_3: '/dev/null',
 };
 
+/** Puts text on the clipboard; true when it got there. It goes in through stdin (Linux: through the app itself,
+ *  askShell), so nothing in it is ever parsed as a command. */
+export const copyText = (text, askShell) => (LINUX ? askShell({ type: 'clipboard', text: String(text) }).then((r) => !!r?.ok) : new Promise((res) => {
+  const [cmd, args] = process.platform === 'darwin' ? ['pbcopy', []] : process.platform === 'win32' ? ['powershell', ['-NoProfile', '-NonInteractive', '-Command', '$input | Set-Clipboard']] : ['xclip', ['-selection', 'clipboard']];
+  const p = execFile(cmd, args, { timeout: 5000, windowsHide: true }, (err) => res(!err));
+  p.stdin?.end(String(text));
+}));
+
 // askShell: Linux asks the app itself for screenshots and copying ({type:'screenshot'|'clipboard', …} → its answer).
 export function createTools({ allowActions, ui, ask, openUrl, onCommitments, showList, fmtWhen, commitmentsText, userName, onPlan = () => {}, speak = () => false, onHandoff = () => {}, watchClicks = () => {}, onInkGone = () => {}, askShell = async () => ({ ok: false, error: 'Roamies isn\'t running.' }) }) {
   let axNudged = 0;
@@ -423,12 +431,7 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, sho
   // Steps that change what a window shows: the agent doing one is the screen changing under a drawing.
   const CHANGING = new Set(['click', 'click_text', 'press_button', 'key', 'click_at', 'choose']);
   const agentChangesScreen = () => { if (windowBound() && !ink.active) screenChanged('agent'); };
-  // Copied text goes to the clipboard through stdin, so nothing in it is ever parsed as a command.
-  const toClipboard = (text) => (LINUX ? askShell({ type: 'clipboard', text: String(text) }).then((r) => !!r?.ok) : new Promise((res) => {
-    const [cmd, args] = process.platform === 'darwin' ? ['pbcopy', []] : process.platform === 'win32' ? ['powershell', ['-NoProfile', '-NonInteractive', '-Command', '$input | Set-Clipboard']] : ['xclip', ['-selection', 'clipboard']];
-    const p = execFile(cmd, args, { timeout: 5000, windowsHide: true }, (err) => res(!err));
-    p.stdin?.end(String(text));
-  }));
+  const toClipboard = (text) => copyText(text, askShell);
   // How each kind of place is found. retry: just after a click, when a menu or dialog may still be opening.
   function lookups(spec, retry) {
     let live = null, shotOk = null, controls = null, fitQueue = null, wins = null;

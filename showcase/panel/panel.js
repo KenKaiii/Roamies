@@ -148,7 +148,7 @@
     b.hidden = false; b.textContent = label; b.disabled = off;
     b.className = `px btn mini ${kind}`;
     b.setAttribute('aria-label', aria);
-    b.title = u.result && !u.result.ok && !v && !u.checking ? `Couldn't check: ${u.result.error ?? 'unknown error'}` : '';
+    b.title = u.result && !u.result.ok && !v && !u.checking ? u.result.error ?? "Couldn't check for updates." : '';
     clearTimeout(freshTimer);
     if (fresh) freshTimer = setTimeout(() => state && updateButton(), FRESH - (Date.now() - u.result.at) + 50);
   }
@@ -500,7 +500,8 @@
       group('Behavior', 'What I may do, and when I start.', null,
         toggle('Sound effects', null, state.sound, () => act('sound'), 'sound'),
         toggle('Allow file edits and commands', 'Change files and run commands', state.actions, () => act('actions'), 'actions'),
-        state.voice ? toggle('Auto-listen', state.voice.on ? 'Open the mic when I end on a question' : 'Needs Voice control on', state.voice.autoListen, () => act('autolisten'), 'autolisten') : null,
+        state.voice ? toggle('Auto-listen', state.voice.on ? 'Mic opens when I ask you something.' : 'Needs Voice control on', state.voice.autoListen, () => act('autolisten'), 'autolisten') : null,
+        state.voice?.mac ? toggle('Wake word', state.voice.on ? 'Say “Hey Roamies” to talk. Mic stays on.' : 'Needs Voice control on', state.voice.wakeWord, () => act('wakeword'), 'wakeword') : null,
         state.login ? toggle('Open at login', null, state.login.on, () => act('login'), 'login') : null),
       b ? group('Shortcuts', 'Add these as custom shortcuts in your keyboard settings, with any keys you like.', null,
         BIND_ROWS.filter(([k]) => b[k]).map(([k, label]) => el('div', { className: 'setting' },
@@ -538,7 +539,9 @@
         el('div', { className: 'links' },
           link('Setup guide', () => act('setup', true), { k: 'setup' }),
           link('Show logs', () => act('logs'), { k: 'logs' }),
-          link('Save diagnostics', () => act('diagnostics'), { k: 'diagnostics', aria: 'Save a diagnostics file to send when something goes wrong' }))),
+          link('Save diagnostics', () => act('diagnostics'), { k: 'diagnostics', aria: 'Save a diagnostics file to send when something goes wrong' }),
+          // Only once there is one: the latest error anyone saw, in full, for pasting into a report.
+          state.problem ? link('Copy last error', copyProblem, { k: 'copy-problem' }) : null)),
     ];
   }
 
@@ -576,11 +579,15 @@
   let resizeTimer = 0;
   addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => state && render(), 120); });
 
+  // copy: the app has the full error behind this line; Copy details puts it on the clipboard (and the note stays
+  // up longer, to leave time to press it).
+  const copyProblem = () => send({ type: 'copy_problem', from: 'panel' });
   let noteTimer = 0;
-  function note(text, bad = false) {
+  function note(text, bad = false, copy = false) {
     const n = $('note');
-    n.textContent = text; n.title = text; n.className = `note${bad ? ' bad' : ''}`; n.hidden = false;
-    clearTimeout(noteTimer); noteTimer = setTimeout(() => { n.hidden = true; }, bad ? 9000 : 5000);
+    n.replaceChildren(el('span', { textContent: text, title: text }), ...(copy ? [link('Copy details', copyProblem, { k: 'note-copy' })] : []));
+    n.removeAttribute('title'); n.className = `note${bad ? ' bad' : ''}`; n.hidden = false;
+    clearTimeout(noteTimer); noteTimer = setTimeout(() => { n.hidden = true; }, copy ? 20000 : bad ? 9000 : 5000);
   }
 
   // ---------------------------------------------------------------- sidebar and keys
@@ -673,7 +680,8 @@
       if (ui.arm && !document.querySelector(`[data-k="${CSS.escape(ui.arm)}"]`)) ui.arm = null;
       render(null, first);
     }
-    else if (m.kind === 'note') note(m.text, m.bad);
+    else if (m.kind === 'note') note(m.text, m.bad, m.copy);
+    else if (m.kind === 'copied' && m.which === 'problem') note(m.ok ? 'Copied the error details. Paste them into your report.' : "Couldn't copy the error details. Try Save diagnostics.", !m.ok);
     else if (m.kind === 'copied') {
       if (!m.ok && state?.bind?.[m.which]) { ui.bindShown.add(m.which); render(`bind-${m.which}`); }
       note(m.ok ? 'Copied. Paste it into a new custom shortcut.' : "Couldn't copy it. Select the command and copy it instead.", !m.ok);
@@ -717,9 +725,9 @@
       size: 'default', sizes: [['default', 'Default'], ['small', 'Small'], ['cursor', 'Cursor']],
       replies: 'voice', fishKey: true, fishModel: 'drama-3', fishFree: false,
       fishModels: [{ id: 'drama-3', name: 'Drama 3', perM: 50, promo: { perM: 10, until: '2026-12-01T08:00:00Z' } }, { id: 's2.1-pro', name: 'S2.1 Pro', perM: 15 }],
-      voice: { on: true, keys: '⌃⌥', ready: true, mac: true, mute: true, download: null }, askKeys: '⌥⌘',
+      voice: { on: true, keys: '⌃⌥', ready: true, mac: true, mute: true, wakeWord: false, download: null }, askKeys: '⌥⌘',
       sound: true, actions: false, login: { on: true },
-      update: { available: new URLSearchParams(location.search).has('update') ? '0.9.1' : null, installing: false, checking: false, result: null },
+      update: { available: new URLSearchParams(location.search).has('update') && new URLSearchParams(location.search).get('update') !== 'failed' ? '0.9.1' : null, installing: false, checking: false, result: null },
       intro: false,
     };
     const q = new URLSearchParams(location.search);
@@ -731,6 +739,11 @@
       s.commitments = Array.from({ length: 14 }, (_, i) => ({ id: `c${i}`, text: `Follow up on item ${i + 1}`, when: 'Fri 7 Nov, 10:00', overdue: i < 2 }));
       s.recent = Array.from({ length: 30 }, (_, i) => ({ ...s.recent[i % s.recent.length], at: at - i * 70e3 }));
     }
+    // ?problem: an error was shown earlier (About gets Copy last error). ?note=bad: a failed save, with Copy details.
+    // ?update=failed: the last check for updates failed (the button's tooltip says why).
+    if (q.has('problem') || q.get('note') === 'bad') s.problem = { code: 'E30', at };
+    if (q.get('note') === 'bad') setTimeout(() => window.__panel({ kind: 'note', text: "That key didn't save (E30). Try again.", bad: true, copy: true }), 400);
+    if (q.get('update') === 'failed') s.update.result = { ok: false, error: "Couldn't check for updates. Check your internet." };
     if (q.has('checking')) s.update.checking = true;
     if (q.has('uptodate')) s.update.result = { ok: true, at: Date.now() + 60e3 };
     if (q.get('tab')) setTimeout(() => { if (q.get('mtab')) ui.mtab = q.get('mtab'); show(q.get('tab')); }, 0);
@@ -739,6 +752,7 @@
       if (cmd !== 'sidecar_send') return null;
       console.log('[preview] would send', JSON.stringify(args.msg));
       // A look change comes back as new state, as from the sidecar, so the Roamie's reaction can be seen.
+      if (args.msg?.type === 'copy_problem') setTimeout(() => window.__panel({ kind: 'copied', which: 'problem', ok: q.get('copy') !== 'fail' }), 150);
       const id = args.msg?.id ?? '';
       if (id.startsWith('size:')) { s.size = id.slice(5); setTimeout(() => window.__panel({ kind: 'state', state: s }), 120); }
       if (id.startsWith('look:')) { s.look = id.slice(5); s.name = s.looks.find(([v]) => v === s.look)?.[1] ?? s.name; setTimeout(() => window.__panel({ kind: 'state', state: s }), 120); }

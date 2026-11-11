@@ -1481,6 +1481,8 @@ fn handle_sidecar(app: &AppHandle, msg: Value) {
         }
         // `roamies --talk` (Linux): start a take, or send the one under way.
         Some("talk_toggle") => to_voice(app, &json!({ "cmd": "toggle" })),
+        // Roamies is answering or speaking: the wake word waits, so it can't wake itself.
+        Some("wake_hold") => to_voice(app, &json!({ "cmd": "wake_hold", "on": msg.get("on").and_then(Value::as_bool) == Some(true) })),
         // Esc while it's listening: drop the take.
         Some("listen_cancel") => to_voice(app, &json!({ "cmd": "cancel" })),
         Some("voice_config") => {
@@ -1494,6 +1496,8 @@ fn handle_sidecar(app: &AppHandle, msg: Value) {
                 to_voice(app, &json!({ "cmd": "mute", "on": mute }));
                 let sound = msg.get("sound").and_then(Value::as_bool).unwrap_or(true);
                 to_voice(app, &json!({ "cmd": "sound", "on": sound }));
+                let wake = msg.get("wake").and_then(Value::as_bool).unwrap_or(false);
+                to_voice(app, &json!({ "cmd": "wake", "on": wake }));
             } else {
                 stop_voice(app);
             }

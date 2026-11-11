@@ -266,6 +266,10 @@ html, body { height: 100%; background: transparent; }
   font-size: var(--t-body); animation: dissolve-in 160ms step-end both; line-height: 1.4; color: var(--accent); background: var(--panel);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+/* With Copy details: the line shortens first, the link stays whole at the end of the row. */
+.note:has(> .link) { display: flex; align-items: baseline; gap: 12px; }
+.note > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.note > .link { flex: none; padding: 0; }
 .note.bad { color: var(--danger); }
 .note[hidden] { display: none; }
 

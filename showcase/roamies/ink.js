@@ -147,22 +147,28 @@
   const clampR = (r) => { const x0 = Math.max(0, Math.floor(r[0])), y0 = Math.max(0, Math.floor(r[1])), x1 = Math.min(W, Math.ceil(r[0] + r[2])), y1 = Math.min(H, Math.ceil(r[1] + r[3])); return [x0, y0, Math.max(0, x1 - x0), Math.max(0, y1 - y0)]; };
   // Repaints one area: clears it on both layers, draws the marks that touch it, then the glow (the ink blurred under
   // itself, like the user's pen: 0.75, radius ~6).
+  // The ink (lit layer) lands on top of what was drawn before it, so names, buttons and toasts (z 6 and up) are drawn
+  // in a second pass after it: a circle or arrow never covers a label.
   function paint(C, t) {
     if (C[2] <= 0 || C[3] <= 0) return;
-    for (const c of [V, Lc]) { c.setTransform(DPR, 0, 0, DPR, 0, 0); c.clearRect(C[0], C[1], C[2], C[3]); c.save(); c.beginPath(); c.rect(C[0], C[1], C[2], C[3]); c.clip(); }
-    for (const m of [...marks].sort((a, b) => a.z - b.z)) {
-      if (overlap(grow(markBox(m), 28), C) <= 0) continue;
-      for (const c of [V, Lc]) { c.save(); c.globalAlpha = m.alpha; c.translate(m.dx, m.dy); }
-      try { m.draw(V, Lc, t); } catch (e) { console.error('ink', e); m.alive = false; }
+    const order = [...marks].sort((a, b) => a.z - b.z).filter((m) => overlap(grow(markBox(m), 28), C) > 0), cut = order.findIndex((m) => m.z >= 6);
+    const passes = cut < 0 ? [order] : [order.slice(0, cut), order.slice(cut)];
+    passes.forEach((group, i) => {
+      for (const c of i ? [Lc] : [V, Lc]) { c.setTransform(DPR, 0, 0, DPR, 0, 0); c.clearRect(C[0], C[1], C[2], C[3]); }
+      for (const c of [V, Lc]) { c.save(); c.beginPath(); c.rect(C[0], C[1], C[2], C[3]); c.clip(); }
+      for (const m of group) {
+        for (const c of [V, Lc]) { c.save(); c.globalAlpha = m.alpha; c.translate(m.dx, m.dy); }
+        try { m.draw(V, Lc, t); } catch (e) { console.error('ink', e); m.alive = false; }
+        for (const c of [V, Lc]) c.restore();
+      }
       for (const c of [V, Lc]) c.restore();
-    }
-    for (const c of [V, Lc]) c.restore();
-    const sx = C[0] * DPR, sy = C[1] * DPR, sw = C[2] * DPR, sh = C[3] * DPR;
-    V.save(); V.setTransform(1, 0, 0, 1, 0, 0);
-    if (hasFilter) { V.globalAlpha = 0.75; V.filter = `blur(${4 * DPR}px)`; V.drawImage(litC, sx, sy, sw, sh, sx, sy, sw, sh); V.filter = 'none'; V.globalAlpha = 1; }
-    else { V.shadowColor = rgba(ACC, 0.75); V.shadowBlur = 8 * DPR; }
-    V.drawImage(litC, sx, sy, sw, sh, sx, sy, sw, sh);
-    V.restore();
+      const sx = C[0] * DPR, sy = C[1] * DPR, sw = C[2] * DPR, sh = C[3] * DPR;
+      V.save(); V.setTransform(1, 0, 0, 1, 0, 0);
+      if (hasFilter) { V.globalAlpha = 0.75; V.filter = `blur(${4 * DPR}px)`; V.drawImage(litC, sx, sy, sw, sh, sx, sy, sw, sh); V.filter = 'none'; V.globalAlpha = 1; }
+      else { V.shadowColor = rgba(ACC, 0.75); V.shadowBlur = 8 * DPR; }
+      V.drawImage(litC, sx, sy, sw, sh, sx, sy, sw, sh);
+      V.restore();
+    });
   }
   // While something is being drawn, everything drawn is repainted each frame. Once it settles, only the few things
   // that keep moving (a waiting target's pulse, a turning model, bobbing chevrons) are, at 30 frames a second.
@@ -330,10 +336,16 @@
   let upcoming = [];
   const markedNow = () => [...marks.filter((m) => m.alive && m.marked).map((m) => [m.marked[0] + m.dx, m.marked[1] + m.dy, m.marked[2], m.marked[3]]), ...upcoming];
   const scr = () => { const S = R.safe ?? {}; return [(S.left ?? 0) + 4, (S.top ?? 0) + 4, W - (S.right ?? 0) - 4, H - (S.bottom ?? 0) - 4]; };
-  // Beside the marked box on the spot covering the least text and no other name or mark: above, below, right, left,
-  // then the same a little further out.
+  // Pen lines (arrows, underlines, rings) already on screen, as their points: a name keeps off the line itself.
+  const inkNow = () => marks.filter((m) => m.alive && m.pts && m.p > 0).map((m) => ({ pts: m.pts, dx: m.dx, dy: m.dy }));
+  const crossesInk = (r, ink) => ink.some((q) => q.pts.some(([px, py], i) => {
+    if (inside(r, px + q.dx, py + q.dy)) return true;
+    const n = q.pts[i + 1]; return !!n && inside(r, (px + n[0]) / 2 + q.dx, (py + n[1]) / 2 + q.dy);
+  }));
+  // Beside the marked box on the spot covering the least text and no other name, mark or pen line: above, below,
+  // right, left, then the same a little further out.
   function nameSpot(box, str, size) {
-    const [w, h] = size ?? pillSize(str), [x, y, bw, bh] = box, g = 6, far = 3 * g + h, S = scr(), pills = pillsNow(), marked = markedNow();
+    const [w, h] = size ?? pillSize(str), [x, y, bw, bh] = box, g = 6, far = 3 * g + h, S = scr(), pills = pillsNow(), marked = markedNow(), ink = inkNow();
     const spots = [[x, y - h - g], [x, y + bh + g], [x + bw + g, y + bh / 2 - h / 2], [x - w - g, y + bh / 2 - h / 2], [x + bw - w, y - h - g], [x + bw - w, y + bh + g],
       [x + bw + g, y - h - g], [x + bw + g, y + bh + g], [x - w - g, y - h - g], [x - w - g, y + bh + g], [x, y - h - far], [x, y + bh + far]];
     let best = null, bestCost = Infinity;
@@ -341,7 +353,7 @@
       const r = [s[0], s[1], w, h];
       if (r[0] < S[0] || r[1] < S[1] || r[0] + w > S[2] || r[1] + h > S[3]) return;
       if (pills.some((q) => overlap(grow(r, 3), q) > 0) || marked.some((q) => overlap(r, q) > 0)) return;
-      const cost = busyRects.reduce((a, q) => a + overlap(grow(r, 2), q), 0) / (w * h) + k * 0.01 + (k >= 10 ? 0.05 : 0);
+      const cost = busyRects.reduce((a, q) => a + overlap(grow(r, 2), q), 0) / (w * h) + k * 0.01 + (k >= 10 ? 0.05 : 0) + (crossesInk(grow(r, 4), ink) ? 2 : 0);
       if (cost < bestCost) { best = r; bestCost = cost; }
     });
     return best || [clamp(x, S[0], S[2] - w), clamp(y - h - g, S[1], S[3] - h), w, h];

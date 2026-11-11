@@ -111,11 +111,13 @@ Windows and Linux uses [NVIDIA Parakeet TDT 0.6B v3](https://huggingface.co/nvid
 
 ## Get started
 
-1. Install Roamies:
+1. Install Roamies from the **Assets** list on the release page. The *Source code* downloads there are the code,
+   not the app, and won't run on their own.
 
    **macOS (Apple silicon or Intel):** [Download the latest release](https://github.com/KenKaiii/Roamies/releases/latest) and open the `.dmg` for your Mac (`aarch64` for Apple silicon, `x64` for Intel). Requires macOS 13.5 or later.
 
-   **Windows:** [Download the latest release](https://github.com/KenKaiii/Roamies/releases/latest) and run the `.exe` installer. Requires Windows 10 or later. It isn't code-signed yet, so Windows shows a SmartScreen warning the first time: click **More info**, then **Run anyway**.
+   **Windows:** [Download the latest release](https://github.com/KenKaiii/Roamies/releases/latest) and run `Roamies_<version>_x64-setup.exe` (the only file you need; the `.sig`, `.AppImage`, `.deb` and `.rpm` files
+   aren't for Windows). Requires Windows 10 or later. It isn't code-signed yet, so Windows shows a SmartScreen warning the first time: click **More info**, then **Run anyway**.
 
    **Linux (beta, x86_64):** [Download the latest release](https://github.com/KenKaiii/Roamies/releases/latest) and pick one:
    the `.deb` (Ubuntu, Debian, Mint, Pop!_OS: `sudo apt install ./Roamies_*_amd64.deb`), the `.rpm` (Fedora,

@@ -186,6 +186,19 @@
     autoListen = me;
   }
 
+  // Wake word: once a reply has been typed out and said, the sidecar may listen for "Hey Roamies" again.
+  let saidWatch = null;
+  function reportSaid(rid) {
+    clearInterval(saidWatch);
+    const t0 = Date.now();
+    saidWatch = setInterval(() => {
+      const done = !getAgent()?.typing() && (Roamie.voiceOut ? Roamie.voiceOut.finished(rid) : true);
+      if (!done && Date.now() - t0 < 90_000) return;
+      clearInterval(saidWatch); saidWatch = null;
+      send({ type: 'reply_said' });
+    }, 200);
+  }
+
   async function playTools() {
     if (current) return;
     while (jobs.length) {
@@ -328,6 +341,7 @@
         research = waveTurn = false;
         endTalk();
         if (e.listen) waitThenListen(e.listen);
+        reportSaid(e.speech);
         break;
       case 'error':
         dropAutoListen();
@@ -335,6 +349,7 @@
         if (research) panel()?.fail(e.message);
         research = waveTurn = false;
         endTalk();
+        reportSaid(e.speech);
         for (const j of [current, ...jobs]) if (j && j.result === undefined) settle(j.id, true);
         a.say(e.message, { mood: 'concerned' });
         break;

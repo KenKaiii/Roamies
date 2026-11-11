@@ -130,7 +130,10 @@ h1 {
 h1:focus, h1:focus-visible { outline: none; }
 h2 { margin: 0; font: 700 13px/1.35 var(--mono); font-stretch: 87.5%; color: var(--ink); }
 .lead { margin: 0 0 18px; max-width: 36em; color: var(--ink-2); }
-.error { margin: 10px 0 0; font-size: 12px; line-height: 1.4; color: var(--danger); display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+/* The line, then Copy details on the same row when there is one (it drops below only if the row is too narrow). */
+.error { margin: 10px 0 0; font-size: 12px; line-height: 1.4; color: var(--danger); display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 12px; }
+.error > span { min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.error > .link { flex: none; }
 .error[hidden] { display: none; }
 .glyph { color: var(--accent); filter: drop-shadow(0 0 4px rgba(120, 255, 226, 0.7)); }
 .trayicon { display: inline-block; width: 15px; height: 15px; vertical-align: -2px; }

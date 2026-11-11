@@ -6,6 +6,7 @@
 // Modifier state is read with CGEventSource, which needs no Input Monitoring permission.
 // While ⌃⌥ is held, moving the cursor draws on the screen (ink.swift); the marked area goes out with what was said.
 // While listening, a small voice-bar pill rides beside the cursor (wave.swift) instead of a transcript bubble.
+// With the wake word on, it also listens quietly for "Hey Roamies" and starts a hands-free take on hearing it.
 import AVFoundation
 import AppKit
 import CoreAudio
@@ -62,7 +63,46 @@ func log(_ s: String) {
     FileHandle.standardError.write(Data("[voice] \(s)\n".utf8))
 }
 
+// Wake lines carry the time, so a missed "Hey Roamies" can be matched to when it was said.
+private let clock: DateFormatter = { let f = DateFormatter(); f.dateFormat = "HH:mm:ss"; return f }()
+func wakeLog(_ s: String) { log("wake \(clock.string(from: Date())): \(s)") }
+
 let dryRun = ProcessInfo.processInfo.environment["ROAMIES_VOICE_DRYRUN"] == "1"
+
+// --test-live <wav>: the recording stands in for the room, played in real time to whatever is listening (wake or a
+// take), with the wake word on and nothing muted. Runs the real paths end to end; exits 15 s after the recording ends.
+enum LiveTest {
+    static let url: URL? = {
+        let a = CommandLine.arguments
+        guard let i = a.firstIndex(of: "--test-live"), i + 1 < a.count else { return nil }
+        return URL(fileURLWithPath: a[i + 1])
+    }()
+    static var sink: ((AVAudioPCMBuffer) -> Void)?
+    private static var timer: DispatchSourceTimer?
+
+    static func start() {
+        guard let url, let file = try? AVAudioFile(forReading: url),
+              let all = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(file.length)),
+              (try? file.read(into: all)) != nil else { log("test-live: can't read the recording"); exit(2) }
+        let fmt = all.format, chunk: AVAudioFrameCount = 1024
+        var pos: AVAudioFrameCount = 0, silent = 0
+        let t = DispatchSource.makeTimerSource(queue: .global())
+        t.schedule(deadline: .now(), repeating: Double(chunk) / fmt.sampleRate)
+        t.setEventHandler {
+            guard let buf = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: chunk) else { return }
+            buf.frameLength = chunk
+            for c in 0 ..< Int(fmt.channelCount) {
+                let dst = buf.floatChannelData![c]
+                for k in 0 ..< Int(chunk) { dst[k] = pos + AVAudioFrameCount(k) < all.frameLength ? all.floatChannelData![c][Int(pos) + k] : 0 }
+            }
+            if pos < all.frameLength { pos += chunk; if pos >= all.frameLength { log("test-live: recording ended") } }
+            else { silent += 1; if Double(silent * Int(chunk)) / fmt.sampleRate > 15 { DispatchQueue.main.async { exit(0) } } }
+            DispatchQueue.main.async { sink?(buf) }
+        }
+        t.resume()
+        timer = t
+    }
+}
 func uptime() -> Double { ProcessInfo.processInfo.systemUptime }
 
 // One recognition session. Callbacks always arrive on the main queue.
@@ -114,6 +154,10 @@ final class AnalyzerRecognizer: Recognizer {
                 let (locale, format) = try await Self.prepare().value
                 let tr = SpeechTranscriber(locale: locale, preset: .progressiveTranscription)
                 let analyzer = SpeechAnalyzer(modules: [tr])
+                // Lean toward the app's names, as contextualStrings does for the older recogniser ("Hey Roamies").
+                let context = AnalysisContext()
+                context.contextualStrings[.general] = ["Roamies", "Roamie", "JARVIS"]
+                try? await analyzer.setContext(context)
                 var converter: AVAudioConverter?
                 let inputs = AsyncStream<AnalyzerInput> { out in
                     Task {
@@ -192,8 +236,10 @@ final class LegacyRecognizer: Recognizer {
     private let req = SFSpeechAudioBufferRecognitionRequest()
     private var task: SFSpeechRecognitionTask?
 
-    init?(_ cb: RecognizerCallbacks) {
+    /// onDeviceOnly: nil rather than sending audio to Apple's servers (wake listening, which hears everything).
+    init?(_ cb: RecognizerCallbacks, onDeviceOnly: Bool = false) {
         guard let rec = SFSpeechRecognizer() ?? SFSpeechRecognizer(locale: Locale(identifier: "en-US")), rec.isAvailable else { return nil }
+        if onDeviceOnly && !rec.supportsOnDeviceRecognition { return nil }
         req.shouldReportPartialResults = true
         if rec.supportsOnDeviceRecognition { req.requiresOnDeviceRecognition = true }
         if #available(macOS 13, *) { req.addsPunctuation = true }
@@ -259,6 +305,55 @@ enum OutputMute {
     }
 }
 
+// Where the mic's buffers go: swapped on the main thread while the audio thread feeds it, so wake listening can
+// start a fresh recogniser without reopening the mic.
+final class Feed {
+    private let lock = NSLock()
+    private var target: Recognizer?
+    func set(_ r: Recognizer?) { lock.lock(); target = r; lock.unlock() }
+    func append(_ buffer: AVAudioPCMBuffer) { lock.lock(); let t = target; lock.unlock(); t?.append(buffer) }
+}
+
+// Wake listening keeps the mic open. On a Bluetooth headset that drops it (AirPods too) to call-quality sound for as
+// long as it's on, so it listens on the built-in mic instead.
+enum InputDevice {
+    private static func addr(_ sel: AudioObjectPropertySelector, _ scope: AudioObjectPropertyScope = kAudioObjectPropertyScopeGlobal) -> AudioObjectPropertyAddress {
+        AudioObjectPropertyAddress(mSelector: sel, mScope: scope, mElement: kAudioObjectPropertyElementMain)
+    }
+    private static func defaultInput() -> AudioDeviceID? {
+        var id = AudioDeviceID(0), size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        var a = addr(kAudioHardwarePropertyDefaultInputDevice)
+        return AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &a, 0, nil, &size, &id) == noErr && id != 0 ? id : nil
+    }
+    private static func transport(_ dev: AudioDeviceID) -> UInt32? {
+        var v = UInt32(0), size = UInt32(MemoryLayout<UInt32>.size)
+        var a = addr(kAudioDevicePropertyTransportType)
+        return AudioObjectGetPropertyData(dev, &a, 0, nil, &size, &v) == noErr ? v : nil
+    }
+    private static func hasInput(_ dev: AudioDeviceID) -> Bool {
+        var size = UInt32(0)
+        var a = addr(kAudioDevicePropertyStreams, kAudioDevicePropertyScopeInput)
+        return AudioObjectGetPropertyDataSize(dev, &a, 0, nil, &size) == noErr && size > 0
+    }
+    private static func all() -> [AudioDeviceID] {
+        var size = UInt32(0)
+        var a = addr(kAudioHardwarePropertyDevices)
+        guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &a, 0, nil, &size) == noErr else { return [] }
+        var ids = [AudioDeviceID](repeating: 0, count: Int(size) / MemoryLayout<AudioDeviceID>.size)
+        return AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &a, 0, nil, &size, &ids) == noErr ? ids : []
+    }
+    /// The built-in mic when the default input is Bluetooth; nil means use the default.
+    static func forWake() -> AudioDeviceID? {
+        guard let dev = defaultInput(), let t = transport(dev), t == kAudioDeviceTransportTypeBluetooth || t == kAudioDeviceTransportTypeBluetoothLE else { return nil }
+        return all().first { transport($0) == kAudioDeviceTransportTypeBuiltIn && hasInput($0) }
+    }
+    static func use(_ dev: AudioDeviceID, on input: AVAudioInputNode) -> Bool {
+        guard let unit = input.audioUnit else { return false }
+        var id = dev
+        return AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &id, UInt32(MemoryLayout<AudioDeviceID>.size)) == noErr
+    }
+}
+
 // Some mics (many USB, headset and webcam ones) deliver speech near -50 dBFS, too faint for Speech to make
 // out words. Boost quiet speech toward ordinary level, at most +20 dB; normal and loud mics pass through as is.
 // Only sounds well above the room's noise count as speech, so silence alone never raises the boost.
@@ -290,8 +385,83 @@ final class AutoGain {
     }
 }
 
+// The wake phrase, "Hey Roamies": a greeting, then the name, at the start of something said (the text's start or
+// after a sentence end). Near-misses the recogniser really writes count too ("Romies", "Roamie's", "Roomies").
+enum WakeWord {
+    static let greetings: Set<String> = ["hey", "hi", "hay", "heya", "hiya"]
+    static let names = ["roamies", "roamie"]
+
+    /// What was said after the phrase ("" if nothing yet), or nil when the phrase isn't there.
+    static func match(_ text: String) -> String? { scan(text).rest }
+
+    /// The match, plus the closest name's edit distance after a greeting (nil if no greeting), and when there's no match
+    /// but it looks like a try, why it missed (for the log: never the words themselves).
+    static func scan(_ text: String) -> (rest: String?, distance: Int?, miss: String?) {
+        let words = tokens(text)
+        var closest: Int?, late = false
+        for (i, w) in words.enumerated() where greetings.contains(w.word) && i + 1 < words.count {
+            let before = text[(i == 0 ? text.startIndex : words[i - 1].range.upperBound) ..< w.range.lowerBound]
+            // Up to two stray words may come first ("um", "okay", a cough heard as "the"); live text rarely has a full stop.
+            let atStart = i <= 2 || before.contains(where: { ".?!".contains($0) })
+            // Only spaces or a comma between greeting and name ("Hey, Roamies").
+            guard text[w.range.upperBound ..< words[i + 1].range.lowerBound].allSatisfy({ $0 == " " || $0 == "," }) else { continue }
+            var candidates = [(words[i + 1].word, words[i + 1].range.upperBound, 2)]
+            // Split in two ("Roam ies"): joined, it must be a closer match.
+            if i + 2 < words.count { candidates.append((words[i + 1].word + words[i + 2].word, words[i + 2].range.upperBound, 1)) }
+            for (name, end, allowed) in candidates {
+                let d = distance(name)
+                closest = min(closest ?? d, d)
+                if d <= allowed && name.hasPrefix("r") && name.contains("m") && name.count >= 5 {
+                    guard atStart else { late = true; continue }
+                    let rest = text[end...].drop(while: { !$0.isLetter && !$0.isNumber })
+                    return (String(rest).trimmingCharacters(in: .whitespacesAndNewlines), d, nil)
+                }
+            }
+        }
+        if late { return (nil, closest, "the phrase came after other words") }
+        if let c = closest, c <= 4 { return (nil, closest, "a greeting, then a name \(c) letters off") }
+        if words.contains(where: { $0.word.hasPrefix("r") && distance($0.word) <= 2 }) { return (nil, closest, "the name without a greeting") }
+        return (nil, closest, nil)
+    }
+
+    /// Lowercased words without apostrophes ("Roamie's" -> "roamies"), with where each sits in the text.
+    static func tokens(_ text: String) -> [(word: String, range: Range<String.Index>)] {
+        var out: [(word: String, range: Range<String.Index>)] = []
+        var start: String.Index?
+        var i = text.startIndex
+        while true {
+            let c: Character? = i == text.endIndex ? nil : text[i]
+            let inWord = c.map { $0.isLetter || $0.isNumber || (($0 == "'" || $0 == "\u{2019}") && start != nil) } ?? false
+            if inWord { if start == nil { start = i } }
+            else if let s = start {
+                let w = text[s ..< i].lowercased().filter { $0 != "'" && $0 != "\u{2019}" }
+                if !w.isEmpty { out.append((w, s ..< i)) }
+                start = nil
+            }
+            if c == nil { break }
+            i = text.index(after: i)
+        }
+        return out
+    }
+
+    static func distance(_ word: String) -> Int { names.map { edits(word, $0) }.min() ?? Int.max }
+
+    static func edits(_ a: String, _ b: String) -> Int {
+        let a = Array(a), b = Array(b)
+        if a.isEmpty || b.isEmpty { return max(a.count, b.count) }
+        var prev = Array(0 ... b.count), cur = prev
+        for i in 1 ... a.count {
+            cur[0] = i
+            for j in 1 ... b.count { cur[j] = min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] == b[j - 1] ? 0 : 1)) }
+            swap(&prev, &cur)
+        }
+        return prev[b.count]
+    }
+}
+
 final class Voice {
-    enum Phase { case idle, armed, holding, handsFree, finishing }
+    // wake: listening quietly for "Hey Roamies" (no pill, nothing muted); hearing it turns into a hands-free take.
+    enum Phase { case idle, wake, armed, holding, handsFree, finishing }
 
     private var phase = Phase.idle
     private var chordAt = 0.0, listenAt = 0.0, heardAt = 0.0, voiceAt = 0.0, levelAt = 0.0, releasedAt: Double?
@@ -304,6 +474,16 @@ final class Voice {
     private var rec: Recognizer?
     private var best = ""
     private var finishTimer: Timer?
+    private let feed = Feed()
+    private var configObserver: NSObjectProtocol?
+    // Wake word: on in settings; held off while Roamies answers and speaks; resting just after a take.
+    private var wakeOn = false
+    var wakeHold = false {
+        didSet { if wakeOn && wakeHold != oldValue { wakeLog(wakeHold ? "paused while Roamies answers" : "resumed") } }
+    }
+    private var wakeLoud = 0.0, wakeLevelAt = 0.0 // seconds loud enough to be speech in this wake window
+    private var wakeCooldownUntil = 0.0, wakeRetryAt = 0.0, wakeAt = 0.0
+    private var wakeText = "", woke = false, wakeMiss: String?
     private var useAnalyzer: Bool { if #available(macOS 26, *) { return SpeechTranscriber.isAvailable } else { return false } }
 
     init() {
@@ -329,7 +509,7 @@ final class Voice {
     }
     func setChord(_ names: [String]) {
         guard let m = Self.mask(names) else { return log("ignored chord \(names)") }
-        if phase != .idle { cancel() }
+        if phase == .wake { stopWake() } else if phase != .idle { cancel() }
         chordMask = m; blocked = true
         log("talk chord: \(names.joined(separator: "+"))")
     }
@@ -341,6 +521,9 @@ final class Voice {
     private static let pauseEnds = 1.5
     private static let wordsEnd = 2.5 // hands-free: no new words for this long ends it, even with background sound
     private static let maxSession = 60.0
+    private static let wakeRecycle = 30.0 // a fresh wake recogniser this often, so memory stays bounded
+    private static let wakePause = 1.2 // words stopped this long without the phrase: start fresh for the next thing said
+    private static let wakeCooldown = 2.0
 
     var engineName: String { useAnalyzer ? "speechanalyzer" : "sfspeech" }
 
@@ -401,6 +584,14 @@ final class Voice {
         switch phase {
         case .idle:
             if chord && !prevChord && !blocked { arm(now) }
+            else if wakeAllowed(now) { startWake(now) }
+        case .wake:
+            if chord && !prevChord && !blocked { stopWake(); arm(now); return }
+            if !wakeOn || wakeHold { stopWake(); return }
+            let paused = !wakeText.isEmpty && now - heardAt > Self.wakePause && now - voiceAt > Self.wakePause / 2
+            // The 30 s refresh waits for a quiet moment, so it can't split "Hey" from "Roamies".
+            let quiet = now - voiceAt > Self.wakePause / 2 && now - heardAt > Self.wakePause
+            if paused || (now - wakeAt > Self.wakeRecycle && quiet) || now - wakeAt > Self.wakeRecycle * 2 { recycleWake(now) }
         case .armed:
             // Only the first moment decides shortcut vs. talk: ⌃⌥ plus a key, ⇧ or ⌘ is a shortcut.
             if down && (extra || otherKeyDown()) { log("not a talk: ⌃⌥ was part of a shortcut"); cancel(); blocked = true; return }
@@ -430,6 +621,7 @@ final class Voice {
         phase = .armed
         chordAt = now
         best = ""
+        woke = false
         // The drawing layer first: starting the mic below holds this thread for a moment (longer with Bluetooth),
         // and a drag begun in that moment would otherwise land in the app underneath.
         ink.setArmed(true)
@@ -441,7 +633,7 @@ final class Voice {
     }
 
     private var authorized: Bool {
-        AVCaptureDevice.authorizationStatus(for: .audio) == .authorized && (useAnalyzer || SFSpeechRecognizer.authorizationStatus() == .authorized)
+        LiveTest.url != nil || AVCaptureDevice.authorizationStatus(for: .audio) == .authorized && (useAnalyzer || SFSpeechRecognizer.authorizationStatus() == .authorized)
     }
 
     private func showListening(_ mode: String, _ now: Double) {
@@ -488,6 +680,7 @@ final class Voice {
         finishTimer?.invalidate(); finishTimer = nil
         rec?.cancel(); rec = nil
         phase = .idle
+        woke = false; wakeCooldownUntil = uptime() + Self.wakeCooldown
         let text = best.trimmingCharacters(in: .whitespacesAndNewlines)
         if text.isEmpty { wave.hide() } else { wave.awaitAnswer() }
         let empty = text.isEmpty && reportEmpty, spoke = voiceAt > listenAt + 0.05
@@ -522,6 +715,7 @@ final class Voice {
         rec?.cancel(); rec = nil
         finishTimer?.invalidate(); finishTimer = nil
         phase = .idle
+        woke = false; wakeCooldownUntil = uptime() + Self.wakeCooldown
         reportEmpty = false
         ink.clear()
         wave.hide()
@@ -531,6 +725,7 @@ final class Voice {
     /// The shell saw ⌃⌥S: that ⌃⌥ was a shortcut, not a request to talk.
     /// Start listening hands-free without a key press (after an area snap). Ends on a pause or a tap.
     func listenNow() {
+        if phase == .wake { stopWake() }
         guard phase == .idle else { return }
         arm(uptime())
         phase = .handsFree
@@ -541,6 +736,74 @@ final class Voice {
     func externalCancel() {
         if phase == .armed || phase == .holding || phase == .handsFree { cancel() }
         blocked = true
+    }
+
+    // ---------- wake word ----------
+
+    func setWake(_ on: Bool) {
+        guard on != wakeOn else { return }
+        wakeOn = on
+        log("wake word \(on ? "on" : "off")")
+        if !on { stopWake() }
+    }
+
+    // Never asks for permission: wake listening starts only once talking has been allowed.
+    private func wakeAllowed(_ now: Double) -> Bool {
+        wakeOn && !wakeHold && !dryRun && now >= wakeCooldownUntil && now >= wakeRetryAt && authorized
+    }
+
+    private func startWake(_ now: Double) {
+        wakeRetryAt = now + 5 // if the mic won't open, try again in a moment rather than every frame
+        phase = .wake
+        best = ""; wakeText = ""; wakeMiss = nil; woke = false; wakeLoud = 0
+        wakeAt = now; heardAt = now; voiceAt = now
+        let device = InputDevice.forWake()
+        startAudio(device: device)
+        if phase == .wake { wakeLog("listening\(device == nil ? "" : " on the built-in mic (the default input is Bluetooth)")") }
+    }
+
+    private func stopWake() {
+        guard phase == .wake else { return }
+        logNearMiss()
+        stopAudio()
+        rec?.cancel(); rec = nil
+        phase = .idle
+        best = ""; wakeText = ""
+    }
+
+    // A fresh recogniser on the open mic: after a pause with no phrase (so it must start what's said next), or every 30 s.
+    private func recycleWake(_ now: Double) {
+        logNearMiss()
+        feed.set(nil)
+        rec?.cancel(); rec = nil
+        guard let r = makeRecognizer() else { stopWake(); wakeRetryAt = now + 30; return }
+        rec = r; feed.set(r)
+        wakeAt = now; heardAt = now; wakeText = ""
+    }
+
+    // Only how close it came, never what was said.
+    private func logNearMiss() {
+        // How a window ended, never what was said: a near try, other words, or sound the recogniser made no words of.
+        if let m = wakeMiss { wakeLog("missed (\(m))") }
+        else if !wakeText.isEmpty { wakeLog("heard \(WakeWord.tokens(wakeText).count) words, not the phrase") }
+        else if wakeLoud >= 0.5 { wakeLog("heard sound for \(String(format: "%.1f", wakeLoud)) s, but no words came back") }
+        wakeMiss = nil; wakeLoud = 0
+    }
+
+    private func heardWhileWaiting(_ text: String) {
+        guard text != wakeText else { return }
+        let now = uptime()
+        wakeText = text; heardAt = now
+        let (rest, d, miss) = WakeWord.scan(text)
+        guard let rest else { if let miss { wakeMiss = miss }; return }
+        wakeLog("heard the phrase (distance \(d ?? 0))")
+        wakeMiss = nil
+        // Same mic, same recogniser: what follows the phrase is already the start of the take.
+        woke = true
+        phase = .handsFree
+        chordAt = now
+        best = rest
+        showListening("wake", now)
     }
 
     // ---------- permissions ----------
@@ -575,55 +838,77 @@ final class Voice {
 
     // ---------- audio + recognition ----------
 
-    private func startAudio() {
-        failed = false
+    private func makeRecognizer() -> Recognizer? {
         var mine: Recognizer?
         let cb = RecognizerCallbacks(
             onText: { [weak self] text in guard let self, self.rec === mine else { return }; self.onText(text) },
-            onDone: { [weak self] in guard let self, self.rec === mine, self.phase == .finishing else { return }; self.finalize() },
+            onDone: { [weak self] in
+                guard let self, self.rec === mine else { return }
+                if self.phase == .wake { self.recycleWake(uptime()) } else if self.phase == .finishing { self.finalize() }
+            },
             onError: { [weak self] err in guard let self, self.rec === mine else { return }; self.onError(err) }
         )
-        if #available(macOS 26, *), useAnalyzer { mine = AnalyzerRecognizer(cb) } else { mine = LegacyRecognizer(cb) }
-        guard let r = mine else {
-            emit(["type": "error", "code": "unavailable"])
-            return cancel()
-        }
+        if #available(macOS 26, *), useAnalyzer { mine = AnalyzerRecognizer(cb) } else { mine = LegacyRecognizer(cb, onDeviceOnly: phase == .wake) }
+        return mine
+    }
 
-        let eng = AVAudioEngine()
-        let input = eng.inputNode
-        let format = input.outputFormat(forBus: 0)
-        guard format.sampleRate > 0, format.channelCount > 0 else {
-            emit(["type": "error", "code": "no_input"])
-            return cancel()
+    /// device: a particular mic instead of the default one (wake listening, when the default is Bluetooth).
+    private func startAudio(device: AudioDeviceID? = nil) {
+        failed = false
+        // Wake listening fails quietly and tries again later; a take tells the user.
+        let fail = { (code: String) in
+            if self.phase == .wake { self.phase = .idle; self.wakeRetryAt = uptime() + 30; wakeLog("couldn't start (\(code))") } else { emit(["type": "error", "code": code]); self.cancel() }
         }
-        let gain = autoGain
-        input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
-            guard let samples = buffer.floatChannelData?[0] else { r.append(buffer); return }
+        guard let r = makeRecognizer() else { return fail("unavailable") }
+        let gain = autoGain, feed = feed
+        let ingest = { [weak self] (buffer: AVAudioPCMBuffer) in
+            guard let samples = buffer.floatChannelData?[0] else { feed.append(buffer); return }
             let n = Int(buffer.frameLength)
             var sum: Float = 0
             for i in 0 ..< n { sum += samples[i] * samples[i] }
             let rms = sqrt(sum / Float(max(n, 1)))
             gain.apply(buffer, rms: rms)
-            r.append(buffer)
+            feed.append(buffer)
             // Level and pause detection use the mic's own level, so boosted room noise can't hold a session open.
             let level = min(1, max(0, (Double(20 * log10(max(rms, 1e-7))) + 55) / 40))
             DispatchQueue.main.async { self?.onLevel(level) }
         }
+        if LiveTest.url != nil { feed.set(r); rec = r; LiveTest.sink = ingest; return }
+
+        let eng = AVAudioEngine()
+        let input = eng.inputNode
+        if let device, !InputDevice.use(device, on: input) { log("couldn't switch to the built-in mic") }
+        let format = input.outputFormat(forBus: 0)
+        guard format.sampleRate > 0, format.channelCount > 0 else {
+            r.cancel()
+            return fail("no_input")
+        }
+        feed.set(r)
+        input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in ingest(buffer) }
         do {
             eng.prepare()
             try eng.start()
         } catch {
             log("engine start failed: \(error)")
+            feed.set(nil)
             r.cancel()
-            emit(["type": "error", "code": "no_input"])
-            return cancel()
+            return fail("no_input")
         }
         engine = eng
         rec = r
+        // A mic plugged in or out stops the engine: wake listening starts again on the new one.
+        configObserver = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: eng, queue: .main) { [weak self] _ in
+            guard let self, self.engine === eng, self.phase == .wake else { return }
+            wakeLog("audio devices changed")
+            self.stopWake()
+        }
     }
 
     private func stopAudio() {
         OutputMute.end()
+        feed.set(nil)
+        LiveTest.sink = nil
+        if let o = configObserver { NotificationCenter.default.removeObserver(o); configObserver = nil }
         guard let eng = engine else { return }
         eng.inputNode.removeTap(onBus: 0)
         eng.stop()
@@ -632,6 +917,7 @@ final class Voice {
 
     private func onLevel(_ v: Double) {
         let now = uptime()
+        if phase == .wake { if v > 0.2 { wakeLoud += min(0.2, now - wakeLevelAt) }; wakeLevelAt = now }
         if v > 0.2 { voiceAt = now }
         if phase == .holding || phase == .handsFree { wave.setLevel(v) }
         guard phase == .holding || phase == .handsFree, now - levelAt >= 0.05 else { return }
@@ -639,7 +925,10 @@ final class Voice {
         emit(["type": "level", "v": (v * 100).rounded() / 100])
     }
 
-    private func onText(_ text: String) {
+    private func onText(_ raw: String) {
+        if phase == .wake { return heardWhileWaiting(raw) }
+        // A take started by the wake phrase: the phrase itself isn't part of what was said.
+        let text = woke ? (WakeWord.match(raw) ?? raw) : raw
         guard text != best else { return }
         best = text
         heardAt = uptime()
@@ -648,10 +937,15 @@ final class Voice {
 
     private func onError(_ error: Error) {
         let msg = error.localizedDescription
-        log("recognition: \(msg)")
         // Ending a request early reports "no speech"/cancel errors; only real failures reach the user.
         let ns = error as NSError
         let benign = ns.domain == "kAFAssistantErrorDomain" && [203, 216, 301, 1110].contains(ns.code)
+        // Wake listening never bothers the user: start fresh, or rest a while after a real failure.
+        if phase == .wake {
+            if benign { recycleWake(uptime()) } else { wakeLog("recognition: \(msg)"); stopWake(); wakeRetryAt = uptime() + 30 }
+            return
+        }
+        log("recognition: \(msg)")
         if !benign && best.isEmpty {
             failed = true
             let code = msg.localizedCaseInsensitiveContains("dictation") || msg.localizedCaseInsensitiveContains("siri") ? "dictation_off" : "recognition"
@@ -704,6 +998,50 @@ if args.contains("--test-gain") {
     check("boost applies to every channel and never clips", (0 ..< 2).allSatisfy { c in buf.floatChannelData![c][3] == 1 })
     exit(bad == 0 ? 0 : 1)
 }
+// --test-wake checks the wake phrase matcher on transcripts the recogniser could write; exits 1 on a failure.
+if args.contains("--test-wake") {
+    var bad = 0
+    func check(_ text: String, _ want: String?) {
+        let got = WakeWord.match(text)
+        print("\(got == want ? "ok" : "FAIL") \"\(text)\" -> \(got.map { "\"\($0)\"" } ?? "no wake")")
+        if got != want { bad += 1 }
+    }
+    check("Hey Roamies", "")
+    check("Hey Roamies, open Safari.", "open Safari.")
+    check("hey roamies open safari", "open safari")
+    check("Hey, Roamies.", "")
+    check("Hi Roamies what time is it?", "what time is it?")
+    check("Hey Romies", "")
+    check("Hey Roamie's, open Notes", "open Notes")
+    check("Hey Roamie", "")
+    check("Hey Roomies, play some music", "play some music")
+    check("Hey Romi's", "")
+    check("Hey, Romees.", "")
+    check("Hey Romy's", nil) // three edits away
+    check("Hey roam ies, hello", "hello")
+    check("That's it. Hey Roamies, open Mail", "open Mail")
+    check("HEY ROAMIES! What's on today?", "What's on today?")
+    check("Hey Roamies\u{2019} open notes", "open notes")
+    check("Hey Ronnie", nil)
+    check("Hey Robbie, come here", nil)
+    check("Hey Rome", nil)
+    check("Hey rooms", nil)
+    check("Hey ramen", nil)
+    check("Hey Remy", nil)
+    check("Hey rhymes", nil)
+    check("Hey room is ready", nil)
+    check("Roamies is great", nil)
+    check("I told him hey Roamies", nil)
+    check("Um hey Roamies, open Mail", "open Mail")
+    check("Okay, hi Roamies", "")
+    check("The hey Romies what time is it", "what time is it")
+    check("So I said hey Roamies", nil)
+    check("Hey there", nil)
+    check("Hey", nil)
+    check("Hey. Roamies", nil)
+    check("", nil)
+    exit(bad == 0 ? 0 : 1)
+}
 // --test-snap checks which drawn paths count as a circled area; exits 1 on a failure.
 if args.contains("--test-snap") {
     var bad = 0
@@ -744,6 +1082,42 @@ if args.contains("--test-clicks") {
     check("a link inside a list still counts", ClickTarget.acts(roles: ["AXLink", "AXCell", "AXRow", "AXTable"], count: 1))
     exit(bad == 0 ? 0 : 1)
 }
+// --wake-file <wav>: a recording through the real recogniser (with the mic boost) and the wake matcher, as live
+// listening would hear it. Prints one JSON line: whether it woke, what followed the phrase, the closest name.
+if let i = args.firstIndex(of: "--wake-file"), i + 1 < args.count {
+    let url = URL(fileURLWithPath: args[i + 1])
+    guard let file = try? AVAudioFile(forReading: url) else { emit(["type": "wake_file", "error": "can't read \(url.path)"]); exit(2) }
+    var heard = "", woke = false, closest: Int?
+    let report = {
+        emit(["type": "wake_file", "file": url.lastPathComponent, "woke": woke, "rest": woke ? WakeWord.match(heard) ?? "" : "", "distance": closest ?? -1, "heard": heard])
+        exit(0)
+    }
+    let cb = RecognizerCallbacks(
+        onText: { text in
+            heard = text
+            let (rest, d, _) = WakeWord.scan(text)
+            if rest != nil { woke = true }
+            if let d { closest = min(closest ?? d, d) }
+        },
+        onDone: { report() },
+        onError: { e in log("recognition: \(e.localizedDescription)"); report() }
+    )
+    var r: Recognizer?
+    if #available(macOS 26, *), SpeechTranscriber.isAvailable { r = AnalyzerRecognizer(cb) } else { r = LegacyRecognizer(cb) }
+    guard let r else { emit(["type": "wake_file", "error": "speech recognition unavailable"]); exit(2) }
+    let gain = AutoGain()
+    while let buf = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 1024), (try? file.read(into: buf)) != nil, buf.frameLength > 0 {
+        if let x = buf.floatChannelData?[0] {
+            var sum: Float = 0
+            for k in 0 ..< Int(buf.frameLength) { sum += x[k] * x[k] }
+            gain.apply(buf, rms: sqrt(sum / Float(buf.frameLength)))
+        }
+        r.append(buf)
+    }
+    r.end()
+    DispatchQueue.main.asyncAfter(deadline: .now() + 60) { report() }
+    dispatchMain()
+}
 if args.contains("--perms") { emit(permStatus()); exit(0) }
 if let i = args.firstIndex(of: "--request"), i + 1 < args.count {
     let done = DispatchSemaphore(value: 0)
@@ -760,6 +1134,7 @@ var signalSources: [DispatchSourceSignal] = []
 let voice = Voice()
 if args.contains("--no-mute") { OutputMute.enabled = false }
 if let i = args.firstIndex(of: "--chord"), i + 1 < args.count { voice.setChord(args[i + 1].components(separatedBy: ",")) }
+if LiveTest.url != nil { OutputMute.enabled = false; voice.setWake(true); LiveTest.start() }
 let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { _ in voice.tick() }
 RunLoop.main.add(timer, forMode: .common)
 Thread.detachNewThread {
@@ -776,6 +1151,9 @@ Thread.detachNewThread {
         case "chord": if let mods = msg["mods"] as? [String] { DispatchQueue.main.async { voice.setChord(mods) } }
         case "watch_clicks": let on = msg["on"] as? Bool == true; DispatchQueue.main.async { voice.watchClicks = on }
         case "sound": if let on = msg["on"] as? Bool { DispatchQueue.main.async { SnapCue.soundOn = on } }
+        case "wake": if let on = msg["on"] as? Bool { DispatchQueue.main.async { voice.setWake(on) } }
+        // Roamies is answering or speaking: don't listen for the phrase (it mustn't wake itself).
+        case "wake_hold": let on = msg["on"] as? Bool == true; DispatchQueue.main.async { voice.wakeHold = on }
         case "mute": if let on = msg["on"] as? Bool { DispatchQueue.main.async { OutputMute.enabled = on; if !on { OutputMute.end() } } }
         default: break
         }
