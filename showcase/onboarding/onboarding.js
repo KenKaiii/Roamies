@@ -485,20 +485,49 @@
   });
 
   // ---------------------------------------------------------------- step 3: how replies come
-  // Text only, or Voice + text (spoken with Fish Audio). Voice needs the user's own Fish Audio key: picking it
-  // opens the field, and the key is checked before voice turns on.
+  // Text only, or Voice + text (spoken with Fish Audio, Gemini or VoiceStudio). Fish Audio and Gemini need the user's
+  // own key: picking one opens the field, and the key is checked before voice turns on. VoiceStudio runs on this
+  // computer and needs no key, only to be open: its status shows instead, with Check again. With Gemini and
+  // VoiceStudio there's also a voice to choose (Fish Audio's comes with the look).
+  // link: where a key comes from. Gemini's is Google AI Studio's key page.
   // Ken's Fish Audio affiliate link (sign-up lands on their site; keys are under Developers). It's disclosed in
   // the UI: the #fish-link button in index.html reads "Get a free key (affiliate link)".
   const FISH_URL = 'https://fish.audio/?fpr=o3gtlu';
+  const TTS = {
+    fish: { name: 'Fish Audio', link: FISH_URL, get: 'Get a free key (affiliate link)', note: 'Spoken replies are billed to your own Fish Audio account.', send: 'ob_fishkey' },
+    gemini: { name: 'Gemini', link: 'https://aistudio.google.com/apikey', get: 'Get a free key', note: 'Spoken replies are billed to your own Google AI Studio account.', send: 'ob_geminikey' },
+    voicestudio: { name: 'VoiceStudio', local: true },
+  };
+  // A row on this step coming or going: grows into its room and fades in, or the reverse, rather than popping.
+  function showRow(n, on) {
+    const going = n.classList.contains('vanish');
+    if (on ? !n.hidden && !going : n.hidden || going) return;
+    if (reduced.matches) { n.hidden = !on; return; }
+    n.getAnimations().forEach((a) => a.cancel());
+    n.hidden = false;
+    const cs = getComputedStyle(n), full = { height: `${n.offsetHeight}px`, marginTop: cs.marginTop, marginBottom: cs.marginBottom };
+    const shut = { height: '0px', marginTop: '0px', marginBottom: '0px' };
+    n.classList.remove('appear', 'vanish'); void n.offsetWidth; n.classList.add(on ? 'appear' : 'vanish');
+    n.style.overflow = 'hidden';
+    n.animate(on ? [shut, full] : [full, shut], { duration: on ? 200 : 160, easing: 'cubic-bezier(.2, .8, .2, 1)' }).finished.then(() => {
+      n.style.overflow = ''; n.classList.remove('appear', 'vanish');
+      if (!on) n.hidden = true;
+    }, () => {});
+  }
   const replies = {
-    pick: null, saving: false, changing: false, // changing: replacing a key that's already saved
+    pick: null, prov: null, saving: false, changing: false, // prov: the service picked here, before its key is saved // changing: replacing a key that's already saved
     mode: () => replies.pick ?? (state?.replies === 'voice' ? 'voice' : 'text'),
-    ready: () => replies.mode() === 'text' || (!!state?.fishKey && state.replies === 'voice'),
+    tts: () => replies.prov ?? (TTS[state?.tts] ? state.tts : 'fish'),
+    // VoiceStudio has no key: it counts once it's picked and answering.
+    hasKey: (p = replies.tts()) => (TTS[p]?.local ? state?.tts === p && !!state?.studio?.ok : !!state?.[`${p}Key`]),
+    // Voice is on with the service shown here.
+    on: () => state?.replies === 'voice' && replies.hasKey() && (state?.tts ?? 'fish') === replies.tts(),
+    ready: () => replies.mode() === 'text' || replies.on(),
     render() {
-      const mode = replies.mode(), on = state?.replies === 'voice' && state?.fishKey;
+      const mode = replies.mode(), on = replies.on(), t = TTS[replies.tts()];
       const CARDS = [
         ['text', 'Text only', 'Answers in my bubbles'],
-        ['voice', 'Voice + text', on ? 'Voice is on' : mode === 'voice' ? 'Needs a Fish Audio key' : 'Said out loud too'],
+        ['voice', 'Voice + text', on ? 'Voice is on' : mode === 'voice' ? (t.local ? 'Needs VoiceStudio open' : `Needs a ${t.name} key`) : 'Said out loud too'],
       ];
       $('replies').replaceChildren(...CARDS.map(([id, name, sub]) => {
         const checked = mode === id;
@@ -508,12 +537,30 @@
         b.onclick = () => replies.choose(id);
         return b;
       }));
-      const saved = !!state?.fishKey;
+      const saved = replies.hasKey();
       if (!saved || mode !== 'voice') replies.changing = false;
-      $('fish-form').hidden = mode !== 'voice' || (saved && !replies.changing);
-      $('fish-change').hidden = !saved || mode !== 'voice';
-      $('fish-change').textContent = replies.changing ? 'Keep my current key' : 'Change key';
-      $('fish-label').textContent = replies.changing ? 'New Fish Audio API key' : 'Fish Audio API key';
+      showRow($('tts-row'), mode === 'voice');
+      look.radios('tts', Object.entries(TTS).map(([id, x]) => [id, x.name]), replies.tts(), replies.provider);
+      // VoiceStudio: ready (and its engine), or exactly why not.
+      const vs = t.local && state?.tts === replies.tts() ? state?.studio : null;
+      showRow($('studio-row'), mode === 'voice' && !!t.local);
+      $('studio-status').textContent = !vs || vs.checking ? 'Checking VoiceStudio…' : vs.ok ? `VoiceStudio is ready${vs.engine ? ` · ${vs.engine}` : ''}` : vs.message || "VoiceStudio isn't available.";
+      $('studio-status').className = vs && !vs.checking && !vs.ok ? 'bad' : '';
+      // The voices, once it can speak: Gemini's ("Kore · Firm"), or the ones saved in VoiceStudio.
+      showRow($('gvoice-row'), mode === 'voice' && t !== TTS.fish && saved);
+      const voices = t.local ? [{ id: 'default', label: 'Engine default' }, ...(vs?.voices ?? []).map((v) => ({ id: v.id, label: v.name }))]
+        : (state?.geminiVoices ?? []).map((v) => ({ id: v.id, label: `${v.id} · ${v.style}` }));
+      const list = JSON.stringify(voices);
+      if ($('gvoice').dataset.list !== list) { $('gvoice').dataset.list = list; $('gvoice').replaceChildren(...voices.map((v) => el('option', { value: v.id, textContent: v.label }))); }
+      const picked = t.local ? vs?.voice ?? 'default' : state?.geminiVoice;
+      if (picked) $('gvoice').value = picked;
+      $('fish-link').textContent = t.get ?? '';
+      $('fish-note').textContent = t.note ?? '';
+      showRow($('fish-form'), mode === 'voice' && !t.local && (!saved || replies.changing));
+      showRow($('fish-change'), saved && mode === 'voice' && !t.local);
+      // Gemini can already be speaking with the key added for the AI in the step before.
+      $('fish-change').textContent = replies.changing ? 'Keep my current key' : replies.tts() === 'gemini' && state?.geminiShared ? 'Using your Gemini AI key. Use a different one' : 'Change key';
+      $('fish-label').textContent = replies.changing ? `New ${t.name} API key` : `${t.name} API key`;
       $('fish-change').setAttribute('aria-expanded', String(replies.changing));
       $('fish-save').disabled = replies.saving;
       $('fish-save').textContent = replies.saving ? 'Checking…' : 'Save';
@@ -527,16 +574,23 @@
     choose(id) {
       if (replies.mode() === id && (id === 'text' || state?.replies === 'voice')) return;
       replies.pick = id; $('fish-error').hidden = true;
-      if (id === 'text' || state?.fishKey) {
+      if (id === 'text' || replies.hasKey() || TTS[replies.tts()].local) {
         if (state?.replies === id) quip(id === 'text' ? 'Text it is!' : 'Voice it is!');
         send({ type: 'ob_replies', mode: id });
       }
       replies.render();
-      if (id === 'voice' && !state?.fishKey) { $('fish-input').focus(); quip('Got a Fish Audio key?', 3); }
+      if (id === 'voice' && !replies.hasKey() && !TTS[replies.tts()].local) { $('fish-input').focus(); quip(`Got a ${TTS[replies.tts()].name} key?`, 3); }
+    },
+    // One with a key saved (or VoiceStudio, which checks itself) speaks straight away; the others ask for a key first.
+    provider(p) {
+      replies.prov = p; replies.changing = false; $('fish-error').hidden = true; $('fish-input').value = '';
+      if (replies.hasKey(p) || TTS[p].local) send({ type: 'ob_tts', provider: p });
+      replies.render();
+      if (!replies.hasKey(p) && !TTS[p].local) { $('fish-input').focus(); quip(`Got a ${TTS[p].name} key?`, 3); }
     },
     onFish(msg) {
       replies.saving = false;
-      if (msg.ok) { act('hype'); $('fish-error').hidden = true; replies.changing = false; }
+      if (msg.ok) { act('hype'); $('fish-error').hidden = true; replies.changing = false; replies.prov = null; }
       else showError('fish-error', msg.error || "That key didn't work.", msg.copy);
       replies.render();
     },
@@ -560,14 +614,21 @@
     replies.render();
     if (replies.changing) $('fish-input').focus();
   });
-  $('fish-link').addEventListener('click', () => { send({ type: 'open_link', url: FISH_URL }); quip('Copy it, then paste here'); });
+  $('fish-link').addEventListener('click', () => { send({ type: 'open_link', url: TTS[replies.tts()].link }); quip('Copy it, then paste here'); });
+  $('gvoice').addEventListener('change', () => {
+    const v = $('gvoice').value;
+    if (TTS[replies.tts()].local) { if (state.studio) state.studio.voice = v === 'default' ? null : v; send({ type: 'ob_studiovoice', voice: v }); }
+    else { state.geminiVoice = v; send({ type: 'ob_geminivoice', voice: v }); }
+  });
+  $('find-show').addEventListener('click', () => { invoke('open_settings', { pane: 'taskbar' }); quip('Switch me on under Other system tray icons', 4); });
+  $('studio-check').addEventListener('click', () => { if (state?.studio) state.studio = { checking: true, voice: state.studio.voice }; replies.render(); send({ type: 'ob_studiocheck' }); });
   $('fish-form').addEventListener('submit', (e) => {
     e.preventDefault();
     const key = $('fish-input').value.trim();
     if (!key || replies.saving) return $('fish-input').focus();
     replies.saving = true; $('fish-error').hidden = true; replies.render();
     poseFn = POSE.think();
-    send({ type: 'ob_fishkey', key });
+    send({ type: TTS[replies.tts()].send, key });
     $('fish-input').value = '';
   });
 
@@ -872,6 +933,8 @@
       // Linux: GNOME shows no tray without an extension, and opening Roamies again works anywhere.
       $('find-tip').innerHTML = linux ? "No tray on your desktop? On GNOME, add the <b>AppIndicator</b> extension. Or just open Roamies again from your apps: that opens my panel." : "Don't see me? Click the <b>^</b> arrow next to the clock. To keep me in view, drag my icon onto the taskbar.";
       $('find-tip').hidden = mac;
+      // Windows: straight to the Taskbar settings, where Roamies is switched on under Other system tray icons.
+      $('find-show').hidden = mac || linux;
       $('find-bar').classList.toggle('taskbar', !mac);
       poseFn = POSE.point(1.25, mac ? -1.45 : 1.2);
       setTimeout(() => at('find') && quip(mac ? 'I live up there!' : 'I live down there!'), 750);
@@ -1099,8 +1162,8 @@
   // ---------------------------------------------------------------- flow
   // ---------------------------------------------------------------- step 0: look and size
   // Picked here, previewed on the guide right away, saved by the app (Settings has the same choices).
-  const LOOKS = [['classic', 'Roamie'], ['jarvis', 'JARVIS'], ['anime', 'Anime Girl'], ['sarah', 'Sarah'], ['adrian', 'Adrian']], SIZES = [['default', 'Default'], ['small', 'Small'], ['cursor', 'Cursor']];
-  const LOOK_QUIPS = { classic: 'Classic me!', jarvis: 'At your service.', anime: 'Yay, hi hi!', sarah: 'Hey, nice to meet you!', adrian: 'Alright, let\'s do this.' }, SIZE_QUIPS = { default: 'Full size!', small: 'Fun size!', cursor: 'Tiny pointer me!' };
+  const LOOKS = [['classic', 'Roamie'], ['jarvis', 'JARVIS'], ['anime', 'Anime Girl'], ['sarah', 'Sarah'], ['adrian', 'Adrian'], ['rita', 'Rita X']], SIZES = [['default', 'Default'], ['small', 'Small'], ['cursor', 'Cursor']];
+  const LOOK_QUIPS = { classic: 'Classic me!', jarvis: 'At your service.', anime: 'Yay, hi hi!', sarah: 'Hey, nice to meet you!', adrian: 'Alright, let\'s do this.', rita: 'Shall we get to work?' }, SIZE_QUIPS = { default: 'Full size!', small: 'Fun size!', cursor: 'Tiny pointer me!' };
   const look = {
     radios(id, list, value, pickIt) {
       $(id).replaceChildren(...list.map(([v, label]) => {
@@ -1260,8 +1323,11 @@
     const st = {
       // &filesAsked=1: Allow was tapped for the folders in an earlier run. &replies=voice&fish=1: voice already on.
       kind: 'state', platform: q.get('platform') || 'darwin', step: +(q.get('step') || 0), sound: true, look: q.get('look') || 'classic', size: q.get('size') || 'default', voice: true, actions: false, login: true, filesAsked: q.get('filesAsked') === '1',
+      // &tts=gemini&gemini=1: Gemini as the voice, its key saved.
       replies: q.get('replies') === 'voice' ? 'voice' : 'text', fishKey: q.get('fish') === '1',
       bind: q.get('session') === 'wayland' ? Object.fromEntries(['summon', 'talk', 'ask', 'list', 'panel'].map((k) => [k, `'/home/sam/Apps/Roamies 0.1.33.AppImage' --${k}`])) : null,
+      tts: q.get('tts') === 'gemini' ? 'gemini' : 'fish', geminiKey: q.get('gemini') === '1', geminiVoice: 'Kore',
+      geminiVoices: [['Zephyr', 'Bright'], ['Puck', 'Upbeat'], ['Charon', 'Informative'], ['Kore', 'Firm']].map(([id, style]) => ({ id, style })),
       keys: q.get('platform') === 'win32' ? { talk: ['control', 'option'], write: ['control', 'shift'], summon: 'Control+Shift+KeyS', snap: 'Control+Shift+KeyA' } : { talk: ['control', 'option'], write: win ? ['control', 'shift'] : ['option', 'command'], summon: 'Control+Alt+KeyS', snap: 'Control+Alt+KeyA' }, connected: null,
       voiceModel: win ? { status: q.get('model') || 'missing', done: q.get('model') === 'downloading' ? 281601575 : 0, total: 670479942, error: q.get('model') === 'error' ? 'Download failed. Check your internet.' : null, size: '670 MB' } : null,
       oauth: [['anthropic', 'Claude', 'Anthropic'], ['openai', 'ChatGPT', 'OpenAI']].map(([id, name, company]) => ({ id, name, company, connected: false })),
@@ -1310,12 +1376,23 @@
           window.__onboard?.({ kind: 'login', provider: m.provider, phase: 'done' }); window.__onboard?.({ ...st });
         }, 900);
       } else if (m.type === 'ob_replies') { st.replies = m.mode; reply({ ...st }); reply({ kind: 'say', text: m.mode === 'voice' ? 'Voice is on!' : 'Text only from now on.' }, 50); }
-      else if (m.type === 'ob_fishkey') {
+      else if (m.type === 'ob_fishkey' || m.type === 'ob_geminikey') {
         // A key of "bad" is refused, like a wrong one.
+        const p = m.type === 'ob_geminikey' ? 'gemini' : 'fish';
         setTimeout(() => {
-          if (m.key === 'bad') return window.__onboard?.({ kind: 'fish', ok: false, error: "That key didn't work. Copy it again from fish.audio and retry." });
-          Object.assign(st, { fishKey: true, replies: 'voice' }); window.__onboard?.({ kind: 'fish', ok: true }); window.__onboard?.({ ...st });
+          if (m.key === 'bad') return window.__onboard?.({ kind: 'fish', ok: false, error: `That key didn't work. Copy it again from ${p === 'gemini' ? 'aistudio.google.com' : 'fish.audio'} and retry.` });
+          Object.assign(st, { [`${p}Key`]: true, tts: p, replies: 'voice' }); window.__onboard?.({ kind: 'fish', ok: true }); window.__onboard?.({ ...st });
         }, 900);
+      } else if (m.type === 'ob_tts') {
+        st.tts = m.provider;
+        // ?studio=off: VoiceStudio isn't running.
+        st.studio = m.provider === 'voicestudio' ? (q.get('studio') === 'off' ? { ok: false, reason: 'offline', message: 'Run VoiceStudio first.' } : { ok: true, engine: 'OmniVoice', voices: [{ id: 'a642d572', name: 'Ben' }], voice: null }) : null;
+        if (st[`${m.provider}Key`] || st.studio?.ok) st.replies = 'voice';
+        reply({ ...st });
+      }
+      else if (m.type === 'ob_studiocheck') reply({ ...st }, 600);
+      else if (m.type === 'ob_studiovoice') { st.studio.voice = m.voice === 'default' ? null : m.voice; reply({ ...st }); reply({ kind: 'say', text: 'This is my new voice.' }, 50); }
+      else if (m.type === 'ob_geminivoice') { st.geminiVoice = m.voice; reply({ ...st }); reply({ kind: 'say', text: 'This is how I sound.' }, 50);
       } else if (m.type === 'set_keys') {
         // As the sidecar does: talk and type never share a pair, so picking the other one's pair swaps them.
         const k = st.keys, both = (a, b) => a.every((x) => b.includes(x));

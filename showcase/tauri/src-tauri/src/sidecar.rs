@@ -58,6 +58,9 @@ pub(crate) fn spawn_sidecar(app: &AppHandle) {
         .stdout(Stdio::piped())
         .stderr(stderr);
     // Linux: "x11" or "wayland", for what the sidecar offers and how it words things (platform.mjs).
+    // Windows: which program owns the tray icon, so the sidecar can show it next to the clock (wintray.mjs).
+    #[cfg(windows)]
+    cmd.env("ROAMIES_EXE", std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default());
     #[cfg(target_os = "linux")]
     cmd.env("ROAMIES_SESSION", crate::linux::session().name()).env("ROAMIES_LAUNCH", crate::linux::launch_command());
     if let Some(dir) = script.parent() {

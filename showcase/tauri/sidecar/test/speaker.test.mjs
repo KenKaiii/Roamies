@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createSpeaker, BEATS, bundledBeats } from '../speaker.mjs';
+import { createSpeaker, BEATS, bundledBeats, PROVIDERS, trimSilence } from '../speaker.mjs';
 import { FISH_MODELS } from '../fish.mjs';
 import { readFileSync } from 'node:fs';
 
@@ -162,6 +162,108 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
   sp2.setModel('drama-3');
   sp2.start(); assert.equal(made.at(-1).model, 'drama-3');
 }
+{ // Gemini: its own voice class, 24 kHz audio, the cheaper model unless the other is picked, beats not made straight away.
+  made.length = 0;
+  const out = [], problems = [];
+  let acct = { ok: true, credit: null };
+  const sp = createSpeaker({ emit: (m) => out.push(m), onProblem: (p) => problems.push(p), FishVoiceImpl: FakeVoice, account: async () => ({ ok: true, credit: 4.5 }),
+    providers: { gemini: { ...PROVIDERS.gemini, Voice: FakeVoice, account: async () => acct } }, beatPhrases: ['One sec.'], bundled: () => null });
+  assert.equal(sp.provider, 'fish');
+  sp.setKey('fish-key'); await tick(); await tick();
+  made.length = 0; // the Fish beat made on its key
+  sp.setProvider('gemini');
+  assert.equal(sp.provider, 'gemini'); assert.equal(sp.on, false, "the other service's key isn't carried over");
+  assert.equal(sp.start(), null);
+  sp.setKey('g-key'); sp.setVoice('Puck'); await tick(); await tick();
+  assert.equal(made.length, 0, 'beats wait a while, in case the voice is still being picked');
+  assert.equal(sp.model, 'gemini-3.8-flash-lite-tts'); assert.equal(sp.pick, 'gemini-3.8-flash-lite-tts');
+  const r = sp.start();
+  assert.equal(r.beat(), true);
+  const v = made[0];
+  assert.deepEqual(v.said, ['One sec.'], 'the beat is said live');
+  assert.equal(v.key, 'g-key'); assert.equal(v.voice, 'Puck'); assert.equal(v.model, 'gemini-3.8-flash-lite-tts');
+  v.onAudio(new Uint8Array([1, 0]));
+  assert.equal(out.at(-1).rate, 25440, 'played a semitone up');
+  // A failure that isn't the key: said as it is, and not tried again (there's no cheaper model than this one).
+  const r2 = sp.start(); r2.say('Hi.');
+  made.at(-1).onError(Object.assign(new Error('Gemini: No matching speaker voice'), { heard: false, status: 400 })); await tick(); await tick();
+  assert.deepEqual(problems, ['Gemini: No matching speaker voice']);
+  assert.equal(made.length, 2);
+  assert.deepEqual(out.at(-1), { kind: 'speech', id: r2.id, end: true });
+  // The key stopped working: said as a key problem, though there was no model left to retry on.
+  acct = { ok: false, reason: 'key' };
+  const r3 = sp.start(); r3.say('Hi.');
+  made.at(-1).onError(Object.assign(new Error('Gemini: API key not valid'), { heard: false, status: 400 })); await tick(); await tick();
+  assert.deepEqual(problems.at(-1), 'key');
+  // Flash picked: a reply that fails before any audio is tried again on Flash Lite, with what was said so far.
+  acct = { ok: true, credit: null };
+  sp.setModel('gemini-3.8-flash-tts'); sp.setModel('not-a-model');
+  assert.equal(sp.pick, 'gemini-3.8-flash-tts');
+  const r5 = sp.start(); r5.say('Hi.');
+  assert.equal(made.at(-1).model, 'gemini-3.8-flash-tts');
+  made.at(-1).onError(Object.assign(new Error('Gemini: overloaded'), { heard: false, status: 503 })); await tick(); await tick();
+  assert.equal(made.at(-1).model, 'gemini-3.8-flash-lite-tts'); assert.deepEqual(made.at(-1).said, ['Hi.']);
+  // Back to Fish: its own voice class and rate again.
+  sp.setProvider('fish'); sp.setKey('fish-key'); await tick(); await tick();
+  const r4 = sp.start(); r4.say('Hi.');
+  assert.equal(made.at(-1).model, 'drama-3');
+  made.at(-1).onAudio(new Uint8Array([1, 0]));
+  assert.equal(out.at(-1).rate, 44100);
+}
+{ // A Fish account check still out when the service changes says nothing about Gemini's model.
+  let answer;
+  const sp = createSpeaker({ emit: () => {}, FishVoiceImpl: FakeVoice, account: () => new Promise((r) => { answer = r; }),
+    providers: { gemini: { ...PROVIDERS.gemini, Voice: FakeVoice, account: async () => ({ ok: true, credit: null }) } }, beatPhrases: [], bundled: () => null });
+  sp.setKey('fish-key');
+  sp.setProvider('gemini'); sp.setKey('g-key'); await tick();
+  answer({ ok: true, credit: 0 }); await tick(); await tick();
+  assert.equal(sp.model, PROVIDERS.gemini.pick, 'not the Fish free tier');
+  assert.deepEqual(await sp.check(), { ok: true, credit: null }, 'and the next check asks Gemini');
+}
+// Silence at both ends of a beat is cut (a little is kept), so it starts the moment it plays.
+{
+  const pcm = Buffer.from(new Int16Array([...Array(2000).fill(0), 9000, -9000, 9000, ...Array(3000).fill(3)]).buffer);
+  const cut = trimSilence(pcm, 1000); // 40 samples kept each side
+  assert.equal(cut.length / 2, 40 + 3 + 40);
+  assert.equal(cut.readInt16LE(40 * 2), 9000);
+  assert.equal(trimSilence(Buffer.from([1, 0, 2, 0]), 24000).length, 4, 'nothing loud: left alone');
+  assert.equal(trimSilence(Buffer.from([1, 0, 2]), 24000).length, 2, 'a stray byte is dropped');
+}
+{ // Beats made here are kept (beatStore) and read back next time, so they're only ever made once per voice and model.
+  const kept = new Map(), writes = [];
+  const beatStore = { read: (name) => kept.get(name) ?? null, write: (name, data) => { writes.push(name); kept.set(name, data); } };
+  const gem = { gemini: { ...PROVIDERS.gemini, Voice: FakeVoice, warmDelay: 0, account: async () => ({ ok: true, credit: null }) } };
+  const mk = (out = []) => ({ out, sp: createSpeaker({ emit: (m) => out.push(m), FishVoiceImpl: FakeVoice, account: async () => ({ ok: true, credit: 1 }), providers: gem, beatPhrases: ['One sec.', 'On it.'], bundled: () => null, beatStore }) });
+  const settle = async () => { for (let i = 0; i < 6; i++) await tick(); };
+  made.length = 0;
+  const { sp } = mk();
+  sp.setProvider('gemini'); sp.setVoice('Puck'); sp.setKey('g-key'); await settle();
+  assert.equal(made.length, 1, 'one at a time');
+  assert.deepEqual(made[0].said, ['One sec.']); assert.equal(made[0].voice, 'Puck'); assert.equal(made[0].model, 'gemini-3.8-flash-lite-tts');
+  made[0].onAudio(new Uint8Array([1, 0])); made[0].onAudio(new Uint8Array([2, 0])); made[0].onEnd(); await settle();
+  made[1].onAudio(new Uint8Array([3, 0])); made[1].onEnd(); await settle();
+  assert.equal(sp.ready, 2);
+  assert.deepEqual(writes, ['gemini.Puck.gemini-3.8-flash-lite-tts']);
+  assert.deepEqual(kept.get(writes[0]), { rate: 24000, beats: { 'One sec.': Buffer.from([1, 0, 2, 0]).toString('base64'), 'On it.': Buffer.from([3, 0]).toString('base64') } });
+  // The next run: read back, nothing asked of Gemini, and played at once at its rate.
+  made.length = 0;
+  const { sp: sp2, out } = mk();
+  sp2.setProvider('gemini'); sp2.setVoice('Puck'); sp2.setKey('g-key'); await settle();
+  assert.equal(made.length, 0); assert.equal(sp2.ready, 2); assert.equal(writes.length, 1, 'nothing new to keep');
+  const r = sp2.start(); assert.equal(r.beat(), true);
+  assert.equal(out.at(-1).rate, 25440); assert.ok([...Object.values(kept.get(writes[0]).beats)].includes(out.at(-1).pcm));
+  assert.deepEqual(made.at(-1).said, [], 'not said live');
+  // Another voice: its own beats, made once the first lot is out of the way.
+  made.length = 0;
+  sp2.setVoice('Kore'); await settle();
+  assert.equal(made.at(-1).voice, 'Kore'); assert.deepEqual(made.at(-1).said, ['One sec.']);
+  // It gives up after three failures in a row (no allowance left), rather than asking for all of them.
+  made.length = 0;
+  const many = createSpeaker({ emit: () => {}, FishVoiceImpl: FakeVoice, account: async () => ({ ok: true, credit: 1 }), providers: gem, beatPhrases: ['a', 'b', 'c', 'd', 'e'], bundled: () => null, beatStore });
+  many.setProvider('gemini'); many.setKey('g-key'); await settle();
+  for (let i = 0; i < 3; i++) { made.at(-1).onError(new Error('Gemini is rate limiting')); await settle(); }
+  assert.equal(made.length, 3, 'stopped after three'); assert.equal(many.ready, 0);
+}
 console.log('speaker tests: passed');
 { // Voice cues aren't counted as spoken text.
   const { sp, out } = setup();
@@ -207,3 +309,63 @@ console.log('speaker beat variety: passed');
   }
 }
 console.log('bundled beats: passed');
+
+{ // VoiceStudio (local) as the provider: no Fish key needed, its PCM goes out at its own rate, cues aren't counted.
+  made.length = 0;
+  const local = [], out = [], problems = [];
+  class FakeLocal { constructor(o) { Object.assign(this, o); this.said = []; this.ended = false; this.aborted = false; local.push(this); } open() { this.opened = true; return this; } say(s) { this.said.push(s); } end() { this.ended = true; } abort() { this.aborted = true; } }
+  const sp = createSpeaker({ emit: (m) => out.push(m), onProblem: (p) => problems.push(p), FishVoiceImpl: FakeVoice, account: async () => ({ ok: true, credit: 5 }), beatPhrases: [], bundled: () => null,
+    LocalVoiceImpl: FakeLocal, localStatus: async () => ({ ok: true, engine: 'omnivoice', voices: [{ id: 'en-Alice_woman', name: 'Alice' }] }) });
+  assert.equal(sp.provider, 'fish'); assert.equal(sp.on, false, 'Fish without a key is off');
+  sp.setProvider('voicestudio'); await tick();
+  assert.equal(sp.provider, 'voicestudio'); assert.equal(sp.on, true, 'VoiceStudio needs no key');
+  assert.equal(sp.local.ok, true);
+  sp.setLocalVoice('en-Alice_woman');
+  const r = sp.start();
+  assert.equal(local.at(-1).voice, 'en-Alice_woman'); assert.ok(local.at(-1).opened, 'its socket opens as the reply starts');
+  assert.equal(r.beat(), false, 'no beats made in VoiceStudio');
+  r.say('[warm] Hello there.'); r.end();
+  assert.deepEqual(local.at(-1).said, ['[warm] Hello there.']); assert.ok(local.at(-1).ended);
+  local.at(-1).onAudio(new Uint8Array([4, 0]), 24000);
+  assert.deepEqual(out.at(-1), { kind: 'speech', id: r.id, rate: 24000, pcm: Buffer.from([4, 0]).toString('base64') });
+  local.at(-1).onEnd();
+  assert.deepEqual(out.at(-1), { kind: 'speech', id: r.id, end: true, chars: 12 });
+  assert.equal(made.length, 0, 'Fish was never used');
+
+  // Unavailable before any audio: reported with its reason and message, the reply ends as text, and Fish is NOT tried,
+  // even when a Fish key is handed over meanwhile (it's ignored while VoiceStudio is the pick).
+  sp.setKey('fish-key'); await tick();
+  assert.equal(sp.provider, 'voicestudio');
+  const n = made.length;
+  const r2 = sp.start(); r2.say('Hi.'); r2.end();
+  local.at(-1).onError(Object.assign(new Error("Run VoiceStudio first."), { reason: 'offline', heard: false }));
+  assert.deepEqual(problems, [{ provider: 'voicestudio', reason: 'offline', message: "Run VoiceStudio first." }]);
+  assert.deepEqual(out.at(-1), { kind: 'speech', id: r2.id, end: true });
+  assert.equal(made.length, n, 'no Fish socket opened as a fallback');
+  assert.equal(sp.local.reason, 'offline', 'the panel shows the latest reason');
+
+  // Failing after audio started: no problem report (it was heard), just ends.
+  const r3 = sp.start(); r3.say('Hi.');
+  local.at(-1).onAudio(new Uint8Array([0, 0]), 24000);
+  local.at(-1).onError(Object.assign(new Error('dropped'), { reason: 'error', heard: true }));
+  assert.equal(problems.length, 1);
+
+  // Stop (and barge-in) aborts the local voice and quiets the overlay; a new reply aborts the old one.
+  const r4 = sp.start(); r4.say('Long one.');
+  sp.stop();
+  assert.ok(local.at(-1).aborted); assert.deepEqual(out.at(-1), { kind: 'speech', stop: true });
+  const a = sp.start(); a.say('Old.'); const old = local.at(-1);
+  sp.start(); assert.ok(old.aborted);
+  const before = out.length; old.onAudio(new Uint8Array([1, 0]), 24000); old.onEnd();
+  assert.equal(out.length, before, 'nothing from the stopped reply');
+
+  // Switching providers stops what's playing; back on Fish, replies use Fish again with the same model pick.
+  const r5 = sp.start(); r5.say('Local.'); const playing = local.at(-1);
+  sp.setProvider('fish');
+  assert.ok(playing.aborted, 'switching stops the old provider'); assert.deepEqual(out.at(-1), { kind: 'speech', stop: true });
+  assert.equal(sp.on, false, 'back on Fish, it waits for its key'); sp.setKey('fish-key'); await tick();
+  const f = sp.start(); f.say('Fish again.');
+  assert.equal(made.at(-1).model, 'drama-3'); assert.deepEqual(made.at(-1).said, ['Fish again.']);
+  sp.setProvider('nope'); assert.equal(sp.provider, 'fish', 'unknown providers are ignored');
+  console.log('speaker provider tests: passed');
+}

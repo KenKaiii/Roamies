@@ -145,6 +145,9 @@ html, body { height: 100%; background: transparent; }
 /* An account: its row, and its key field under it while that's open. */
 .acct { display: grid; gap: 6px; padding: 4px 0; }
 .acct .note { white-space: normal; }
+/* A block that opens in place (panel.js grows it in): lays its rows out like the group around it. */
+.reveal { display: grid; gap: var(--step); min-width: 0; }
+.acct-name { display: inline-flex; align-items: center; gap: 10px; }
 /* The page's footer: what's about the whole list on the left, the page arrows on the right. */
 .pfoot {
   flex: none; display: flex; align-items: center; justify-content: space-between; gap: 12px;
@@ -217,6 +220,27 @@ html, body { height: 100%; background: transparent; }
 .arm[aria-pressed="true"] > .yes { opacity: 1; color: var(--accent-ink); background: var(--danger); animation: arm-blink 600ms steps(2, end) 2; }
 @keyframes arm-blink { 50% { background: #ff8a78; } }
 
+/* Memory and commitment rows: no marker, just the text and its tick (done) and X (forget, drop). Pressed, a tick or
+   X becomes Confirm in place and the row's other one folds away; both ease in and out. */
+.item.mem { grid-template-columns: minmax(0, 1fr) auto; }
+.row-btns.icons { gap: 0; }
+.ibtn {
+  display: inline-flex; align-items: center; padding: 4px; margin-inline-start: 6px; max-width: 8em; overflow: hidden;
+  font-size: var(--t-small); line-height: 1.25; text-decoration: none; white-space: nowrap;
+  transition: max-width .2s var(--ease), opacity .16s var(--ease), padding .2s var(--ease), margin .2s var(--ease);
+}
+.ibtn:first-child { margin-inline-start: 0; }
+.ibtn:hover { color: var(--accent-hi); }
+.ibtn.danger:hover { color: #ffcbc2; }
+.ibtn > span { display: inline-flex; align-items: center; overflow: hidden; transition: max-width .2s var(--ease), opacity .16s var(--ease), padding .2s var(--ease); }
+.ibtn > .no { max-width: 14px; }
+.ibtn > .no svg { display: block; flex: none; }
+.ibtn > .yes { max-width: 0; opacity: 0; padding: 1px 0; color: var(--accent-ink); background: var(--accent); }
+.ibtn.danger > .yes { background: var(--danger); }
+.ibtn[aria-pressed="true"] > .no { max-width: 0; opacity: 0; }
+.ibtn[aria-pressed="true"] > .yes { max-width: 6em; opacity: 1; padding: 1px 6px; }
+.row-btns:has(> .ibtn[aria-pressed="true"]) > .ibtn:not([aria-pressed="true"]) { max-width: 0; opacity: 0; padding-inline: 0; margin-inline-start: 0; pointer-events: none; }
+
 /* ---------- settings ---------- */
 .setting { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; min-height: 32px; }
 .setting > span { min-width: 0; font-size: var(--t-body); line-height: 1.35; color: var(--ink); }
@@ -251,6 +275,7 @@ html, body { height: 100%; background: transparent; }
 /* Why pick a choice: one line under it, quieter than the setting it explains. */
 .why { margin: -2px 0 0; font-size: var(--t-small); line-height: 1.4; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .why.late { color: var(--danger); }
+.setting small.bad { color: var(--danger); white-space: normal; }
 
 /* Tooltip: a small LED-framed card against its control, dissolving in like the rows. */
 .tip {
@@ -276,5 +301,5 @@ html, body { height: 100%; background: transparent; }
 
 @media (prefers-reduced-motion: reduce) {
   .frame.opening, .frame.shutting, .pane.enter > *, .pane.enter .list > li, .navi.ping, .item.leaving, .note, .arm[aria-pressed="true"] > .yes { animation: none; }
-  .navi, .arm > span, .tab { transition: none; }
+  .navi, .arm > span, .tab, .ibtn, .ibtn > span { transition: none; }
 }

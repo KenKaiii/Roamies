@@ -71,6 +71,18 @@
       <h1 id="h-voice">How should I reply?</h1>
       <p class="lead">Text shows in my bubbles. Voice also says it out loud. Change it any time in the Roamies panel.</p>
       <div class="providers two" id="replies" role="radiogroup" aria-labelledby="h-voice"></div>
+      <div class="tts-row" id="tts-row" hidden>
+        <span id="tts-h">Spoken by</span>
+        <div class="chords" id="tts" role="radiogroup" aria-labelledby="tts-h"></div>
+      </div>
+      <div class="tts-row" id="studio-row" hidden>
+        <span id="studio-status" role="status"></span>
+        <button class="link" type="button" id="studio-check">Check again</button>
+      </div>
+      <div class="tts-row" id="gvoice-row" hidden>
+        <label for="gvoice">Voice</label>
+        <span class="px field"><select id="gvoice"></select></span>
+      </div>
       <button class="link" type="button" id="fish-change" aria-controls="fish-form" aria-expanded="false" hidden>Change key</button>
       <form class="inline" id="fish-form" hidden>
         <div class="label-row">
@@ -176,6 +188,7 @@
         <span class="mb-clock">9:41</span>
       </div>
       <p class="tip" id="find-tip" hidden>Don't see me? Click the <b>^</b> arrow next to the clock. To keep me in view, drag my icon onto the taskbar.</p>
+      <button class="link" type="button" id="find-show" hidden>Always show my icon</button>
       <dl class="recap" id="recap"></dl>
     </section>
 

@@ -122,6 +122,13 @@ body {
 }
 /* Fades in where it'll stay: no slide, so nothing on the step moves as it opens. */
 @keyframes step-in { from { opacity: 0; } to { opacity: 1; } }
+/* Something opening in place (a key field, a provider's settings) fades in and out while the space around it
+   opens and closes (panel.js and onboarding.js animate the height), rather than popping. */
+.appear { animation: reveal-in .2s var(--ease) both; }
+.vanish { animation: reveal-out .16s var(--ease) both; pointer-events: none; }
+@keyframes reveal-in { from { opacity: 0; transform: translateY(-4px); } }
+@keyframes reveal-out { to { opacity: 0; transform: translateY(-4px); } }
+@media (prefers-reduced-motion: reduce) { .appear, .vanish { animation: none; } }
 h1 {
   margin: 0 0 10px; font: 900 32px/1.05 var(--display); letter-spacing: 0.01em; color: var(--ink);
   text-shadow: 0 0 14px rgba(120, 255, 226, 0.35);
@@ -236,9 +243,26 @@ h2 { margin: 0; font: 700 13px/1.35 var(--mono); font-stretch: 87.5%; color: var
 .label-row .link { flex: none; padding: 0; }
 .link[hidden] { display: none; }
 #fish-change { margin: -6px 0 10px; }
+/* Which service speaks (Fish Audio or Gemini), and Gemini's voice: a label with its choice at the far end. */
+.tts-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 12px; font-size: 12px; color: var(--ink-2); }
+.tts-row[hidden] { display: none; }
+.tts-row .field { flex: 0 1 230px; }
+.tts-row .bad { color: var(--danger); }
+.tts-row .link { flex: none; padding: 0; }
+select {
+  appearance: none; min-width: 0; flex: 1; padding: 9px 30px 9px 12px; border: 0; color: var(--ink); cursor: pointer;
+  font: 500 13px/1.25 var(--mono); font-stretch: 87.5%;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' shape-rendering='crispEdges'%3E%3Cpath d='M0 0h2v2H0zM2 2h2v2H2zM4 4h2v2H4zM6 2h2v2H6zM8 0h2v2H8z' fill='%23b4d8d1'/%3E%3C/svg%3E") no-repeat right 12px center;
+}
+select option { background: #061719; color: var(--ink); }
+select:focus-visible { outline: none; }
 .note { margin: 8px 0 0; font-size: 11px; line-height: 1.4; color: var(--ink-3); }
 .field-row { display: flex; gap: 8px; }
 .field { display: flex; flex: 1; min-width: 0; --bc: var(--line-hi); --fill: #061719; }
+/* A field takes focus from a click as well as the keyboard, so it lights up in the accent instead of the thick white
+   ring buttons get. */
+.field:has(:focus-visible) { --bc: var(--accent); --bw: 2px; }
+.field:has(:focus-visible)::before { box-shadow: none; }
 input {
   min-width: 0; flex: 1; padding: 9px 12px; border: 0; background: transparent; color: var(--ink);
   font: 500 13px/1.25 var(--mono); font-stretch: 87.5%; user-select: text;
@@ -311,6 +335,7 @@ input:focus-visible { outline: none; }
 .menubar.taskbar .mb-more { display: block; }
 .tip { margin: -10px 0 18px; font-size: 11px; line-height: 1.45; color: var(--ink-3); }
 .tip b { color: var(--ink-2); }
+#find-show { margin: -12px 0 16px; padding: 0; }
 /* Rows that set display: grid otherwise ignore the hidden attribute. */
 .kline[hidden], .tip[hidden], .keyrow[hidden], .chords[hidden] { display: none; }
 /* Wayland: one line per command to bind in the desktop's keyboard settings: what it does and Copy (the command shows

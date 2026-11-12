@@ -466,9 +466,9 @@ async fn perm_request(kind: String) -> Value {
 #[tauri::command]
 fn open_settings(pane: String) {
     const PANES: [&str; 6] = ["Privacy_Microphone", "Privacy_SpeechRecognition", "Privacy_ScreenCapture", "Privacy_FilesAndFolders", "Privacy_AllFiles", "Privacy_Accessibility"];
-    if cfg!(windows) && pane == "privacy-microphone" {
-        // explorer hands ms-settings: links to the Settings app.
-        let _ = hide_console(&mut Command::new("explorer")).arg("ms-settings:privacy-microphone").spawn();
+    // explorer hands ms-settings: links to the Settings app. Taskbar: where Roamies' tray icon is switched on.
+    if cfg!(windows) && (pane == "privacy-microphone" || pane == "taskbar") {
+        let _ = hide_console(&mut Command::new("explorer")).arg(format!("ms-settings:{pane}")).spawn();
         return;
     }
     if !cfg!(target_os = "macos") || !PANES.contains(&pane.as_str()) {
@@ -1528,7 +1528,8 @@ fn cli_action(args: &[String]) -> Option<&'static str> {
 }
 
 /// A second launch quit and handed its arguments over (the single-instance plugin). A plain one summons the
-/// Roamie; on Linux it opens the panel instead, since many desktops there show no tray icon to click.
+/// Roamie and, on Windows and Linux, opens the panel: Windows 11 hides a new tray icon behind the ^ arrow and many
+/// Linux desktops show none, so opening Roamies again from the Start menu or the app list is the way in.
 fn second_launch(app: &AppHandle, args: &[String]) {
     match cli_action(args) {
         Some("summon") => to_overlays(app, &json!({ "kind": "summon" })),
@@ -1536,6 +1537,10 @@ fn second_launch(app: &AppHandle, args: &[String]) {
         // The sidecar's to do: it knows whether voice is on and ready, and owns the ask bubble and the list.
         Some(action) => to_sidecar(app, &json!({ "type": "cli", "action": action })),
         None if cfg!(target_os = "linux") => show_panel(app, None, false),
+        None if cfg!(windows) => {
+            to_overlays(app, &json!({ "kind": "summon" }));
+            show_panel(app, None, false);
+        }
         None => to_overlays(app, &json!({ "kind": "summon" })),
     }
 }

@@ -34,7 +34,9 @@ import { QUESTIONS, openNote, answerTurn, wantsSkip, endsChat, splitTurn, plain,
 import { SpeechText, CueFilter, VOICE_CUES, endsWithQuestion } from './speech.mjs';
 import { createSpeaker } from './speaker.mjs';
 import { DEFAULT_VOICE, FISH_CHOICES } from './fish.mjs';
-import { createSecrets, retryLoad } from './secrets.mjs';
+import { GEMINI_CHOICES, GEMINI_DEFAULT_VOICE, GEMINI_LOOK_VOICES, GEMINI_MODEL, GEMINI_VOICES } from './gemini.mjs';
+import { createSecrets, retryLoad, runInput } from './secrets.mjs';
+import { showTrayIcon } from './wintray.mjs';
 import { createActivity } from './activity.mjs';
 import { canCircle, canSnap, hasHands, hasHotkeys, hasVoice, linuxSession, micTrouble, needsVoiceModel, platformLine, samePair, seesPointer, writeChord, writeChords } from './platform.mjs';
 import { accountKeys, keyCards, keyKinds, signInCards } from './providers.mjs';
@@ -90,8 +92,12 @@ const DEFAULT_KEYS = process.platform === 'win32'
 const DEFAULTS = {
   provider: null, model: null, sound: true, allowActions: false, voice: true,
   onboarded: false, onboardStep: 0, filesAsked: false, keys: DEFAULT_KEYS, muteWhileTalking: true, autoListen: false, wakeWord: false, setupVersion: 0, size: 'default', look: 'classic', introDone: false,
-  replies: 'text', // 'voice': spoken with Fish Audio as well as shown
+  replies: 'text', // 'voice': spoken (with Fish Audio or Gemini) as well as shown
+  tts: 'fish', // which one speaks: 'fish' (Fish Audio), 'gemini' or 'voicestudio' (the VoiceStudio app on this computer)
+  studioVoices: {}, // look → its VoiceStudio voice (a saved profile id; none: the selected engine's default voice)
   fishModel: FISH_CHOICES[0].id, // Drama 3 (most expressive) or S2.1 Pro (natural pace, cheaper)
+  geminiVoices: {}, // look → the Gemini voice it speaks in, where picked in the setup guide or the panel (else GEMINI_LOOK_VOICES)
+  geminiModel: GEMINI_MODEL, // Flash Lite (quick, cheaper) or Flash (studio quality)
 };
 const LINUX = process.platform === 'linux';
 // Linux: "x11" or "wayland" (the app says which). Wayland keeps apps from seeing the pointer over other apps and
@@ -104,19 +110,26 @@ const HOTKEYS_OK = hasHotkeys(process.platform, SESSION);
 const SIZES = [['default', 'Default'], ['small', 'Small'], ...(POINTER_OK ? [['cursor', 'Cursor']] : [])];
 const sizeNow = () => (SIZES.some(([s]) => s === config.size) ? config.size : 'default');
 // What the sidekick looks like: the goo blob, JARVIS (a globe of light with a HUD reticle at cursor size) or
-// one of three characters, each with its own Fish Audio voice. Roamie's used to be JARVIS's, saved in every
-// config as fishVoice, so the voice comes from the look and that setting is no longer read.
+// one of four characters, each with its own Fish Audio voice. Roamie's used to be JARVIS's, saved in every
+// config as fishVoice, so the voice comes from the look and that setting is no longer read. (With Gemini as the
+// voice, it's the one Gemini voice the user picked, whatever the look.)
 const LOOKS = [
   ['classic', 'Roamie', DEFAULT_VOICE],
   ['jarvis', 'JARVIS', 'e13fa398a7f445a685316a3de6089ce7'],
   ['anime', 'Anime Girl', 'd8f3b4c1199f4568a767ec54112d2b17'],
   ['sarah', 'Sarah', '933563129e564b19a115bedd57b7406a'],
   ['adrian', 'Adrian', 'bf322df2096a46f18c579d0baa36f41d'],
+  ['rita', 'Rita X', '84aadb575ed74e9aa44ba7ab8619d1a1'],
 ];
 const lookVoice = () => (LOOKS.find(([id]) => id === config.look) ?? LOOKS[0])[2];
-// Its name is its look's: Roamie, JARVIS, Anime Girl, Sarah or Adrian. Roamies is the app.
+// The look's voice with Gemini and with VoiceStudio: the user's pick for it, else its own default.
+const geminiVoice = () => config.geminiVoices?.[config.look] ?? GEMINI_LOOK_VOICES[config.look] ?? GEMINI_DEFAULT_VOICE;
+const studioVoice = () => config.studioVoices?.[config.look] ?? null;
+// Its name is its look's: Roamie, JARVIS, Anime Girl, Sarah, Adrian or Rita X. Roamies is the app.
 const lookName = () => (LOOKS.find(([id]) => id === config.look) ?? LOOKS[0])[1];
-const LOOK_BODY = { classic: 'a tiny glowing pixel creature', jarvis: 'a glowing sphere of light', anime: 'a pixel anime girl', sarah: 'a pixel woman', adrian: 'a pixel man' };
+// What each says when it's picked, in its own voice (Settings and the setup guide show the same words).
+const LOOK_GREETINGS = { classic: 'Classic me!', jarvis: 'At your service.', anime: 'Yay, hi hi!', sarah: 'Hey, nice to meet you!', adrian: "Alright, let's do this.", rita: 'Shall we get to work?' };
+const LOOK_BODY = { classic: 'a tiny glowing pixel creature', jarvis: 'a glowing sphere of light', anime: 'a pixel anime girl', sarah: 'a pixel woman', adrian: 'a pixel man', rita: 'a pixel secretary in cat-eye glasses' };
 const VOICE_OK = hasVoice(process.platform);
 // Windows and Linux have no on-device speech API apps can use, so voice there runs Parakeet on the PC. Its model
 // is downloaded once: from the setup guide, or the first time voice is used.
@@ -130,32 +143,97 @@ let shellInfo = null; // resolves the shell's reply to it: screens, tray, panel,
 {
   const saved = readJson(CONFIG_PATH, { backup: true }); // an unreadable file is set aside, never overwritten
   if (saved && typeof saved === 'object' && !Array.isArray(saved)) config = { ...DEFAULTS, ...saved };
+  // Before voices were per look: the one picked becomes the current look's.
+  for (const [one, each] of [['geminiVoice', 'geminiVoices'], ['studioVoice', 'studioVoices']]) {
+    if (!(one in config)) continue;
+    if (config[one]) config[each] = { [config.look ?? 'classic']: config[one], ...config[each] };
+    delete config[one];
+  }
 }
 const saveConfig = () => writeJson(CONFIG_PATH, config, { backup: true });
 
-// ---------- spoken replies (Fish Audio) ----------
+// ---------- spoken replies (Fish Audio, Gemini or VoiceStudio) ----------
 // The key is the user's own: in the Keychain (macOS), DPAPI-encrypted (Windows) or the desktop's keyring (Linux),
 // never in the config or logs.
+// Each service has its own: secret is its name in that store, site is where a key comes from.
+const TTS = {
+  fish: { id: 'fish', name: 'Fish Audio', secret: 'fish-audio', site: 'fish.audio' },
+  gemini: { id: 'gemini', name: 'Gemini', secret: 'gemini-tts', site: 'aistudio.google.com' },
+  // On this computer: no key, never falls back to a paid service when it isn't running.
+  voicestudio: { id: 'voicestudio', name: 'VoiceStudio', local: true },
+};
+const tts = () => TTS[config.tts] ?? TTS.fish;
+// Which have a key to speak with: 'own' (saved for the voice), 'shared' (Gemini only: the AI's Gemini key, from the
+// Model page, when no key was saved just for the voice) or false. For the one in use, speech.on says.
+const ttsKeys = { fish: false, gemini: false };
+const hasVoiceKey = (id) => (id === tts().id ? speech.on : !!ttsKeys[id]);
+// The key the AI uses for Gemini, if it's an API key (the same Google AI Studio key speaks too).
+const brainGeminiKey = () => auth.resolveApiKey('gemini').then((c) => c?.accessToken || null).catch(() => null);
+// A service's key and which kind it is. Throws while the secret store can't be read.
+async function voiceKey(id) {
+  // Linux: reading the keyring can pop up an "unlock your keyring" dialog (an auto-login desktop leaves it locked),
+  // so it's only read once a key has been saved there (fishKeySaved, geminiKeySaved).
+  const own = LINUX && !config[`${id}KeySaved`] ? null : await secrets.get(TTS[id].secret);
+  if (own) return [own, 'own'];
+  const shared = id === 'gemini' ? await brainGeminiKey() : null;
+  return shared ? [shared, 'shared'] : [null, false];
+}
 const secrets = createSecrets({ hands: process.env.ROAMIES_HANDS || '', dataDir: path.join(path.dirname(CONFIG_PATH), 'sidekick') });
 let voiceProblemAt = 0;
+// Beats made on this computer (a Gemini voice's, or a Fish voice the app doesn't ship) are kept, so each voice
+// and model's are only made once.
+const BEAT_DIR = path.join(path.dirname(CONFIG_PATH), 'sidekick', 'beats');
 const speech = createSpeaker({
+  beatStore: { read: (name) => readJson(path.join(BEAT_DIR, `${name}.json`)), write: (name, data) => writeJson(path.join(BEAT_DIR, `${name}.json`), data) },
   emit: (m) => ui(m),
   log: (kind, data) => logLine(kind, data),
   // Once in a while, not on every reply: the text is there either way.
   onProblem: (what) => {
+    // VoiceStudio: said once a minute at most (it's local, so the reason is something they can fix now).
+    if (what?.provider === 'voicestudio') {
+      if (Date.now() - voiceProblemAt < 60_000) return;
+      voiceProblemAt = Date.now();
+      if (panelOpen) panel();
+      return say(`${what.message} Replies are text until then; I won't switch to a paid voice on my own.`, 'concerned');
+    }
     if (Date.now() - voiceProblemAt < 10 * 60_000) return;
     voiceProblemAt = Date.now();
-    say(what === 'key' ? 'My Fish Audio key isn\'t working, so replies are text for now.' : 'My voice isn\'t working right now, so replies are text for now.', 'concerned');
+    say(what === 'key' ? `My ${tts().name} key isn't working, so replies are text for now.` : 'My voice isn\'t working right now, so replies are text for now.', 'concerned');
   },
 });
-speech.setVoice(lookVoice());
-speech.setModel(config.fishModel);
+// The Gemini voice speaks with the AI's Gemini key unless it has one of its own: after that key is added, changed or
+// removed on the Model page, the voice follows.
+async function syncGeminiVoiceKey() {
+  if (ttsKeys.gemini === 'own') return;
+  if (tts().id === 'gemini') await useTts('gemini');
+  else ttsKeys.gemini = (await voiceKey('gemini').catch(() => [null, false]))[1];
+}
+// Point the speaker at a service, with its voice and model. Its key is set after (a change of service clears it).
+function aimSpeaker(id) {
+  speech.setProvider(id);
+  if (TTS[id]?.local) speech.setLocalVoice(studioVoice());
+  else if (id === 'gemini') { speech.setVoice(geminiVoice()); speech.setModel(config.geminiModel); }
+  else { speech.setVoice(lookVoice()); speech.setModel(config.fishModel); }
+}
+// The same, with its key: the one given, else the saved one.
+async function useTts(id, key) {
+  aimSpeaker(id);
+  if (TTS[id]?.local) return;
+  if (key === undefined) [key, ttsKeys[id]] = await voiceKey(id).catch(() => [null, false]);
+  if (speech.provider === id) speech.setKey(key);
+}
+aimSpeaker(tts().id);
 // Read once, and again later if the keychain couldn't be read yet (locked at login, or its prompt unanswered): before,
 // one failed read left spoken replies off until the app restarted.
-// Linux: reading the keyring can pop up an "unlock your keyring" dialog (an auto-login desktop leaves it locked), so it's
-// only read once a key has been saved there (fishKeySaved).
-const fishKeyLoaded = LINUX && !config.fishKeySaved ? Promise.resolve()
-  : retryLoad(() => secrets.get('fish-audio').then((k) => { if (k && !speech.on) { speech.setKey(k); menu(); } }), { onError: (e) => console.error('fish key', e.message) });
+const voiceKeysLoaded = retryLoad(async () => {
+  for (const t of Object.values(TTS)) {
+    if (t.local) continue;
+    const [k, kind] = await voiceKey(t.id); // throws while the keychain can't be read, and is tried again later
+    ttsKeys[t.id] = kind;
+    if (k && t === tts() && !speech.on) speech.setKey(k);
+  }
+  menu();
+}, { onError: (e) => console.error('voice key', e.message) });
 
 // ---------- shortcuts ----------
 const MOD_ORDER = ['control', 'option', 'shift', 'command'];
@@ -196,7 +274,7 @@ const keyWords = (accel) => accel.replace(/Key|Digit/g, '').split('+')
 const TRAY = MAC ? 'menu bar' : 'system tray';
 // Where settings live now: the panel that opens from the icon (the menu is just the basics). Linux trays don't
 // report clicks, so there it's the icon's menu, or starting Roamies again (which also works with no tray at all).
-const PANEL = LINUX ? 'the panel (Open Panel… in my tray icon\'s menu, or open Roamies again from your apps)' : `the panel (click my ${TRAY} icon)`;
+const PANEL = LINUX ? 'the panel (Open Panel… in my tray icon\'s menu, or open Roamies again from your apps)' : MAC ? `the panel (click my ${TRAY} icon)` : 'the panel (click my icon by the clock, behind the ^ arrow if it isn\'t showing, or open Roamies again from the Start menu)';
 // What the shortcuts are on Wayland: whatever keys they bound to these commands in their desktop's settings.
 // ROAMIES_LAUNCH: how this copy is started (the app says: plain roamies for a package, the AppImage's path for one).
 const LAUNCH = process.env.ROAMIES_LAUNCH || 'roamies';
@@ -375,9 +453,10 @@ function anim(name, args = {}) {
 // is fresh. The live block is never saved.
 // Tools that take long enough to need a spoken beat first (a web search runs on the provider's side).
 const SLOW_TOOLS = new Set(['fetch_url', 'see_photo', 'take_screenshot', 'read_window', 'act_in_app', 'run_command', 'search_files', 'list_windows']);
-// How replies are written: for bubbles (text only), or for the ear (spoken with Fish Audio, details on screen).
+// How replies are written: for bubbles (text only), or for the ear (spoken with Fish Audio or Gemini, details on screen).
 const VOICE_ON = () => config.replies === 'voice' && speech.on;
-const replyStyle = () => (VOICE_ON() ? VOICE_STYLE : TEXT_STYLE);
+// VoiceStudio's engines would read voice cues out, so its prompt has no cue paragraph (and any cue left is removed).
+const replyStyle = () => (!VOICE_ON() ? TEXT_STYLE : tts().local ? VOICE_STYLE.replace(/^Your voice carries feeling:.*\n/m, '') : VOICE_STYLE);
 const TEXT_STYLE = `You talk through small speech bubbles, so keep replies short: one to three sentences unless asked for detail. Light markdown shows properly (**bold** for the key word, \`code\` for commands and file names, [links](https://…)), but skip headings and tables in a bubble, and never narrate actions like *waves*. One exception: when the answer is genuinely a list, steps or a breakdown, it shows on a card beside you instead of a bubble. Then start with a one-sentence answer, follow with 3 to 6 short points as "- " lines (one fact each, under 20 words), and if you used the web this turn, end with a line "Sources: " and the site names as [name](url) links. A quick fact from the web (a score, a date, the weather, who someone is) stays a short bubble, with no points and no sources. Markdown renders on the card (bold, \`code\`, links, headings, tables, code blocks), so use what helps, but no preamble. Everything else stays a short bubble with no "- " lines. Amounts, a comparison, a place, dates, a process and maths are drawn, not listed: for those use draw (see "Show, don't just tell") and write no "- " lines. An emoji now and then is fine; the bubbles show them. `;
 const VOICE_STYLE = `You talk out loud: what you write is spoken in your voice and shown in a small bubble, so write for the ear. Say one to three short sentences, the way you'd talk to a friend: plain words, contractions, about 6 to 20 words each. What you say has no markdown, emoji, links, file paths or code; name the site, file or app instead. Say numbers, times and money the way people say them. Anything to read rather than hear goes below what you say and is never read out: "- " lines for points, options or steps (3 to 6, one fact each, under 20 words), "> " lines for a draft they'll send or copy (an email, message or post), and a \`\`\` block for code. What they asked to hear (a story, a joke, advice) is spoken, not put on screen: say it, short (a story in 4 to 6 sentences). An explanation is spoken too, in a few sentences, with a drawing beside it when a picture carries it (see "Show, don't just tell"). An answer from the web is said like any other: a quick fact (a score, a date, the weather, who someone is) is just your sentences, no points and no sources. Only when the answer is genuinely a list, steps or a breakdown that's easier to read than hear, say it in one or two sentences, then the "- " points, then, if you used the web, a line "Sources: " with the site names as [name](url) links: those show on a card beside you and only your sentences are spoken. Amounts, a comparison, a place, dates, a process and maths are drawn, not listed: for those use draw (see "Show, don't just tell") and write no "- " lines. Never say "here's a list" or read out what's on screen; a few words pointing to it are enough ("the steps are on screen").
 Your voice carries feeling: start a sentence with a voice cue in square brackets when the moment calls for it, and it's performed, never shown or read out. Moods: ${VOICE_CUES.emotions.filter((e) => !EMOTES.includes(e)).join(', ')}; soften or strengthen one with slightly, very or extremely ("[slightly sad]"), or pair two ("[warm and curious]"). How it's said, placed right before the words: ${VOICE_CUES.tones.join(', ')} ("It's [emphasis] today."). Sounds, followed by the sound in words: ${VOICE_CUES.sounds.join(', ')} ("[chuckling] Heh, fair enough.", "[sighing] Long day."). Pauses and background: ${VOICE_CUES.effects.join(', ')}. You can also describe the delivery in a few plain words when no single cue fits ("[quietly, a little embarrassed]", "[bright and bouncy]"). Act it: your voice really performs these, so let the feeling show. Match what's really happening: laugh at something funny, go gentle with bad news, whisper a secret, hurry when they're in a rush, light up at good news. Most replies want a voice cue somewhere, often on the first sentence, but at most one mood and one sound per sentence, never stack three, never use one just to fill, and keep shouting, screaming, sobbing and the background effects for when they truly fit.
@@ -798,9 +877,9 @@ let lastReply = '', lastFailed = false;
 // The agent for the next request, made or rebuilt if needed: null when ready, else what to tell the user.
 async function readyAgent() {
   await resumed;
-  await fishKeyLoaded;
+  await voiceKeysLoaded;
   await refreshAuth();
-  if (!ensureModel()) return `Sign in to an AI provider first: the Model page in ${PANEL}. Then ask me again!`;
+  if (!ensureModel()) { openPanel('model'); return 'Sign in to an AI provider first: I opened the Model page for you. Then ask me again!'; }
   if (config.provider === 'local') {
     if (!getModel(config.model)) await syncLocal();
     if (!getModel(config.model)) return ollama.reachable ? `Ollama doesn't have ${parseLocalModelId(config.model)?.rawId ?? 'that model'} anymore. Pick another model on the Model page in ${PANEL}.` : `Ollama isn't running. Open it, then ask me again!`;
@@ -1074,7 +1153,10 @@ async function apiKeyLogin(id, given) {
   if (!key?.trim()) return;
   const baseUrl = variant?.baseUrl ?? meta.apiKeyBaseUrl;
   await auth.setCredentials(variant?.key ?? provider, { accessToken: key.trim(), refreshToken: '', expiresAt: Date.now() + 100 * 365 * 864e5, ...(baseUrl ? { baseUrl } : {}) });
-  await refreshAuth(); ensureModel(); agent = null; menu();
+  await refreshAuth(); ensureModel(); agent = null;
+  // A Gemini key for the AI speaks too, unless the voice has a key of its own.
+  if (provider === 'gemini') await syncGeminiVoiceKey();
+  menu();
   if (onboarding) { ob({ kind: 'login', provider: id, phase: 'done' }); obState(); }
   else say(`Got it. ${PROVIDER_LABELS[provider]} is connected.`, 'happy');
 }
@@ -1099,6 +1181,7 @@ async function signOut(provider) {
     say(text, 'concerned'); return panelNote(text, true);
   }
   await refreshAuth();
+  if (provider === 'gemini') await syncGeminiVoiceKey();
   if (config.provider === provider || !signedIn.get(config.provider)) { config.provider = null; config.model = null; ensureModel(); saveConfig(); }
   agent = null; menu();
   say(`${label} is removed.`, 'happy'); panelNote(`${label} is removed.`);
@@ -1111,18 +1194,30 @@ function openUrl(url) {
 }
 
 // ---------- replies: text only, or voice and text ----------
-// A new look brings its voice: the next thing said is in it (its "One sec." beats are made again).
+// A new look brings its voice: it greets you in it (its "One sec." beats are made again).
 function setLook(l) {
   if (!LOOKS.some(([id]) => id === l)) return;
+  const changed = l !== config.look;
   config.look = l; saveConfig();
   agentStale = true; // its name is in the prompt
-  speech.setVoice(lookVoice());
+  // Each look has its own voice with every service.
+  if (tts().id === 'fish') speech.setVoice(lookVoice());
+  else if (tts().id === 'gemini') speech.setVoice(geminiVoice());
+  else speech.setLocalVoice(studioVoice());
   ui({ kind: 'look', look: l }); menu();
+  // Spoken only: the picker shows the words. Not over a reply, and a quick run of picks only says the last one.
+  if (changed && VOICE_ON() && !busy) {
+    speech.stop();
+    const v = speech.start();
+    if (onboarding) guideVoices.add(v.id);
+    v.say(LOOK_GREETINGS[l]); v.end();
+  }
 }
 
 async function setReplies(mode) {
-  await fishKeyLoaded;
-  if (mode === 'voice' && !speech.on) return fishKeyLogin({ thenVoice: true });
+  await voiceKeysLoaded;
+  if (mode === 'voice' && !speech.on) return voiceKeyLogin({ thenVoice: true });
+  if (mode === 'voice' && tts().local && !(await studioReady())) return;
   if (config.replies === mode) return;
   config.replies = mode; saveConfig();
   agentStale = true; // the spoken and written styles are different prompts
@@ -1140,38 +1235,98 @@ function speakLine(text, mood = 'happy') {
   if (v) { v.say(text); v.end(); }
 }
 
-async function removeFishKey() {
-  try { await secrets.delete('fish-audio'); } catch { return say(`I couldn't remove the key${MAC ? ' from your Keychain' : LINUX ? ' from your keyring' : ''}. Try again in a moment.`, 'concerned'); }
-  speech.setKey(null); speech.stop();
-  if (config.fishKeySaved) { config.fishKeySaved = false; saveConfig(); }
-  if (config.replies === 'voice') { config.replies = 'text'; saveConfig(); agentStale = true; }
-  menu();
-  say('Fish Audio key removed. Replies are text only.', 'happy');
+// Fish Audio or Gemini. One without a key yet speaks once it has one (the panel and the guide ask for it).
+async function setTts(id) {
+  if (!TTS[id] || id === tts().id) return;
+  await voiceKeysLoaded;
+  config.tts = id; saveConfig();
+  agentStale = true; // with no key for it yet, replies are written for bubbles until there is one
+  await useTts(id);
+  menu(); if (onboarding) obState();
+  if (TTS[id].local) {
+    if (!(await studioReady())) return;
+    if (!VOICE_ON()) return say('VoiceStudio is ready. Turn on Voice and text to hear it.', 'happy');
+  }
+  if (VOICE_ON()) speakLine('This is how I sound.');
 }
 
+// VoiceStudio checked now; when it isn't ready, the reason is said (and shown where it was asked from).
+async function studioReady() {
+  const s = await speech.checkLocal();
+  menu(); if (onboarding) obState();
+  if (s.ok) return true;
+  say(s.message, 'concerned'); panelNote(s.message, true);
+  return false;
+}
+// 'default': the engine's own voice. Otherwise a saved VoiceStudio voice id; once the list is known, only those.
+function setStudioVoice(id) {
+  const known = speech.local?.voices;
+  if (id === 'default') id = null;
+  else if (typeof id !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/.test(id) || id.includes('..') || (known?.length && !known.some((v) => v.id === id))) return;
+  if (id === studioVoice()) return;
+  config.studioVoices = { ...config.studioVoices, [config.look]: id }; saveConfig(); // this look's
+  speech.setLocalVoice(id);
+  menu(); if (onboarding) obState();
+  if (tts().local && VOICE_ON()) speakLine('This is my new voice.');
+}
+// VoiceStudio for the Voice page and the guide: checked yet, ready or why not, its engine, and the voices saved there.
+const studioState = () => {
+  const l = speech.local;
+  if (!l) return { checking: true, voice: speech.localVoice };
+  return { ok: !!l.ok, reason: l.reason ?? null, message: l.message ?? null, engine: l.engineName ?? l.engine ?? null, voices: (l.voices ?? []).slice(0, 200).map((v) => ({ id: v.id, name: v.name })), voice: speech.localVoice };
+};
+
+function setGeminiVoice(v) {
+  if (!GEMINI_VOICES.some((x) => x.id === v) || v === geminiVoice()) return;
+  config.geminiVoices = { ...config.geminiVoices, [config.look]: v }; saveConfig(); // this look's
+  if (tts().id === 'gemini') speech.setVoice(v);
+  menu(); if (onboarding) obState();
+  if (tts().id === 'gemini' && VOICE_ON()) speakLine('This is how I sound.');
+}
+
+async function removeVoiceKey(id = tts().id) {
+  const t = TTS[id];
+  if (!t) return;
+  try { await secrets.delete(t.secret); } catch { return say(`I couldn't remove the key${MAC ? ' from your Keychain' : LINUX ? ' from your keyring' : ''}. Try again in a moment.`, 'concerned'); }
+  if (config[`${id}KeySaved`]) { config[`${id}KeySaved`] = false; saveConfig(); }
+  ttsKeys[id] = false;
+  const used = t === tts();
+  if (used) { speech.stop(); await useTts(id); } // Gemini falls back to the AI's Gemini key, if there is one
+  else ttsKeys[id] = (await voiceKey(id).catch(() => [null, false]))[1];
+  if (used && !speech.on && config.replies === 'voice') { config.replies = 'text'; saveConfig(); agentStale = true; }
+  menu();
+  say(`${t.name} key removed.${ttsKeys[id] === 'shared' ? " I'll use the Gemini key from the Model page." : used ? ' Replies are text only.' : ''}`, 'happy');
+}
+
+// A key for Fish Audio or Gemini: checked, saved, and that service is then the one that speaks.
 // note(text, bad, problem): typed into the panel or the setup guide, so how it went shows there too, next to the field.
 const KEY_STORE = MAC ? 'Keychain' : LINUX ? 'keyring' : '';
-async function fishKeyLogin({ thenVoice = false, given = null, note = null } = {}) {
+async function voiceKeyLogin({ provider = tts().id, thenVoice = false, given = null, note = null } = {}) {
+  const t = TTS[provider];
+  if (!t) return;
   const say = note ? (text, mood, p) => { sayOut(text, mood); note(text, mood === 'concerned', p); } : sayOut;
-  const key = (given ?? (await ask({ prompt: 'Paste your Fish Audio API key', placeholder: 'Fish Audio API key', mask: true })))?.trim();
-  if (!key) return note?.('Paste your Fish Audio key first.', true);
-  if (!/^[\x21-\x7e]{8,512}$/.test(key)) return say("That doesn't look like a Fish Audio key. Copy it again from fish.audio.", 'concerned');
-  const prev = await secrets.get('fish-audio').catch(() => null);
-  speech.setKey(key);
+  const key = (given ?? (await ask({ prompt: `Paste your ${t.name} API key`, placeholder: `${t.name} API key`, mask: true })))?.trim();
+  if (!key) return note?.(`Paste your ${t.name} key first.`, true);
+  if (!/^[\x21-\x7e]{8,512}$/.test(key)) return say(`That doesn't look like a ${t.name} key. Copy it again from ${t.site}.`, 'concerned');
+  const was = tts().id;
+  await useTts(t.id, key);
   const a = await speech.check();
   if (!a.ok) {
-    speech.setKey(prev);
-    return say(a.reason === 'key' ? "That key didn't work. Copy it again from fish.audio and retry." : "I couldn't reach Fish Audio. Check the connection and try again.", 'concerned');
+    await useTts(was);
+    return say(a.reason === 'key' ? `That key didn't work. Copy it again from ${t.site} and retry.` : `I couldn't reach ${t.name}. Check the connection and try again.`, 'concerned');
   }
-  try { await secrets.set('fish-audio', key); if (!config.fishKeySaved) { config.fishKeySaved = true; saveConfig(); } } catch (e) {
-    console.error('fish key save', e.message);
-    speech.setKey(prev);
+  try { await secrets.set(t.secret, key); config[`${t.id}KeySaved`] = true; } catch (e) {
+    console.error('voice key save', e.message);
+    await useTts(was);
     const p = problem('key', e, { store: KEY_STORE });
     return say(p.text, 'concerned', p);
   }
-  if (thenVoice || config.replies !== 'voice') { config.replies = 'voice'; saveConfig(); agentStale = true; }
+  ttsKeys[t.id] = 'own';
+  config.tts = t.id;
+  if (thenVoice || config.replies !== 'voice') config.replies = 'voice';
+  saveConfig(); agentStale = true;
   menu(); if (onboarding) obState();
-  note?.('Fish Audio key saved. Voice is on.');
+  note?.(`${t.name} key saved. Voice is on.`);
   speakLine(speech.model.endsWith('-free') ? "Voice is on, on Fish Audio's free model since the account has no credit." : 'Voice is on. This is how I sound.');
 }
 
@@ -1300,7 +1455,7 @@ async function saveDiagnostics() {
       version: VERSION, provider: config.provider, model: config.model, signedIn: [...signedIn].filter(([, on]) => on).map(([p]) => p),
       busy, sidecarUpMinutes: Math.round(process.uptime() / 6) / 10,
       voice: { on: VOICE_OK && config.voice !== false, needsModel: NEEDS_MODEL, model: { status: voiceModel.status, error: voiceModel.error ?? undefined }, hotkeys: HOTKEYS_OK, keys: keys() },
-      replies: config.replies, fishKey: speech.on, hands: hasHands(process.platform, process.env.ROAMIES_HANDS), handsPath: process.env.ROAMIES_HANDS ? 'set' : 'none',
+      replies: config.replies, tts: tts().id, voiceOn: speech.on, ...(tts().local ? { voicestudio: { ok: speech.local?.ok ?? null, reason: speech.local?.reason ?? null, engine: speech.local?.engine ?? null } } : {}), hands: hasHands(process.platform, process.env.ROAMIES_HANDS), handsPath: process.env.ROAMIES_HANDS ? 'set' : 'none',
       update: { available: update.available, result: update.result }, onboarded: config.onboarded, look: config.look, size: config.size,
     };
     const sections = [
@@ -1357,8 +1512,11 @@ let panelOpen = false, panelQueued = false, panelAt = 0;
 function panel() {
   if (!panelOpen || panelQueued) return;
   panelQueued = true;
-  setImmediate(() => { panelQueued = false; if (panelOpen) send({ type: 'panel', msg: { kind: 'state', state: panelState() } }); });
+  setImmediate(() => { panelQueued = false; if (panelOpen) { send({ type: 'panel', msg: { kind: 'state', state: { ...panelState(), tab: panelTab } } }); panelTab = null; } });
 }
+// Opens the panel on a page (the one-time tab rides on its next state).
+let panelTab = null;
+function openPanel(tab) { panelTab = tab; send({ type: 'panel_show' }); if (panelOpen) panel(); }
 const panelNote = (text, bad = false, p = null) => panelOpen && send({ type: 'panel', msg: { kind: 'note', text, bad, ...(p ? linked(p) : {}) } });
 function panelState() {
   const current = getModel(config.model);
@@ -1394,8 +1552,11 @@ function panelState() {
     commitments: openCommitments().map((c) => ({ id: c.id, text: c.text, due: c.due ?? null, when: c.due ? `${fmtWhen(c.due)}${c.repeat ? ` · repeats ${repeatLabel(c.repeat)}` : ''}` : '', overdue: !!(c.due && c.due < Date.now()), repeat: c.repeat ?? null })),
     look: config.look ?? 'classic', looks: LOOKS.map(([id, label]) => [id, label]), name: lookName(),
     size: sizeNow(), sizes: SIZES,
-    replies: config.replies === 'voice' ? 'voice' : 'text', fishKey: speech.on,
-    fishModel: speech.pick, fishModels: FISH_CHOICES, fishFree: speech.on && speech.model.endsWith('-free'),
+    replies: VOICE_ON() ? 'voice' : 'text', tts: tts().id, fishKey: hasVoiceKey('fish'), geminiKey: hasVoiceKey('gemini'),
+    fishModel: config.fishModel, fishModels: FISH_CHOICES, fishFree: tts().id === 'fish' && speech.on && speech.model.endsWith('-free'),
+    geminiVoice: geminiVoice(), geminiVoices: GEMINI_VOICES, geminiShared: ttsKeys.gemini === 'shared',
+    geminiModel: config.geminiModel, geminiModels: GEMINI_CHOICES,
+    studio: tts().local ? studioState() : null,
     voice: VOICE_OK ? {
       on: !!config.voice, keys: HOTKEYS_OK ? talkSymbols() : null, ready: voiceReady(), mac: MAC, mute: config.muteWhileTalking !== false, autoListen: !!config.autoListen, wakeWord: !!config.wakeWord,
       download: NEEDS_MODEL && config.voice && !voiceReady() ? { status: voiceModel.status, pct: voiceModel.total ? Math.floor((voiceModel.done / voiceModel.total) * 100) : 0, size: sizeLabel() } : null,
@@ -1568,8 +1729,17 @@ async function onMenu(id, via) {
   else if (id.startsWith('fishmodel:') && FISH_CHOICES.some((c) => c.id === id.slice(10))) {
     config.fishModel = id.slice(10); saveConfig(); speech.setModel(config.fishModel); menu();
   }
-  else if (id === 'fishkey') fishKeyLogin();
-  else if (id === 'fishkey_remove') removeFishKey();
+  else if (id === 'fishkey') voiceKeyLogin({ provider: 'fish' });
+  else if (id === 'fishkey_remove') removeVoiceKey('fish');
+  else if (id === 'geminikey') voiceKeyLogin({ provider: 'gemini' });
+  else if (id === 'geminikey_remove') removeVoiceKey('gemini');
+  else if (id.startsWith('tts:')) setTts(id.slice(4));
+  else if (id.startsWith('geminivoice:')) setGeminiVoice(id.slice(12));
+  else if (id.startsWith('studiovoice:')) setStudioVoice(id.slice(12));
+  else if (id === 'voicestudio_check') { await speech.checkLocal(); menu(); if (onboarding) obState(); }
+  else if (id.startsWith('geminimodel:') && GEMINI_CHOICES.some((c) => c.id === id.slice(12))) {
+    config.geminiModel = id.slice(12); saveConfig(); if (tts().id === 'gemini') speech.setModel(config.geminiModel); menu();
+  }
   else if (id === 'sound') { config.sound = !config.sound; saveConfig(); ui({ kind: 'sound', on: config.sound }); voiceConfig(); menu(); }
   else if (id === 'actions') {
     config.allowActions = !config.allowActions; saveConfig(); menu(); // live section picks this up
@@ -1730,8 +1900,10 @@ function obState() {
     filesAsked: config.filesAsked,
     look: config.look ?? 'classic',
     size: sizeNow(),
-    replies: config.replies === 'voice' ? 'voice' : 'text',
-    fishKey: speech.on,
+    replies: VOICE_ON() ? 'voice' : 'text', // voice only when it can really speak: a service picked without its key yet shows as text
+    tts: tts().id, fishKey: hasVoiceKey('fish'), geminiKey: hasVoiceKey('gemini'),
+    geminiVoice: geminiVoice(), geminiVoices: GEMINI_VOICES, geminiShared: ttsKeys.gemini === 'shared',
+    studio: tts().local ? studioState() : null,
   });
 }
 
@@ -1752,7 +1924,7 @@ async function filesStatus(request) {
 
 let keysBefore = null;
 async function onGuide(m) {
-  if (m.type === 'ob_hello') { onboarding = true; await refreshAuth(); await fishKeyLoaded; obState(); }
+  if (m.type === 'ob_hello') { onboarding = true; await refreshAuth(); await voiceKeysLoaded; obState(); }
   else if (m.type === 'ob_closed') { onboarding = false; endIntro(); stopShowcase(); if (tourPending) setTimeout(playTour, 800); }
   else if (m.type === 'ob_showcase') playShowcase();
   else if (m.type === 'ob_showcase_warm') warmShowcase();
@@ -1762,11 +1934,16 @@ async function onGuide(m) {
   else if (m.type === 'chat_skip') { endIntro(); config.introDone = true; saveConfig(); menu(); }
   else if (m.type === 'chat_forget' && typeof m.id === 'string') { await forgetFact(m.id); ob({ kind: 'chat_facts', facts: introFacts() }); menu(); }
   else if (m.type === 'ob_step') { config.onboardStep = Math.max(0, Math.min(7, m.step | 0)); saveConfig(); }
-  // Voice needs a working key first: without one, the guide asks for it (ob_fishkey) instead.
-  else if (m.type === 'ob_replies' && (m.mode === 'text' || (m.mode === 'voice' && speech.on))) { await fishKeyLoaded; await setReplies(m.mode); }
-  else if (m.type === 'ob_fishkey' && typeof m.key === 'string') {
+  // Voice needs a working key first: without one, the guide asks for it (ob_fishkey or ob_geminikey) instead.
+  else if (m.type === 'ob_replies' && (m.mode === 'text' || (m.mode === 'voice' && speech.on))) { await voiceKeysLoaded; await setReplies(m.mode); }
+  // A service picked in the guide that already has its key: it speaks from now on (voice goes on if it was text).
+  else if (m.type === 'ob_tts') { await setTts(m.provider); if (speech.on && tts().id === m.provider) await setReplies('voice'); }
+  else if (m.type === 'ob_geminivoice') setGeminiVoice(m.voice);
+  else if (m.type === 'ob_studiovoice' && typeof m.voice === 'string') setStudioVoice(m.voice);
+  else if (m.type === 'ob_studiocheck') { await speech.checkLocal(); obState(); }
+  else if ((m.type === 'ob_fishkey' || m.type === 'ob_geminikey') && typeof m.key === 'string') {
     const note = (text, bad, p) => ob({ kind: 'fish', ok: !bad, error: bad ? text : null, ...(bad && p ? linked(p) : {}) });
-    await fishKeyLogin({ given: m.key.slice(0, 1000), thenVoice: true, note }).catch((e) => { const p = problem('key', e, { store: KEY_STORE }); note(p.text, true, p); });
+    await voiceKeyLogin({ provider: m.type === 'ob_geminikey' ? 'gemini' : 'fish', given: m.key.slice(0, 1000), thenVoice: true, note }).catch((e) => { const p = problem('key', e, { store: KEY_STORE }); note(p.text, true, p); });
   }
   else if (m.type === 'ob_login' && OAUTH[m.provider]) oauthLogin(m.provider, typeof m.id === 'string' ? m.id.slice(0, 40) : undefined);
   else if (m.type === 'ob_login_cancel') cancelLogin(typeof m.id === 'string' ? m.id : undefined);
@@ -1815,7 +1992,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   let m;
   try { m = JSON.parse(line); } catch { return; }
   if (m.type === 'menu') onMenu(m.id, m.via).catch((e) => console.error('menu', e));
-  else if (m.type === 'panel_open') { panelOpen = true; panelAt = Date.now(); logLine('panel_open', {}); Promise.all([refreshAuth(), signedIn.get('local') && syncLocal()]).catch(() => {}).finally(() => panel()); }
+  else if (m.type === 'panel_open') { panelOpen = true; panelAt = Date.now(); logLine('panel_open', {}); Promise.all([refreshAuth(), signedIn.get('local') && syncLocal(), tts().local && speech.checkLocal()]).catch(() => {}).finally(() => panel()); }
   else if (m.type === 'diagnostics') { shellInfo?.(m); shellInfo = null; }
   else if (m.type === 'panel_closed') { panelOpen = false; logLine('panel_closed', { why: String(m.why ?? ''), ms: Date.now() - panelAt }); }
   else if (m.type === 'panel_key' && typeof m.provider === 'string' && typeof m.key === 'string') {
@@ -1824,7 +2001,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     if (storageKeyProvider(id) !== m.provider) return;
     apiKeyLogin(id, m.key.slice(0, 1000)).then(() => panelNote(signedIn.get(m.provider) ? `${label} is connected.` : `That ${label} key didn't work.`, !signedIn.get(m.provider)))
       .catch((e) => { const p = problem('key', e, { store: KEY_STORE }); panelNote(p.text, true, p); });
-  } else if (m.type === 'panel_fishkey' && typeof m.key === 'string') fishKeyLogin({ given: m.key.slice(0, 1000), note: panelNote }).catch((e) => console.error('fish key', e));
+  } else if ((m.type === 'panel_fishkey' || m.type === 'panel_geminikey') && typeof m.key === 'string') voiceKeyLogin({ provider: m.type === 'panel_geminikey' ? 'gemini' : 'fish', given: m.key.slice(0, 1000), note: panelNote }).catch((e) => console.error('voice key', e));
   else if (m.type === 'answer') { pending.get(m.id)?.(m.text ?? null); pending.delete(m.id); }
   else if (m.type === 'ui_ready') {
     retired.then((notes) => { if (notes.length) { retired = Promise.resolve([]); say(`${notes.join(' ')} Do it on the Model page in ${PANEL}.`, 'concerned'); } });
@@ -1926,6 +2103,18 @@ overlays();
 sendKeys();
 send({ type: 'login_item' });
 logLine('start', { version: VERSION, platform: process.platform, ...(LINUX ? { session: SESSION } : {}), model: config.model });
+// Windows 11: the tray icon is shown next to the clock once (wintray.mjs); after that, hiding it again is up to them.
+// Explorer adds its entry a moment after the icon appears, so it's looked for a few times.
+if (process.platform === 'win32' && process.env.ROAMIES_EXE && !config.trayShown) {
+  let tries = 0;
+  const tryShow = () => showTrayIcon({ exe: process.env.ROAMIES_EXE, exec: runInput }).then((r) => {
+    tries++;
+    if (r === 'missing' && tries < 10) return void setTimeout(tryShow, 3000).unref?.();
+    logLine('tray_show', { result: r, tries });
+    if (r === 'shown') { config.trayShown = true; saveConfig(); }
+  }).catch((e) => console.error('tray show', e.message));
+  setTimeout(tryShow, 2000).unref?.();
+}
 pruneLogs(); pruneUsage();
 midnightClean();
 // Look for updates shortly after launch, then every 6 hours.
