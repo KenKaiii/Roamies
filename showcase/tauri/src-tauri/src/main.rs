@@ -1045,6 +1045,7 @@ fn build_overlays(app: &AppHandle) -> tauri::Result<()> {
     }
     let gen = GENERATION.fetch_add(1, Ordering::Relaxed);
     let monitors = app.available_monitors()?;
+    *BUILT_FOR.lock().unwrap() = screens(&monitors);
     let ids = app.state::<Roster>().0.lock().unwrap().clone();
     let n = monitors.len().max(1);
     for (i, mon) in monitors.iter().enumerate() {
@@ -1140,6 +1141,64 @@ fn safe_js(mon: &tauri::Monitor) -> String {
     // coordinates (like the window being captured).
     let (ox, oy) = (p.x as f64 / s, p.y as f64 / s);
     format!("window.__roamieSafe&&__roamieSafe({{top:{top:.0},left:{left:.0},bottom:{bottom:.0},right:{right:.0},ox:{ox:.0},oy:{oy:.0}}})")
+}
+
+/// A screen as the overlays were laid out for it: where it is and its size (physical pixels), and its scale.
+#[derive(Clone, Debug, PartialEq)]
+struct Screen {
+    pos: (i32, i32),
+    size: (u32, u32),
+    scale: f64,
+}
+
+/// The screens the overlays were last built for.
+static BUILT_FOR: Mutex<Vec<Screen>> = Mutex::new(Vec::new());
+
+fn screens(monitors: &[tauri::Monitor]) -> Vec<Screen> {
+    monitors.iter().map(|m| Screen { pos: (m.position().x, m.position().y), size: (m.size().width, m.size().height), scale: m.scale_factor() }).collect()
+}
+
+/// Why the overlays need building again, or None. `have` overlays are open and `roster` Roamies want one each, at
+/// most one per screen. Never with no screens: while the only display sleeps macOS lists none (it lists active
+/// displays), and the overlays already made are kept for when it wakes.
+fn overlays_stale(built: &[Screen], now: &[Screen], have: usize, roster: usize) -> Option<&'static str> {
+    if now.is_empty() {
+        None
+    } else if have < roster.min(now.len()) {
+        Some("an overlay is missing")
+    } else if built != now {
+        Some("the screens changed")
+    } else {
+        None
+    }
+}
+
+/// The overlays were built at launch and when the roster changed, and never again. Started while the only display
+/// slept, Roamies listed no screens, built no overlay and never showed the Roamie (it still talked); a screen plugged
+/// in or taken away later wasn't followed either. So every 3 s, on the main thread, they're built again when one is
+/// missing or the screens changed.
+fn watch_screens(app: AppHandle) {
+    thread::spawn(move || loop {
+        thread::sleep(Duration::from_secs(3));
+        if sidecar::QUITTING.load(Ordering::SeqCst) {
+            return;
+        }
+        let app2 = app.clone();
+        // Monitor queries belong on the main thread (see pump_cursor), and so does making windows.
+        let _ = app.run_on_main_thread(move || {
+            let Ok(monitors) = app2.available_monitors() else { return };
+            let now = screens(&monitors);
+            let have = app2.webview_windows().keys().filter(|l| is_overlay(l)).count();
+            let roster = app2.state::<Roster>().0.lock().unwrap().len();
+            let built = BUILT_FOR.lock().unwrap().clone();
+            if let Some(why) = overlays_stale(&built, &now, have, roster) {
+                eprintln!("[overlays] building them again: {why} ({} screens, {have} overlays)", now.len());
+                if let Err(e) = build_overlays(&app2) {
+                    eprintln!("[overlays] couldn't build them: {e}");
+                }
+            }
+        });
+    });
 }
 
 // ~120 Hz (so a fresh position is ready for every frame, even on 120 Hz screens): hand each overlay the
@@ -1627,6 +1686,7 @@ fn main() {
             }
             build_overlays(app.handle())?;
             pump_cursor(app.handle().clone());
+            watch_screens(app.handle().clone());
             #[cfg(target_os = "macos")]
             snapshot::watch_screenshots(app.handle().clone());
             spawn_sidecar(app.handle());
@@ -1657,6 +1717,31 @@ mod tests {
         assert_eq!(cli_action(&args(&["roamies", "--talks"])), None);
         assert_eq!(cli_action(&args(&["--talk"])), None, "the first argument is the program");
         assert_eq!(cli_action(&args(&[])), None);
+    }
+
+    #[test]
+    fn the_overlays_are_built_again_when_a_screen_comes_back_or_the_screens_change() {
+        let s = |x: i32, w: u32| Screen { pos: (x, 0), size: (w, 1080), scale: 2.0 };
+        let (one, two) = (vec![s(0, 1920)], vec![s(0, 1920), s(1920, 1920)]);
+        // Regression: started while the only display slept, no screens were listed and no overlay was ever made.
+        assert_eq!(overlays_stale(&[], &[], 0, 1), None, "no screens yet: nothing to build on");
+        assert!(overlays_stale(&[], &one, 0, 1).is_some(), "the display woke: build");
+        assert_eq!(overlays_stale(&one, &one, 1, 1), None, "the same screen, its overlay open: nothing to do");
+        assert_eq!(overlays_stale(&one, &[], 1, 1), None, "the display went to sleep: the overlay is kept");
+        assert_eq!(overlays_stale(&one, &one, 1, 1), None, "and it woke the same: nothing to do");
+        assert!(overlays_stale(&one, &one, 0, 1).is_some(), "the same screen but no overlay: build");
+        assert!(overlays_stale(&one, &two, 1, 1).is_some(), "a screen plugged in");
+        assert!(overlays_stale(&two, &one, 1, 1).is_some(), "a screen taken away");
+        assert!(overlays_stale(&one, &[s(0, 2560)], 1, 1).is_some(), "resolution changed");
+        assert!(overlays_stale(&one, &[s(100, 1920)], 1, 1).is_some(), "moved in the arrangement");
+        assert!(overlays_stale(&one, &[Screen { scale: 1.0, ..s(0, 1920) }], 1, 1).is_some(), "scale changed");
+        assert_eq!(overlays_stale(&two, &two, 1, 1), None, "two screens and one Roamie: one overlay is all there is");
+        assert!(overlays_stale(&two, &two, 1, 2).is_some(), "two Roamies on two screens and one overlay: build");
+        // build_overlays puts every Roamie on one screen's overlay when there's one screen: counting one overlay per
+        // Roamie there would rebuild every 3 s, forever.
+        assert_eq!(overlays_stale(&one, &one, 1, 2), None, "two Roamies on one screen: one overlay holds both");
+        assert!(overlays_stale(&one, &one, 0, 2).is_some(), "two Roamies on one screen and no overlay: build");
+        assert_eq!(overlays_stale(&one, &one, 0, 0), None, "no Roamies: no overlay is missing");
     }
 
     #[test]
