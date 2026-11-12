@@ -37,7 +37,7 @@ import { createSecrets, retryLoad } from './secrets.mjs';
 import { createActivity } from './activity.mjs';
 import { canCircle, canSnap, hasHands, hasHotkeys, hasVoice, linuxSession, needsVoiceModel, platformLine, seesPointer } from './platform.mjs';
 import { keyCards, keyKinds, signInCards } from './providers.mjs';
-import { LOCAL_LABEL, LOCAL_PROVIDER, MIN_CONTEXT, OLLAMA_KEY, omniModel, scanLocal } from './local.mjs';
+import { LOCAL_LABEL, LOCAL_PROVIDER, MIN_CONTEXT, OLLAMA, OLLAMA_KEY, omniModel, scanLocal } from './local.mjs';
 
 console.log = console.info = (...a) => console.error(...a);
 const send = (o) => process.stdout.write(JSON.stringify(o) + '\n');
@@ -147,7 +147,7 @@ speech.setModel(config.fishModel);
 // Linux: reading the keyring can pop up an "unlock your keyring" dialog (an auto-login desktop leaves it locked), so it's
 // only read once a key has been saved there (fishKeySaved).
 const fishKeyLoaded = LINUX && !config.fishKeySaved ? Promise.resolve()
-  : retryLoad(() => secrets.get('fish-audio').then((k) => { if (k && !speech.on) { speech.setKey(k); menu(); } }), { onError: (e) => console.error('fish key', e.message) });
+  : retryLoad(() => secrets.get('fish-audio').then((k) => { if (k && !speech.hasKey) { speech.setKey(k); menu(); } }), { onError: (e) => console.error('fish key', e.message) });
 
 // ---------- shortcuts ----------
 const MOD_ORDER = ['control', 'option', 'shift', 'command'];
@@ -195,11 +195,19 @@ const signedIn = new Map();
 // Per method, for the guide's cards: Claude and ChatGPT can be signed in, have a key, or both. keyOn is per kind
 // of key (keyCards' ids): Kimi and Xiaomi each take a plan key and a pay-per-token key, saved apart.
 const oauthOn = new Map(), keyOn = new Map(), storedKeys = new Set();
+// Spoken replies come from Fish Audio, or from a speech model on this computer (Ollama) when that's picked and running.
+// config.voiceEngine: 'fish' (default) | 'local'.
+const localSpeech = () => local.speech?.[0]?.name ?? null;
+function applyVoiceEngine() {
+  const name = config.voiceEngine === 'local' ? localSpeech() : null;
+  speech.setLocal(name ? { baseUrl: OLLAMA.baseUrl, model: name } : null);
+}
 // What Ollama served at the last scan: { reachable, reason, models, skipped }.
-let local = { reachable: false, models: [], skipped: 0 };
+let local = { reachable: false, models: [], skipped: 0, speech: [] };
 async function refreshAuth({ force = false } = {}) {
   local = await scanLocal(auth, { force });
   if (local.models.length) storedKeys.add(OLLAMA_KEY); else storedKeys.delete(OLLAMA_KEY);
+  applyVoiceEngine();
   for (const p of MENU_PROVIDERS) signedIn.set(p, p === LOCAL_PROVIDER ? local.models.length > 0 : await auth.hasProviderAuth(p).catch(() => false));
   for (const p of Object.keys(OAUTH)) {
     oauthOn.set(p, p === 'anthropic' ? await auth.hasClaudeCodeLogin().catch(() => false) : await auth.hasCredentials(dualAuthProvider(p)?.oauthKey ?? p).catch(() => false));
@@ -338,7 +346,7 @@ Your voice carries feeling: start a sentence with a cue in square brackets when 
 Before anything slow (searching the web, fetching or reading a page or file, looking at the screen, acting in an app, running a command), first say one short beat of 2 to 6 words that shows you heard them ("On it, checking Paris."), then call the tool in the same reply, so they're never left in silence. No beat when you answer straight away; never describe your steps; don't repeat the beat after the tool, go straight to the answer. In longer work, one short line before each new stage, not before every call.
 `;
 const stablePrompt = () => `You are ${lookName()}, ${LOOK_BODY[config.look] ?? LOOK_BODY.classic} who lives on ${userName}'s screen as a desktop companion. You live in Roamies, a desktop app by Ken Kai (Mac, Windows and Linux) that puts little companions on your screen; this is Roamies ${VERSION}. Your look (the Appearance page) is also your name and your voice: Roamie, JARVIS, Anime Girl, Sarah or Adrian. If they switch, you're the new one; never call yourself Sidekick.
-About Roamies, for when ${userName} asks about you or the app: ${MAC ? 'it lives in the menu bar at the top of the screen (no Dock icon)' : LINUX ? 'it lives in the system tray (no window of its own); GNOME shows tray icons only with the AppIndicator extension, and opening Roamies again from the app list opens the panel, tray or not' : 'it lives in the system tray at the bottom right of the taskbar (no taskbar button); Windows may tuck the icon behind the ^ arrow next to the clock, and dragging it onto the taskbar keeps it in view'}. ${LINUX ? 'Clicking the tray icon shows a short menu (Open Panel,' : `Clicking the ${MAC ? 'menu bar' : 'tray'} icon opens the Roamies panel; right-clicking it shows a short menu (Open Panel,`} Show ${lookName()}, Ask ${lookName()}…, ${SNAP_OK ? 'Ask About an Area…, ' : ''}Stop, Quit Roamies). The panel has a header (you, what you're doing right now, and an Update button on every page when a new version is ready) and a sidebar of pages. Home: a list of what you did recently (questions, files read, searches, reminders), today's usage, and buttons for Ask, Show List (reminders and commitments on screen: Today and Later; tick them off there; finished ones clear at midnight)${SNAP_OK ? ', Ask About an Area' : ''}, Stop and New Conversation. Memory: everything you remember about them (each with Forget, plus Forget Everything), their open commitments (Done or Drop), and Get to Know Me (a four-question chat so you learn who they are and what they're going for). Then the settings pages: Model (pick the AI provider and model, and sign in to providers), Appearance (Look: ${LOOKS.map(([, label]) => label).join(', ').replace(/, ([^,]*)$/, ' or $1')}, each with its own voice; Size: Default, Small${POINTER_OK ? ' or Cursor, a little arrow pointer' : ''}), Voice (Replies: Text Only, or Voice and Text, which speaks replies out loud with Fish Audio and needs their own Fish Audio API key, added right there; Voice Model: Drama 3, the most expressive (acts out feelings, slower, pricier) or S2.1 Pro (a natural, quicker pace with less emotion, cheaper), billed to their own Fish Audio account${VOICE_OK ? `; Voice Control, ${HOTKEYS_OK ? 'hold the talk keys to talk' : 'press the talk shortcut to talk'}` : ''}), Behavior (Sound Effects, Allow File Edits & Commands, Open at Login), and About (the version, Check for Updates, which becomes Install and Restart when one is ready; updates download, are signature-checked and install by themselves${LINUX ? ', when Roamies runs as an AppImage; installed from a .deb or .rpm, the button opens the download page instead' : ''}; Setup Guide, Show Logs, Quit). Sign-in is shared with GG Coder. Downloads and source: github.com/KenKaiii/Roamies. Don't invent features or settings that aren't listed here.
+About Roamies, for when ${userName} asks about you or the app: ${MAC ? 'it lives in the menu bar at the top of the screen (no Dock icon)' : LINUX ? 'it lives in the system tray (no window of its own); GNOME shows tray icons only with the AppIndicator extension, and opening Roamies again from the app list opens the panel, tray or not' : 'it lives in the system tray at the bottom right of the taskbar (no taskbar button); Windows may tuck the icon behind the ^ arrow next to the clock, and dragging it onto the taskbar keeps it in view'}. ${LINUX ? 'Clicking the tray icon shows a short menu (Open Panel,' : `Clicking the ${MAC ? 'menu bar' : 'tray'} icon opens the Roamies panel; right-clicking it shows a short menu (Open Panel,`} Show ${lookName()}, Ask ${lookName()}…, ${SNAP_OK ? 'Ask About an Area…, ' : ''}Stop, Quit Roamies). The panel has a header (you, what you're doing right now, and an Update button on every page when a new version is ready) and a sidebar of pages. Home: a list of what you did recently (questions, files read, searches, reminders), today's usage, and buttons for Ask, Show List (reminders and commitments on screen: Today and Later; tick them off there; finished ones clear at midnight)${SNAP_OK ? ', Ask About an Area' : ''}, Stop and New Conversation. Memory: everything you remember about them (each with Forget, plus Forget Everything), their open commitments (Done or Drop), and Get to Know Me (a four-question chat so you learn who they are and what they're going for). Then the settings pages: Model (pick the AI provider and model, and sign in to providers; Local (Ollama) runs a model on their own computer, no account, after they click Connect), Appearance (Look: ${LOOKS.map(([, label]) => label).join(', ').replace(/, ([^,]*)$/, ' or $1')}, each with its own voice; Size: Default, Small${POINTER_OK ? ' or Cursor, a little arrow pointer' : ''}), Voice (Replies: Text Only, or Voice and Text, which speaks replies out loud with Fish Audio and needs their own Fish Audio API key, added right there, or with a speech model running in Ollama on their computer (Voice Engine: Local, shown once Ollama has one; no key); Voice Model: Drama 3, the most expressive (acts out feelings, slower, pricier) or S2.1 Pro (a natural, quicker pace with less emotion, cheaper), billed to their own Fish Audio account${VOICE_OK ? `; Voice Control, ${HOTKEYS_OK ? 'hold the talk keys to talk' : 'press the talk shortcut to talk'}` : ''}), Behavior (Sound Effects, Allow File Edits & Commands, Open at Login), and About (the version, Check for Updates, which becomes Install and Restart when one is ready; updates download, are signature-checked and install by themselves${LINUX ? ', when Roamies runs as an AppImage; installed from a .deb or .rpm, the button opens the download page instead' : ''}; Setup Guide, Show Logs, Quit). Sign-in is shared with GG Coder. Downloads and source: github.com/KenKaiii/Roamies. Don't invent features or settings that aren't listed here.
 ${replyStyle()}Your body does the acting: to act out a feeling, start your reply with one tag, which is never shown: ${EMOTES.map((e) => `[${e}]`).join(' ')}. hype celebrates a win, upset is for when they're dodging work, remind nudges about something they said they'd do, motivate is a push to start, wave is hello or goodbye. Most replies need no tag.
 Lead with the answer: the fact, number, pick or result they asked for, then only the context that makes it useful, then stop. No opener about checking, looking or searching ("Let me see…", "I found…")${VOICE_ON() ? ', apart from the one short beat before something slow' : ''}.
 After using a tool, never repeat what you already said; only add what's new.
@@ -1011,6 +1019,16 @@ function setLook(l) {
   ui({ kind: 'look', look: l }); menu();
 }
 
+// Fish Audio or the local speech model. Local needs Ollama running with a model that can speak.
+async function setVoiceEngine(engine) {
+  await refreshAuth({ force: true });
+  if (engine === 'local' && !localSpeech()) return panelNote('No speech model in Ollama yet. Run: ollama pull phonon', true);
+  config.voiceEngine = engine; saveConfig(); applyVoiceEngine();
+  if (config.replies === 'voice' && !speech.on) { config.replies = 'text'; saveConfig(); agentStale = true; }
+  menu();
+  if (engine === 'local') speakLine('Local voice on. This is how I sound now.'); else panelNote(speech.hasKey ? 'Fish Audio voice on.' : 'Add a Fish Audio key to hear me talk.', !speech.hasKey);
+}
+
 async function setReplies(mode) {
   await fishKeyLoaded;
   if (mode === 'voice' && !speech.on) return fishKeyLogin({ thenVoice: true });
@@ -1035,9 +1053,9 @@ async function removeFishKey() {
   try { await secrets.delete('fish-audio'); } catch { return say(`I couldn't remove the key${MAC ? ' from your Keychain' : LINUX ? ' from your keyring' : ''}. Try again in a moment.`, 'concerned'); }
   speech.setKey(null); speech.stop();
   if (config.fishKeySaved) { config.fishKeySaved = false; saveConfig(); }
-  if (config.replies === 'voice') { config.replies = 'text'; saveConfig(); agentStale = true; }
+  if (config.replies === 'voice' && !speech.on) { config.replies = 'text'; saveConfig(); agentStale = true; }
   menu();
-  say('Fish Audio key removed. Replies are text only.', 'happy');
+  say(speech.on ? 'Fish Audio key removed. I still talk on your local voice.' : 'Fish Audio key removed. Replies are text only.', 'happy');
 }
 
 // note(text, bad): typed into the panel or the setup guide, so how it went shows there too, next to the field.
@@ -1223,8 +1241,9 @@ function panelState() {
     commitments: openCommitments().map((c) => ({ id: c.id, text: c.text, due: c.due ?? null, when: c.due ? fmtWhen(c.due) : '', overdue: !!(c.due && c.due < Date.now()) })),
     look: config.look ?? 'classic', looks: LOOKS.map(([id, label]) => [id, label]), name: lookName(),
     size: sizeNow(), sizes: SIZES,
-    replies: config.replies === 'voice' ? 'voice' : 'text', fishKey: speech.on,
-    fishModel: speech.pick, fishModels: FISH_CHOICES, fishFree: speech.on && speech.model.endsWith('-free'),
+    replies: config.replies === 'voice' ? 'voice' : 'text', fishKey: speech.hasKey,
+    voiceEngine: config.voiceEngine === 'local' ? 'local' : 'fish', localSpeech: localSpeech(),
+    fishModel: speech.pick, fishModels: FISH_CHOICES, fishFree: speech.hasKey && speech.model.endsWith('-free'),
     voice: VOICE_OK ? {
       on: !!config.voice, keys: HOTKEYS_OK ? talkSymbols() : null, ready: voiceReady(), mac: MAC, mute: config.muteWhileTalking !== false, autoListen: !!config.autoListen,
       download: NEEDS_MODEL && config.voice && !voiceReady() ? { status: voiceModel.status, pct: voiceModel.total ? Math.floor((voiceModel.done / voiceModel.total) * 100) : 0, size: sizeLabel() } : null,
@@ -1372,6 +1391,7 @@ async function onMenu(id) {
   else if (id.startsWith('fishmodel:') && FISH_CHOICES.some((c) => c.id === id.slice(10))) {
     config.fishModel = id.slice(10); saveConfig(); speech.setModel(config.fishModel); menu();
   }
+  else if (id === 'engine:fish' || id === 'engine:local') await setVoiceEngine(id.slice(7));
   else if (id === 'fishkey') fishKeyLogin();
   else if (id === 'fishkey_remove') removeFishKey();
   else if (id === 'sound') { config.sound = !config.sound; saveConfig(); ui({ kind: 'sound', on: config.sound }); voiceConfig(); menu(); }

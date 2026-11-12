@@ -11,6 +11,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { LOCAL_RATE, LocalVoice } from './localvoice.mjs';
 import { DEFAULT_VOICE, FISH_MODELS, FREE_MODEL, FishVoice, RATE, fishAccount } from './fish.mjs';
 
 // One or two words each, so a beat never sounds canned; any of them must fit before a search, a page, the screen or a drawing.
@@ -40,13 +41,13 @@ export function bundledBeats(dir = path.join(path.dirname(fileURLToPath(import.m
   };
 }
 
-export function createSpeaker({ emit, onProblem = () => {}, log = () => {}, FishVoiceImpl = FishVoice, account = fishAccount, beatPhrases = BEATS, bundled = bundledBeats() }) {
-  let key = null, voice = DEFAULT_VOICE, pref = FISH_MODELS[0], model = pref, seq = 0, current = null, checking = null;
+export function createSpeaker({ emit, onProblem = () => {}, log = () => {}, FishVoiceImpl = FishVoice, LocalVoiceImpl = LocalVoice, account = fishAccount, beatPhrases = BEATS, bundled = bundledBeats() }) {
+  let key = null, loc = null, voice = DEFAULT_VOICE, pref = FISH_MODELS[0], model = pref, seq = 0, current = null, checking = null;
   // The pick and the cheaper ones after it (FISH_MODELS runs from priciest to free).
   const chain = () => FISH_MODELS.slice(Math.max(0, FISH_MODELS.indexOf(pref)));
   let beats = new Map(), recent = [], warming = null; // phrase → [base64 PCM chunks], for the current key and voice
   // A random beat, not one of the last few: one that's already made if there is one, so it plays instantly.
-  const shipped = () => bundled(voice, model);
+  const shipped = () => (loc ? null : bundled(voice, model)); // the shipped takes are Fish's voices
   const ready = (p) => beats.has(p) || !!shipped()?.has(p);
   const pickBeat = () => {
     const fresh = beatPhrases.filter((p) => !recent.includes(p));
@@ -95,8 +96,9 @@ export function createSpeaker({ emit, onProblem = () => {}, log = () => {}, Fish
 
   /** A new reply's voice, its socket opening now. say(sentence) as they come, then end(). */
   function start() {
-    if (!key) return null;
+    if (!key && !loc) return null;
     stopAll();
+    const lc = loc; // the engine for this reply; switching mid-reply waits for the next one
     const id = `s${++seq}`, said = [];
     let ended = false, tries = 0, v = null, heard = false, done = false, beat = false, t0 = Date.now();
     const me = {
@@ -124,6 +126,24 @@ export function createSpeaker({ emit, onProblem = () => {}, log = () => {}, Fish
       const chars = whole && heard ? said.join(' ').replace(/\[[^\]]*\]\s*/g, '').length : 0;
       emit({ kind: 'speech', id, end: true, ...(chars ? { chars } : {}) });
       if (current === me) current = null;
+    };
+    // A local voice (Ollama): no account or credit to check, so a failure is just text for now.
+    const connectLocal = () => {
+      v = new LocalVoiceImpl({
+        ...lc,
+        onAudio: (pcm) => {
+          if (done) return;
+          if (!heard) { heard = true; log('speech_first_audio', { id, model: lc.model, local: true, ms: Date.now() - t0 }); }
+          emit({ kind: 'speech', id, rate: lc.rate ?? LOCAL_RATE, pcm: Buffer.from(pcm.buffer, pcm.byteOffset, pcm.byteLength).toString('base64') });
+        },
+        onEnd: () => finish(true),
+        onError: (err) => {
+          if (done) return;
+          log('speech_error', { id, model: lc.model, local: true, heard: err.heard, message: err.message });
+          if (!heard) onProblem(err.message);
+          finish();
+        },
+      }).open();
     };
     const connect = (m) => {
       tries++;
@@ -155,8 +175,8 @@ export function createSpeaker({ emit, onProblem = () => {}, log = () => {}, Fish
         },
       }).open();
     };
-    log('speech_start', { id, model });
-    connect(model);
+    log('speech_start', { id, model: lc ? lc.model : model, ...(lc ? { local: true } : {}) });
+    if (lc) connectLocal(); else connect(model);
     current = me;
     return me;
   }
@@ -174,7 +194,11 @@ export function createSpeaker({ emit, onProblem = () => {}, log = () => {}, Fish
     setVoice(v) { if ((v || DEFAULT_VOICE) !== voice) beats = new Map(); voice = v || DEFAULT_VOICE; if (key) warm(); },
     get ready() { return beats.size + beatPhrases.filter((p) => !beats.has(p) && shipped()?.has(p)).length; },
     get model() { return model; },
-    get on() { return !!key; },
+    // A local speech model: { baseUrl, model, voice? }, or null for Fish Audio.
+    setLocal(l) { loc = l || null; },
+    get local() { return !!loc; },
+    get hasKey() { return !!key; },
+    get on() { return !!key || !!loc; },
     check,
     start,
     stop: stopAll,

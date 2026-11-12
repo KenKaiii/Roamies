@@ -2,12 +2,12 @@
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { getModel, getAuthStorageKeys, getModelsForProvider } from '@kenkaiiii/gg-core';
-import { isOmni, omniModel, scanLocal, OLLAMA_KEY } from '../local.mjs';
+import { findSpeech, isOmni, omniModel, scanLocal, OLLAMA_KEY } from '../local.mjs';
 
 assert.ok(isOmni('lfm3-omni:latest') && isOmni('hf.co/LiquidAI/LFM3-Omni-2B-GGUF:Q4_K_M') && isOmni('lfm2.5-omni'));
 assert.ok(!isOmni('qwen3:8b') && !isOmni('lfm3-audio:2b') && !isOmni(null));
 
-const caps = { 'lfm3-omni:latest': ['completion', 'tools', 'audio'], 'plain:1b': ['completion'], 'embed:1': ['embedding'], 'nomic-embed-text': ['embedding'] };
+const caps = { 'phonon:latest': ['speech'], 'lfm3-omni:latest': ['completion', 'tools', 'audio'], 'plain:1b': ['completion'], 'embed:1': ['embedding'], 'nomic-embed-text': ['embedding'] };
 const running = [{ name: 'lfm3-omni:latest', context_length: 16384 }];
 const server = http.createServer((req, res) => {
   let body = '';
@@ -15,6 +15,7 @@ const server = http.createServer((req, res) => {
   req.on('end', () => {
     const send = (o) => { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(o)); };
     if (req.url === '/v1/models') return send({ data: Object.keys(caps).map((id) => ({ id })) });
+    if (req.url === '/api/tags') return send({ models: Object.keys(caps).map((name) => ({ name })) });
     if (req.url === '/api/ps') return send({ models: running });
     if (req.url === '/api/show') return send({ capabilities: caps[JSON.parse(body).model] ?? [], parameters: '' });
     res.statusCode = 404; res.end();
@@ -30,6 +31,10 @@ const auth = {
 };
 
 const r = await scanLocal(auth, { endpoint, force: true, served: async () => 16384 });
+assert.deepEqual(r.speech, [{ name: 'phonon:latest', omni: false }], 'a model that can speak is found by its speech capability');
+caps['lfm3-omni:latest'].push('speech');
+assert.deepEqual((await findSpeech(endpoint)).map((m) => m.name), ['lfm3-omni:latest', 'phonon:latest'], 'an omni model that can speak comes first');
+caps['lfm3-omni:latest'].pop();
 assert.equal(r.reachable, true);
 assert.deepEqual(r.models.map((m) => m.name), ['lfm3-omni:latest'], 'only a model that can call tools is offered; embedding models never');
 assert.equal(r.skipped, 1, 'plain:1b has no tools');

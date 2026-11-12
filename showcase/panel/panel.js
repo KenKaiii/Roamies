@@ -391,10 +391,14 @@
     return [
       group('Spoken replies', 'Hear me as well as read me.', null,
         picks('Replies', [['text', 'Text only'], ['voice', 'Voice and text']], state.replies, (x) => {
-          if (x === 'voice' && !state.fishKey) { ui.key = 'fish'; render('key-fish'); note('Add a Fish Audio key to hear me talk.'); return; }
+          if (x === 'voice' && !state.fishKey && state.voiceEngine !== 'local') { ui.key = 'fish'; render('key-fish'); note('Add a Fish Audio key to hear me talk.'); return; }
           act(`replies:${x}`);
         }, 'replies'),
-        state.replies === 'voice' && state.fishModels?.length ? [
+        state.localSpeech ? [
+          picks('Voice engine', [['fish', 'Fish Audio'], ['local', 'Local (Ollama)']], state.voiceEngine, (x) => act(`engine:${x}`), 'engine',
+            { local: `Runs on this computer with ${state.localSpeech}. Nothing is sent anywhere.` }),
+        ] : null,
+        state.replies === 'voice' && state.voiceEngine !== 'local' && state.fishModels?.length ? [
           el('p', { className: 'sub', textContent: 'Voice model' }),
           picks('Voice model', state.fishModels.map((c) => [c.id, c.name]), state.fishModel, (x) => act(`fishmodel:${x}`), 'fishmodel',
             Object.fromEntries(state.fishModels.map((c) => [c.id, `${WHY_LONG[c.id] ?? ''} ${price(c)}`.trim()]))),
