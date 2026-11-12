@@ -1,7 +1,7 @@
 {
   "updates": [
     {
-      "version": null,
+      "version": "0.1.37",
       "date": "2026-11-13",
       "items": [
         { "kind": "new", "title": "Send an agent", "text": "Say \"send an agent to…\" and a helper does the job in the background while you work." },
