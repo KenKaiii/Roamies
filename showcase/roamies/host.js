@@ -472,7 +472,7 @@
     if (!a || !up()) return;
     if (ask) { finishAsk(null); return; }
     if (hearing) { hearing = false; send({ type: 'listen_cancel' }); return; }
-    if (responding || Roamie.voiceOut?.playing()) { send({ type: 'menu', id: 'stop' }); Roamie.voiceOut?.stop(); return; }
+    if (responding || Roamie.voiceOut?.playing()) { send({ type: 'menu', id: 'stop', via: 'esc' }); Roamie.voiceOut?.stop(); return; }
     // A drawing on screen: Esc takes it all away (and the sidecar forgets its parts).
     if (Roamie.ink?.busy) { Roamie.ink.clear({ all: true }); send({ type: 'ink_cleared' }); return; }
     if (Roamie.panel?.isOpen) Roamie.panel.close();

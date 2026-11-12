@@ -403,6 +403,7 @@
   }
 
   const signIn = (p) => link('Sign in', () => act(`login:${p.id}`), { k: `login:${p.id}`, aria: `Sign in to ${p.label}`, disabled: !!state.loggingIn });
+  const connect = (p) => link('Connect', () => act('local:connect'), { k: 'local:connect', aria: `Connect ${p.label}` });
   const addKey = (p) => link(ui.key === p.id ? 'Cancel' : 'Add key', () => { ui.key = ui.key === p.id ? null : p.id; render(ui.key ? `key-${p.id}` : `addkey:${p.id}`); }, { k: `addkey:${p.id}`, aria: `Add ${p.label} API key` });
 
   // Settings, one page per concern.
@@ -417,10 +418,13 @@
     const { box, nav } = paged('accounts', accounts, (p) => el('li', { className: `acct${ui.key === p.id ? ' open' : ''}` },
       el('div', { className: 'setting' },
         el('span', {}, p.label),
-        p.on ? el('span', { className: 'ok' }, el('span', { className: 'led on', 'aria-hidden': 'true' }), 'Signed in')
+        p.on ? el('span', { className: 'ok' }, el('span', { className: 'led on', 'aria-hidden': 'true' }), p.method === 'local' ? 'Connected' : 'Signed in')
           : state.loggingIn === p.id ? el('span', { className: 'waiting', textContent: 'Signing in…' })
+          : p.method === 'local' ? connect(p)
           : p.method === 'oauth' ? (p.key ? el('span', { className: 'links' }, signIn(p), addKey(p)) : signIn(p))
           : addKey(p)),
+      // Ollama: why its models aren't in the Model menu (not running, or none can see images).
+      p.note ? el('p', { className: 'empty note', textContent: p.note }) : null,
       p.on || !(p.method === 'key' || p.key) ? null : keyForm(p.id, p.label, (key, kind) => send({ type: 'panel_key', provider: p.id, kind, key }), p.kinds)),
     { label: 'Accounts', pin: accounts.findIndex((p) => p.id === ui.key) });
     return [
@@ -707,6 +711,7 @@
         { id: 'moonshot', label: 'Kimi (Moonshot)', on: false, method: 'key', models: [], kinds: [
           { id: 'kimi-code', label: 'Kimi Code', billing: 'Uses your Kimi Code plan. Create the key in the Kimi Code Console.' },
           { id: 'moonshot', label: 'Moonshot', billing: 'Pay-per-token from platform.moonshot.ai.' }] },
+        { id: 'local', label: 'Ollama (on this computer)', on: false, method: 'local', models: [] },
         ...['xAI', 'GLM (Z.ai)', 'MiniMax', 'Xiaomi', 'DeepSeek', 'Sakana', 'OpenRouter', 'Hugging Face'].map((label) => ({ id: label.toLowerCase().replace(/\W/g, ''), label, on: false, method: 'key', models: [] })),
       ],
       loggingIn: null,

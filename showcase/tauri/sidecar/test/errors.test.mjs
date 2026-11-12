@@ -139,4 +139,11 @@ assert.match(details, /POST https:\/\/api\.example\.com\/v1\?api_key=<redacted> 
 assert.ok(detailsText({ ...problem, raw: 'y'.repeat(20000) }, {}, who).length < 6400, 'details stay a pasteable size');
 assert.match(detailsText(undefined), /^Roamies error \? \(\?\)/, 'nothing to report still makes text');
 
+// Regression: prompt() kept readyAgent()'s message in a local `problem`, hiding problem(), so a failed request
+// crashed with "problem is not a function" instead of saying what went wrong.
+{
+  const side = (await import('node:fs')).readFileSync(new URL('../sidekick.mjs', import.meta.url), 'utf8');
+  assert.deepEqual(side.split('\n').flatMap((l, i) => (/\b(const|let|var)\s+problem\b/.test(l) ? [i + 1] : [])), [], 'nothing in sidekick.mjs hides problem()');
+}
+
 console.log('errors tests: passed');

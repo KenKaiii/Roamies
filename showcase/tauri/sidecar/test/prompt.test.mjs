@@ -10,13 +10,29 @@ assert.deepEqual(quoted.map(([n]) => n), [], 'a ${…} inside a quoted string in
 // Pointing is the draw tool now: the prompt never names the old tool.
 assert.ok(!/point_at/.test(side), 'no point_at left in the prompt');
 assert.match(side, /with draw/, 'the prompt says when to draw');
-// Saving a reminder shows the reminders card by itself: the prompt and the draw tool say not to draw it again.
+// Saving a reminder shows the reminders card by itself: the prompt says not to draw it again, once.
 const tools = readFileSync(fileURLToPath(new URL('../tools.mjs', import.meta.url)), 'utf8');
 assert.match(side, /remember_commitment[^\n]*shows their reminders list on screen by itself, so don't also draw a list or note/, 'the memory line says saved items show by themselves');
-assert.match(tools, /remember_commitment or update_commitment already show on their reminders list by themselves: never draw a list or note of them/, 'the draw tool says saved items are not drawn again');
+assert.ok(!/already show on their reminders list by themselves/.test(tools), 'the draw tool does not say it again');
 // Regression: every web search opened the card, because web answers always came as points plus sources. A quick fact
 // is just said; the card is only for answers that break down into points.
 assert.match(side, /An answer from the web is said like any other: a quick fact[^\n]*no points and no sources\. Only when the answer is genuinely a list/, 'web answers are spoken unless they are a list');
+// Regression: the bubble style still sent every web search or fetched page to the card with points and sources, so
+// the same quick fact was a bubble when spoken and a card when typed.
+const textStyle = side.slice(side.indexOf('const TEXT_STYLE = `'), side.indexOf('`;', side.indexOf('const TEXT_STYLE = `')));
+assert.ok(!/when you search the web or fetch a page/.test(textStyle), 'a web lookup alone does not make a card');
+assert.match(textStyle, /A quick fact from the web \(a score, a date, the weather, who someone is\) stays a short bubble, with no points and no sources\./, 'a quick web fact is a bubble');
+// Regression: "upset" was both a body tag and a voice mood; the reply filter takes [upset] as the body tag wherever it
+// is, so the voice never got it. The voice moods leave out the body tags, and the two are named apart.
+assert.match(side, /Moods: \$\{VOICE_CUES\.emotions\.filter\(\(e\) => !EMOTES\.includes\(e\)\)\.join\(', '\)\}/, 'no voice mood is a body tag');
+assert.match(side, /start your reply with one body tag[^\n]*Most replies need no body tag\./, 'body tags are named as such');
+assert.match(side, /Most replies want a voice cue somewhere/, 'voice cues are named as such');
+// The app's manual is read on demand, not sent with every request.
+assert.match(side, /call about_roamies and answer from what it says\. Don't invent features or settings it doesn't list\./, 'the prompt sends app questions to about_roamies');
+assert.match(side, /name: 'about_roamies',[^]*?execute: async \(\) => aboutRoamies\(/, 'about_roamies is a tool');
+assert.ok(!side.includes('it saves one .log file in Downloads'), 'the manual is no longer in the system prompt');
+// One home per rule: how act_in_app pages and forms work is in its description, not repeated in the prompt.
+assert.ok(!/Long pages, feeds and lists:/.test(side) && !/a field that opens a calendar is clicked/.test(side), 'act_in_app details live in act_in_app');
 const host = readFileSync(fileURLToPath(new URL('../../../roamies/host.js', import.meta.url)), 'utf8');
 const webCase = host.slice(host.indexOf("if (e.anim.tool === 'web')"), host.indexOf('jobs.push', host.indexOf("if (e.anim.tool === 'web')")));
 assert.ok(webCase && !/panel\(\)\?\.open/.test(webCase), 'a web lookup does not open the card by itself');
@@ -39,7 +55,6 @@ assert.match(side, /An explanation is spoken too, in a few sentences, with a dra
 // Regression: "how tall are the five tallest mountains" came back as "- " points two runs in three, because the
 // reply style's list card won over the drawing. Both styles now send those answers to draw.
 assert.equal(side.split('Amounts, a comparison, a place, dates, a process and maths are drawn, not listed: for those use draw').length, 3, 'the bubble style and the voice style both hand lists that draw better to draw');
-assert.match(show, /quiz \(they answer by clicking and you're told how they did with their next message, so never ask them to tell you their answers or score\)/, 'a quiz never asks for the score');
 // Regression: counting out-of-stock items over three pages, the reply led with "4" and then named five, because the
 // number was written before anything was counted. Per-page counts as it goes keep the total right.
 assert.match(side, /A count or total gathered over several pages, files or results: note each one's count in a few words as you go[^\n]*check the total you lead with against the items you then name\./, 'totals are tallied before they are stated');
@@ -49,6 +64,8 @@ for (const k of ['bars (bars [{label, value, tone}], unit)', 'table (columns [he
   'geometry (vertices [{id, x, y}]', 'quiz (questions [{text, options: 2 to 4, answer: the right option word for word, explain}]', 'motion {do: spin|orbit|slide|pulse', 'labels [{text, x, y}]'])
   assert.ok(drawText.includes(k), `the draw tool describes: ${k}`);
 assert.match(drawText, /only after see_photo has shown you that same picture/, 'labels come after a look');
+assert.match(drawText, /their score comes to you with their next message, so say a line and stop: never ask the questions in words too, or ask them for their answers or score\./, 'a quiz never asks for the score');
+assert.match(drawText, /your reply after draw never repeats or rephrases it \(no restating the steps\)/, 'beat lines are not said again');
 // A quiz answered on screen reaches the model with the next message, once, and never from an older conversation.
 assert.match(side, /m\.type === 'quiz_done'\) onQuizDone\(/, 'the overlay reports a finished quiz');
 assert.match(side, /const quiz = takeQuizNote\(\);\s*const stamped = `\[\$\{stampNow\(\)\}\] \$\{text\}\$\{quiz \? `\\n\(\$\{quiz\}\)` : ''\}`;/, 'the score rides along with their next message');

@@ -144,6 +144,7 @@ html, body { height: 100%; background: transparent; }
 .pagebox { flex: 1; min-height: 0; overflow: hidden; }
 /* An account: its row, and its key field under it while that's open. */
 .acct { display: grid; gap: 6px; padding: 4px 0; }
+.acct .note { white-space: normal; }
 /* The page's footer: what's about the whole list on the left, the page arrows on the right. */
 .pfoot {
   flex: none; display: flex; align-items: center; justify-content: space-between; gap: 12px;
