@@ -2,6 +2,11 @@
 // A provider that takes a plan key and a pay-per-token key (Kimi, Xiaomi) gets a card for each: they're
 // stored apart, and each works only on its own endpoint.
 
+import { apiKeyStorageKeys, providerStorageKeys } from '@kenkaiiii/gg-core';
+
+/** Everywhere a provider's sign-in and keys are saved, so removing it from Roamies leaves none behind. */
+export const accountKeys = (provider) => [...new Set([...providerStorageKeys(provider), ...apiKeyStorageKeys(provider)])];
+
 // Checked by hand: each opens the provider's own key page (or its console, where keys are made).
 export const KEY_LINKS = {
   anthropic: 'https://platform.claude.com/settings/keys', openai: 'https://platform.openai.com/api-keys', gemini: 'https://aistudio.google.com/apikey',

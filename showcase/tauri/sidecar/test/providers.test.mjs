@@ -33,3 +33,26 @@ for (const p of AUTH_PROVIDERS.filter((x) => x.methods.includes('apikey'))) {
   }
 }
 console.log('providers ok');
+
+// Regression (#29): a saved key or sign-in couldn't be removed. Removing clears every place a provider keeps one.
+{
+  const { AuthStorage, OPENAI_CHATGPT_KEY } = await import('@kenkaiiii/gg-core');
+  const { accountKeys } = await import('../providers.mjs');
+  const fs = await import('node:fs/promises');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'roamies-auth-'));
+  const auth = new AuthStorage(path.join(dir, 'auth.json'));
+  const creds = { accessToken: 'k', refreshToken: '', expiresAt: Date.now() + 864e5 };
+  const apiProviders = AUTH_PROVIDERS.filter((x) => x.methods.includes('apikey'));
+  // Where apiKeyLogin saves each kind (Gemini's key goes under gemini-api).
+  for (const p of apiProviders) for (const k of apiKeyStorageKeys(p.value)) await auth.setCredentials(k, creds);
+  await auth.setCredentials(OPENAI_CHATGPT_KEY, creds);
+  for (const p of apiProviders) {
+    assert.ok(await auth.hasProviderAuth(p.value), `${p.value} starts connected`);
+    for (const k of accountKeys(p.value)) await auth.clearCredentials(k);
+    assert.equal(await auth.hasProviderAuth(p.value), false, `${p.value}: removing it leaves no key or sign-in`);
+  }
+  assert.deepEqual(await auth.listProviders(), [], 'nothing left behind');
+  await fs.rm(dir, { recursive: true, force: true });
+}

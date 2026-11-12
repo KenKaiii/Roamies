@@ -10,7 +10,8 @@ import { SAFE, checkDrawAction, checkLink, redactArgs } from './safety.mjs';
 import { agentEvents, stallWatch } from './agentstream.mjs';
 import {
   AUTH_PROVIDERS, AuthStorage, OPENAI_CHATGPT_KEY, apiKeyStorageKeys, claudeCodeEnv, dualAuthProvider, getAuthStorageKeys, getContextWindow, getDefaultModel, getModel,
-  getModelsForProvider, loginChatGPT, ollamaServedContext, parseLocalModelId, registerRuntimeModels, resolveClaudeCodeBinary, signInWithClaudeCode, storageKeyProvider,
+  getModelsForProvider, loginChatGPT, ollamaServedContext, parseLocalModelId, registerRuntimeModels, resolveClaudeCodeBinary, revokeChatGPTSignIn, signInWithClaudeCode,
+  signOutOfClaudeCode, storageKeyProvider,
 } from '@kenkaiiii/gg-core';
 import { execFile, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -36,7 +37,7 @@ import { DEFAULT_VOICE, FISH_CHOICES } from './fish.mjs';
 import { createSecrets, retryLoad } from './secrets.mjs';
 import { createActivity } from './activity.mjs';
 import { canCircle, canSnap, hasHands, hasHotkeys, hasVoice, linuxSession, micTrouble, needsVoiceModel, platformLine, samePair, seesPointer, writeChord, writeChords } from './platform.mjs';
-import { keyCards, keyKinds, signInCards } from './providers.mjs';
+import { accountKeys, keyCards, keyKinds, signInCards } from './providers.mjs';
 import { OLLAMA, OLLAMA_KEY, connectLocal, contextNote, withWindow } from './local.mjs';
 import { activityLogs, buildReport, redact, reportDir, reportName, reveal, run, scrubConfig, tail } from './diagnostics.mjs';
 import { detailsText, explain } from './errors.mjs';
@@ -1078,6 +1079,31 @@ async function apiKeyLogin(id, given) {
   else say(`Got it. ${PROVIDER_LABELS[provider]} is connected.`, 'happy');
 }
 
+// Removes a provider from Roamies: its sign-in and every kind of key it has saved (or Ollama's connection).
+async function signOut(provider) {
+  if (!MENU_PROVIDERS.includes(provider)) return;
+  const label = PROVIDER_LABELS[provider] ?? provider;
+  if (loggingIn === provider) cancelLogin();
+  try {
+    if (provider === 'local') await auth.clearCredentials(OLLAMA_KEY);
+    else {
+      // Claude Code here is Roamies' own copy, so this signs only Roamies out.
+      if (provider === 'anthropic' && await auth.hasClaudeCodeLogin()) await signOutOfClaudeCode(auth);
+      const plan = provider === 'openai' ? await auth.getCredentials(OPENAI_CHATGPT_KEY).catch(() => null) : null;
+      for (const k of accountKeys(provider)) await auth.clearCredentials(k);
+      if (plan) revokeChatGPTSignIn(plan).catch(() => {});
+    }
+  } catch (e) {
+    console.error('sign out', e);
+    const text = `I couldn't remove ${label}. Try again in a moment.`;
+    say(text, 'concerned'); return panelNote(text, true);
+  }
+  await refreshAuth();
+  if (config.provider === provider || !signedIn.get(config.provider)) { config.provider = null; config.model = null; ensureModel(); saveConfig(); }
+  agent = null; menu();
+  say(`${label} is removed.`, 'happy'); panelNote(`${label} is removed.`);
+}
+
 function openUrl(url) {
   if (process.platform === 'win32') return void winOpen(url);
   const [cmd, args] = process.platform === 'darwin' ? ['open', [url]] : ['xdg-open', [url]];
@@ -1353,6 +1379,8 @@ function panelState() {
         id: p, label: PROVIDER_LABELS[p] ?? p, on,
         method: p === 'local' ? 'local' : OAUTH[p] && (!meta || meta.methods.includes('oauth')) ? 'oauth' : meta?.methods?.includes('apikey') ? 'key' : null,
         key: !!meta?.methods?.includes('apikey'), // also takes an API key (Claude and ChatGPT next to their sign-in)
+        // How it's connected, for the Change key and Remove links: signed in, and/or a key saved.
+        signedIn: !!oauthOn.get(p), keySaved: !!meta && apiKeyStorageKeys(p).some((k) => storedKeys.has(k)),
         // Kimi and Xiaomi: which kind of key is being added (plan or pay-per-token).
         kinds: meta && keyKinds(meta).length > 1 ? keyKinds(meta).map(([id, label, billing]) => ({ id, label, billing })) : null,
         models: on ? runnable(p).slice(0, 24).map((mm) => ({ id: mm.id, name: mm.name })) : [],
@@ -1531,6 +1559,7 @@ async function onMenu(id, via) {
     if (p === 'local') measureLocal(config.model).catch(() => {});
   } else if (id.startsWith('login:')) oauthLogin(id.slice(6));
   else if (id.startsWith('key:')) apiKeyLogin(id.slice(4));
+  else if (id.startsWith('signout:')) signOut(id.slice(8));
   else if (id === 'local:connect') connectOllama();
   else if (id.startsWith('size:') && SIZES.some(([s]) => s === id.slice(5))) { config.size = id.slice(5); saveConfig(); ui({ kind: 'size', size: config.size }); menu(); }
   else if (id.startsWith('look:')) setLook(id.slice(5));
