@@ -8,7 +8,15 @@
         { "kind": "new", "title": "See what agents made", "text": "When an agent's done, its files pop up in the corner. Click one to open it." },
         { "kind": "new", "title": "What's new", "text": "This page! After each update I'll show you what changed, right here." },
         { "kind": "new", "title": "OpenCode keys", "text": "Got OpenCode Go or OpenCode credits? Add your key on the Model page and use it." },
-        { "kind": "improved", "title": "Better web reading", "text": "I upgraded how Roamies searches the web and reads pages, so answers are cleaner." }
+        { "kind": "improved", "title": "Better web reading", "text": "I upgraded how Roamies searches the web and reads pages, so answers are cleaner." },
+        { "kind": "new", "title": "Pin a card", "text": "Click the pin on a card and it stays put until you close it, even when you switch apps." },
+        { "kind": "new", "title": "Resize cards", "text": "Drag a card's corner to make it bigger or smaller, or blow it up to full screen." },
+        { "kind": "fixed", "title": "First click works", "text": "Clicking Allow or the panel while another app was in front did nothing. Now it works." },
+        { "kind": "fixed", "title": "Roamie shows up after sleep", "text": "If Roamies started while your screen slept, the Roamie never appeared. Fixed that." },
+        { "kind": "improved", "title": "Follows your screens", "text": "Plug in or unplug a screen and your Roamie moves over to where your screens are now." },
+        { "kind": "fixed", "title": "Talk key misfires", "text": "Holding the talk keys was sometimes taken for a shortcut. Talking works reliably now." },
+        { "kind": "fixed", "title": "Buttons no longer hidden", "text": "The little task label could cover Allow and Don't allow. It moves out of the way now." },
+        { "kind": "fixed", "title": "Commands on Windows", "text": "On Windows, commands with quotes in them failed. They run properly now." }
       ]
     },
     {

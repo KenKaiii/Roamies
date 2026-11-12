@@ -147,6 +147,9 @@ console.log('shape radius tests: passed');
   p.remove('p2');
   assert.equal(p.has('p2'), false);
   assert.equal(describeParts([['p9', { desc: 'note “x”' }]]), 'p9 note “x”');
+  p.assign([{ marks: [{ kind: 'note', text: 'a' }, { kind: 'note', text: 'b' }] }]);
+  p.clear((id) => id === 'p4');
+  assert.deepEqual(p.ids, ['p4'], 'clear keeps what keep() names (a pinned card)');
   // Regression: eight cards in one drawing filled the screen and the last was drawn on top of the first. Only a
   // few stay up: the oldest are forgotten (screen marks and cards that don't count are left alone).
   const q = createParts();

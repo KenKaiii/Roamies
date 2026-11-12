@@ -1,7 +1,7 @@
 // Tool schemas every provider accepts. Run: npm test
 import assert from 'node:assert/strict';
 import { resolveToolSchema } from '@kenkaiiii/gg-ai';
-import { createTools } from '../tools.mjs';
+import { createTools, shellFor } from '../tools.mjs';
 
 const noop = async () => {};
 const { tools } = createTools({ allowActions: false, ui: () => {}, ask: async () => false, openUrl: noop, onCommitments: noop, showList: noop, fmtWhen: String, commitmentsText: () => '', userName: 'Test' });
@@ -116,4 +116,13 @@ if (process.platform === 'darwin') {
   assert.match(bad.stderr, /Unable to find application/);
   assert.equal((await launch('/no/such/launcher', [])).err.code, 'ENOENT');
   console.log('launch tests: passed');
+}
+// Regression: on Windows a command with quotes in it (node -e "…") reached cmd with Node's \" escapes and broke.
+{
+  const cmd = `node -e "require('fs').writeFileSync('a b.txt', 'x')"`;
+  assert.deepEqual(shellFor(cmd, 'win32'), ['cmd.exe', ['/d', '/s', '/c', `"${cmd}"`], { windowsVerbatimArguments: true }], 'cmd gets the command as is');
+  assert.deepEqual(shellFor(cmd, 'darwin', {}), ['/bin/zsh', ['-lc', cmd], {}]);
+  assert.deepEqual(shellFor(cmd, 'linux', {}), ['/bin/bash', ['-lc', cmd], {}]);
+  assert.equal(shellFor('ls', 'linux', { SHELL: '/usr/bin/fish' })[0], '/usr/bin/fish', 'their own shell where set');
+  console.log('run_command shell tests: passed');
 }

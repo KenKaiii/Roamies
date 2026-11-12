@@ -177,6 +177,20 @@ assert.match(opened, /no app called "NoSuchAppRoamiesTest"/, 'treated as a link 
   made.ink.stop();
   assert.deepEqual(other, [{ type: 'ink_clear', screen: true, stop: true }]);
   assert.match(made.ink.describe(), /note “kept”/);
+  // Regression: a pinned card stays on screen through Esc, a window change and the next drawing, but the sidecar forgot
+  // it, so the model didn't know it was there. It's remembered until its × (or an explicit clear edit).
+  {
+    const kept = made.ink.describe().match(/(p\d+) note “kept”/)[1];
+    made.ink.pinned(kept, true);
+    made.ink.cleared();
+    assert.match(made.ink.describe(), /note “kept”/, 'Esc keeps a pinned card');
+    made.nextTurn();
+    await draw.execute({ beats: [{ say: 'New.', marks: [{ kind: 'note', text: 'new' }] }] }, { toolCallId: 'd12b' });
+    assert.match(made.ink.describe(), /note “kept”.*note “new”/, 'a new drawing replaces the rest, not the pinned card');
+    made.ink.pinned(kept, false);
+    made.ink.cleared();
+    assert.equal(made.ink.describe(), '', 'unpinned, it goes with the rest');
+  }
   // Regression: "make everything" drew eight cards at once, which covered the screen. Four stay up; the model is
   // told which closed, and what it lists as on screen is what's left.
   made.nextTurn();

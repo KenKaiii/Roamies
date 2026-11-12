@@ -2114,7 +2114,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   else if (m.type === 'draw_done') { if (String(m.id) === showcase?.id) showcaseDrawn(); }
   else if (m.type === 'draw_wait_done') ink.waitDone(String(m.id), m.beat | 0, String(m.result));
   else if (m.type === 'ink_closed') ink.closed(m.part);
-  else if (m.type === 'ink_pinned') logLine('ink_pinned', { on: !!m.on }); // a card kept on screen until its × (ink.js)
+  else if (m.type === 'ink_pinned') { ink.pinned(String(m.part), m.on === true); logLine('ink_pinned', { on: m.on === true }); } // a card kept on screen until its × (ink.js)
   else if (m.type === 'ink_action') onInkButton(String(m.part));
   else if (m.type === 'quiz_done') onQuizDone(String(m.part), Array.isArray(m.picks) ? m.picks.slice(0, 12).map((v) => (Number.isInteger(v) ? v : -1)) : []);
   else if (m.type === 'ink_cleared') { ink.cleared(); endShowcase('gone'); }

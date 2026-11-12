@@ -33,6 +33,11 @@ export const run = (cmd, args, { onLine, ...opts } = {}) => new Promise((res) =>
 // failure says "Unable to find application", as macOS's open does.
 const WIN_OPEN = "try { if ($env:ROAMIES_OPEN_APP) { Start-Process -FilePath $env:ROAMIES_OPEN_APP -ArgumentList ('\"' + $env:ROAMIES_OPEN + '\"') -ErrorAction Stop } else { Start-Process -FilePath $env:ROAMIES_OPEN -ErrorAction Stop } } catch { [Console]::Error.WriteLine('Unable to find application: ' + $_.Exception.Message); exit 1 }";
 export const winOpen = (target, app = '') => run('powershell', ['-NoProfile', '-NonInteractive', '-Command', WIN_OPEN], { env: { ...process.env, ROAMIES_OPEN: target, ROAMIES_OPEN_APP: app } });
+// run_command's shell. Windows: cmd /d /s /c "…" passed as is (what Node's shell: true does); handed over as a plain
+// argument, Node escaped its quotes as \" which cmd doesn't read, so any command with quotes in it broke.
+export const shellFor = (command, platform = process.platform, env = process.env) => (platform === 'win32'
+  ? ['cmd.exe', ['/d', '/s', '/c', `"${command}"`], { windowsVerbatimArguments: true }]
+  : [env.SHELL || (platform === 'linux' ? '/bin/bash' : '/bin/zsh'), ['-lc', command], {}]);
 const THIS_COMPUTER = process.platform === 'darwin' ? 'this Mac' : 'this computer';
 const LINUX = process.platform === 'linux';
 // A Wayland session hides the pointer and clicks in other apps, so a drawing can't wait for them (platform.mjs).
@@ -383,6 +388,10 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, sho
   const quizzes = new Map(); // part id → the quiz drawn there, to score what was clicked
   // Parts of drawings that go by themselves (the tour, the setup showcase): about no window, so switching windows keeps them.
   const loose = new Set();
+  // Cards the user pinned (ink.js): the overlay keeps them through clears and window changes, so they're remembered here too.
+  const pinned = new Set();
+  const keepPinned = (id) => pinned.has(id);
+  const forgetInk = () => { parts.clear(keepPinned); for (const m of [buttons, quizzes]) for (const id of [...m.keys()]) if (!pinned.has(id)) m.delete(id); for (const id of [...loose]) if (!pinned.has(id)) loose.delete(id); };
   const windowBound = () => parts.ids.some((p) => !loose.has(p));
   const ink = { waits: new Map(), turn: -1, active: 0, front: '', win: null, page: '', watch: null, checks: [] };
   const inkWait = (key, ms, signal) => new Promise((resolve) => {
@@ -394,7 +403,7 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, sho
     ink.waits.set(key, done);
   });
   const clearScreenInk = (stop = false) => { parts.clearScreen(); for (const id of buttons.keys()) if (!parts.has(id)) buttons.delete(id); ui({ kind: 'agent', e: { type: 'ink_clear', screen: true, stop } }); };
-  const clearAllInk = () => { parts.clear(); buttons.clear(); quizzes.clear(); loose.clear(); ui({ kind: 'agent', e: { type: 'ink_clear' } }); };
+  const clearAllInk = () => { forgetInk(); ui({ kind: 'agent', e: { type: 'ink_clear' } }); };
   // The window a drawing belongs to: the front window's id and place. Its title isn't part of it (a page updating
   // its title, a document being edited, isn't the screen changing).
   // Its rect and app too, so a click can be told to be in it.
@@ -414,7 +423,7 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, sho
   };
   // The screen under the drawing changed: all of it fades (cards too), and the model is told nothing is there.
   function screenChanged(why) {
-    parts.clear(); buttons.clear(); loose.clear(); ink.front = ''; ink.win = null; ink.page = ''; watchClicks(false);
+    forgetInk(); ink.front = ''; ink.win = null; ink.page = ''; watchClicks(false);
     for (const t of ink.checks) clearTimeout(t);
     ink.checks = [];
     ui({ kind: 'agent', e: { type: 'ink_stale' } });
@@ -592,7 +601,7 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, sho
     // A new drawing in a later request replaces the old one (cards too), unless it's editing what's there.
     if (ink.turn !== turn && !edits.length && parts.ids.length) clearAllInk();
     ink.turn = turn;
-    for (const e of edits) if (e.do === 'erase') parts.remove(e.part); else if (e.do === 'clear') parts.clear();
+    for (const e of edits) if (e.do === 'erase') parts.remove(e.part); else if (e.do === 'clear') { parts.clear(); pinned.clear(); }
     // One segment per beat: each is sent as soon as its places are found, so the first marks draw while the rest
     // are still being looked up (each lookup is a helper round trip). after: it comes after a click or hover.
     const segs = beats.map((b, i) => ({ from: i, to: i + 1, after: i > 0 && !!beats[i - 1].wait }));
@@ -629,7 +638,7 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, sho
         if (opts.fade) for (const p of ids) loose.add(p);
         // Only a few cards stay up at once (the overlay closes the oldest as each new one is drawn), so the oldest are
         // forgotten here too. Eight cards at once covered the screen, and the last one landed on top of the first.
-        else for (const p of parts.trimCards(LIMITS.cardsShown, (q) => loose.has(q))) { shut.push(p); buttons.delete(p); }
+        else for (const p of parts.trimCards(LIMITS.cardsShown, (q) => loose.has(q) || pinned.has(q))) { shut.push(p); buttons.delete(p); }
         for (const b of seg) for (const m of b.marks) if (m.action && m.part) buttons.set(m.part, m.action);
         for (const b of seg) for (const m of b.marks) if (m.kind === 'quiz' && m.part) quizzes.set(m.part, m);
         const out = seg.map((b, j) => ({ ...b, n: sg.from + j + 1, caption: plain(b.say), voiced: !!speak(b.say) }));
@@ -667,7 +676,8 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, sho
   const inkEvents = {
     started: (id, seg) => ink.waits.get(`${id}:start:${seg}`)?.('started'),
     waitDone: (id, beat, result) => ink.waits.get(`${id}:wait:${beat}`)?.(['clicked', 'hovered', 'skipped'].includes(result) ? result : 'skipped'),
-    closed: (part) => { parts.remove(String(part)); buttons.delete(String(part)); loose.delete(String(part)); },
+    closed: (part) => { parts.remove(String(part)); buttons.delete(String(part)); loose.delete(String(part)); pinned.delete(String(part)); },
+    pinned: (part, on) => { if (!on) pinned.delete(String(part)); else if (parts.has(String(part))) pinned.add(String(part)); },
     button: (part) => buttons.get(String(part)) ?? null,
     // A quiz was answered on screen (the option clicked for each question): how it went, in words for the model.
     quizDone: (part, picks) => quizNote(quizzes.get(String(part)), picks),
@@ -680,7 +690,7 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, sho
       if (cancelled && ink.turn === turn && parts.ids.length) clearAllInk(); else clearScreenInk(true);
     },
     // The user sent the whole drawing away (Esc): nothing is on screen any more.
-    cleared: () => { for (const done of [...ink.waits.values()]) done('stopped'); parts.clear(); buttons.clear(); loose.clear(); },
+    cleared: () => { for (const done of [...ink.waits.values()]) done('stopped'); forgetInk(); },
     // The app takes its own drawing away (the setup showcase, when its step is left): everything goes.
     clear: () => { for (const done of [...ink.waits.values()]) done('stopped'); clearAllInk(); },
     describe: () => parts.describe(),
@@ -896,8 +906,8 @@ A drawing stays until the user clears it or the window changes; your next drawin
         if (v.level === ASK && !(await confirm(`Run \`${command.length > 70 ? command.slice(0, 67) + '…' : command}\`?${v.reason ? ' ' + v.reason : ''}`, ctx))) {
           throw new Error(`${userName} said no, so the command didn't run.`);
         }
-        const shell = process.platform === 'win32' ? ['cmd', ['/c', command]] : [process.env.SHELL || (LINUX ? '/bin/bash' : '/bin/zsh'), ['-lc', command]];
-        const r = await run(shell[0], shell[1], { cwd: workdir, env: { ...process.env, ...GIT_SAFE } });
+        const [sh, shArgs, shOpts] = shellFor(command);
+        const r = await run(sh, shArgs, { ...shOpts, cwd: workdir, env: { ...process.env, ...GIT_SAFE } });
         const out = clip((r.stdout + (r.stderr ? `\n[stderr]\n${r.stderr}` : '')).trim() || '(no output)', 12_000);
         if (r.err && r.err.code !== 0) throw new Error(`Exit ${r.err.code ?? r.err.signal}\n${out}`);
         return out;
