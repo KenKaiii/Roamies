@@ -265,9 +265,117 @@ export function parseDue(due, now = Date.now()) {
   return Number.isNaN(d.getTime()) ? undefined : d.getTime();
 }
 
+// ---------- repeating ----------
+// A repeat rule is kept as a short canonical string on the commitment ('daily', 'weekdays', 'weekly', 'monthly',
+// 'yearly', 'every 2 hours', 'every 3 days', 'every 2 weeks', 'mon,wed,fri') and turned back into a rule when needed.
+// Calendar steps move in local time, so "9:00 every day" stays 9:00 across daylight-saving changes.
+const DAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+const DAY_WORDS = { sun: 0, sunday: 0, sundays: 0, mon: 1, monday: 1, mondays: 1, tue: 2, tues: 2, tuesday: 2, tuesdays: 2,
+  wed: 3, wednesday: 3, wednesdays: 3, thu: 4, thur: 4, thurs: 4, thursday: 4, thursdays: 4, fri: 5, friday: 5, fridays: 5,
+  sat: 6, saturday: 6, saturdays: 6 };
+export const MIN_REPEAT_MS = 5 * 6e4; // anything tighter would be nagging, and each nudge costs a model call
+
+/** Repeat text → { spec, rule }, null for none ('none', 'never', ''), or undefined if unreadable. */
+export function parseRepeat(text) {
+  if (text == null) return null;
+  let s = String(text).trim().toLowerCase().replace(/\s+/g, ' ').replace(/^(?:repeat(?:s|ing)?|recurring)\s+/, '');
+  if (s === '' || s === 'none' || s === 'never' || s === 'no' || s === 'off') return null;
+  const named = { daily: 'daily', 'every day': 'daily', 'each day': 'daily', weekdays: 'weekdays', 'every weekday': 'weekdays',
+    'on weekdays': 'weekdays', weekly: 'weekly', 'every week': 'weekly', monthly: 'monthly', 'every month': 'monthly',
+    yearly: 'yearly', annually: 'yearly', 'every year': 'yearly', hourly: 'every 1 hour', 'every hour': 'every 1 hour',
+    weekends: 'sat,sun', 'every weekend': 'sat,sun', 'on weekends': 'sat,sun', fortnightly: 'every 2 weeks' };
+  if (named[s]) s = named[s];
+  if (s === 'daily') return { spec: s, rule: { days: 1 } };
+  if (s === 'weekdays') return { spec: s, rule: { days: 1, on: [1, 2, 3, 4, 5] } };
+  if (s === 'weekly') return { spec: s, rule: { days: 7 } };
+  if (s === 'monthly') return { spec: s, rule: { months: 1 } };
+  if (s === 'yearly') return { spec: s, rule: { months: 12 } };
+  const every = /^every (\d+) ?([a-z]+)$/.exec(s);
+  if (every) {
+    const n = parseInt(every[1], 10), u = every[2].replace(/s$/, '');
+    if (!(n >= 1 && n <= 1000)) return undefined;
+    const plural = (w) => `every ${n} ${w}${n === 1 ? '' : 's'}`;
+    if (['m', 'min', 'minute', 'h', 'hr', 'hour'].includes(u)) {
+      const unit = u.startsWith('h') ? 'hour' : 'minute', ms = n * (unit === 'hour' ? 36e5 : 6e4);
+      return ms < MIN_REPEAT_MS ? undefined : { spec: plural(unit), rule: { ms } };
+    }
+    if (['d', 'day'].includes(u)) return { spec: n === 1 ? 'daily' : plural('day'), rule: { days: n } };
+    if (['w', 'wk', 'week'].includes(u)) return { spec: n === 1 ? 'weekly' : plural('week'), rule: { days: 7 * n } };
+    if (['mo', 'month'].includes(u)) return { spec: n === 1 ? 'monthly' : plural('month'), rule: { months: n } };
+    if (['y', 'yr', 'year'].includes(u)) return { spec: n === 1 ? 'yearly' : plural('year'), rule: { months: 12 * n } };
+    return undefined;
+  }
+  // A set of weekdays: "mon,wed,fri", "every tuesday and thursday", "on mondays".
+  const words = s.replace(/^(?:every|on|each) /, '').split(/\s*(?:,|\band\b|&|\/|\s)\s*/).filter(Boolean);
+  if (words.length && words.every((w) => w in DAY_WORDS)) {
+    const on = [...new Set(words.map((w) => DAY_WORDS[w]))].sort((a, b) => a - b);
+    if (on.length === 7) return { spec: 'daily', rule: { days: 1 } };
+    if (on.join() === '1,2,3,4,5') return { spec: 'weekdays', rule: { days: 1, on } };
+    return { spec: on.map((d) => DAYS[d]).join(','), rule: { days: 1, on } };
+  }
+  return undefined;
+}
+
+/** `start` moved by whole local days or months, keeping its wall-clock time; months clamp to the month's last day. */
+function stepLocal(start, { days = 0, months = 0 }) {
+  const s = new Date(start);
+  if (months) {
+    const y = s.getFullYear(), m = s.getMonth() + months, last = new Date(y, m + 1, 0).getDate();
+    return new Date(y, m, Math.min(s.getDate(), last), s.getHours(), s.getMinutes(), s.getSeconds()).getTime();
+  }
+  return new Date(s.getFullYear(), s.getMonth(), s.getDate() + days, s.getHours(), s.getMinutes(), s.getSeconds()).getTime();
+}
+
+/** The first time of the series that began at `start` that is strictly after `after`. Steps always count from
+ *  `start`, so a monthly reminder set for the 31st comes back on the 31st after a short month. */
+export function nextOccurrence(rule, start, after) {
+  if (rule.ms) return start > after ? start : start + (Math.floor((after - start) / rule.ms) + 1) * rule.ms;
+  if (rule.months) {
+    const a = new Date(after), s = new Date(start);
+    let k = Math.max(0, (a.getFullYear() - s.getFullYear()) * 12 + a.getMonth() - s.getMonth() - 1);
+    k -= k % rule.months;
+    for (;; k += rule.months) { const t = stepLocal(start, { months: k }); if (t > after) return t; }
+  }
+  // Whole days: jump to near `after`, then walk forward (at most a week or so for a set of weekdays).
+  let k = Math.max(0, Math.round((startOfDay(after) - startOfDay(start)) / 864e5) - 1);
+  k -= k % rule.days;
+  for (let i = 0; i < 400; i++, k += rule.days) {
+    const t = stepLocal(start, { days: k });
+    if (t > after && (!rule.on || rule.on.includes(new Date(t).getDay()))) return t;
+  }
+  return null;
+}
+
+/** A short label for the list and panel: 'daily', 'weekdays', 'Mon, Wed, Fri', 'every 2 hours'. */
+export function repeatLabel(spec) {
+  if (!spec) return '';
+  if (/^[a-z]{3}(,[a-z]{3})*$/.test(spec) && spec.split(',').every((d) => DAYS.includes(d))) {
+    return spec.split(',').map((d) => d[0].toUpperCase() + d.slice(1)).join(', ');
+  }
+  return spec;
+}
+
+/** Moves a repeating commitment on to its next time after `now` and makes it ready to nudge again. */
+function advance(c, now) {
+  const r = parseRepeat(c.repeat);
+  const next = r && nextOccurrence(r.rule, c.repeatFrom ?? c.due ?? now, Math.max(now, c.due ?? now));
+  if (next == null) return false;
+  c.due = next; c.remindedAt = null; c.status = 'open';
+  delete c.doneAt;
+  return true;
+}
+
+/** For a repeating commitment that was nudged but not done: the time its next occurrence comes round (when it should
+ *  be nudged again), or null. */
+function missedAt(c) {
+  if (!c.repeat || !c.remindedAt || c.due == null || c.kind === 'reminder') return null;
+  const r = parseRepeat(c.repeat);
+  return r ? nextOccurrence(r.rule, c.repeatFrom ?? c.due, c.due) : null;
+}
+
 /** When the next reminder is due (ms), so the timer can sleep until exactly then. */
 export function nextDue() {
-  const t = openCommitments().filter((c) => c.due && !c.remindedAt).map((c) => c.due);
+  const t = openCommitments().map((c) => (c.due && !c.remindedAt ? c.due : missedAt(c))).filter(Boolean);
   return t.length ? Math.min(...t) : null;
 }
 
@@ -281,7 +389,7 @@ export const startOfDay = (ms) => { const d = new Date(ms); d.setHours(0, 0, 0, 
 export function listItems(now = Date.now()) {
   const today = startOfDay(now), tomorrow = startOfDay(today + 36 * 36e5);
   const shown = loadMemory().commitments.filter((c) => c.status === 'open' || (c.status === 'done' && (c.doneAt ?? 0) >= today));
-  const item = (c) => ({ id: c.id, text: c.text, due: c.due, done: c.status === 'done', overdue: c.status === 'open' && !!c.due && c.due < now, kind: c.kind ?? 'commitment' });
+  const item = (c) => ({ id: c.id, text: c.text, due: c.due, done: c.status === 'done', overdue: c.status === 'open' && !!c.due && c.due < now, kind: c.kind ?? 'commitment', repeat: c.repeat ?? null });
   const order = (a, b) => ((a.status === 'done') - (b.status === 'done')) || ((a.due ?? Infinity) - (b.due ?? Infinity)) || a.createdAt - b.createdAt;
   const isToday = (c) => (c.status === 'done' ? (c.due == null || c.due < tomorrow) : c.due != null && c.due < tomorrow);
   return {
@@ -301,8 +409,17 @@ export async function clearFinished(now = Date.now()) {
 
 /** kind 'reminder': a plain "remind me", done once it has fired. 'commitment' (and older entries without a kind):
  *  something the user said they'd do, open until they finish or drop it. */
-export async function addCommitment(text, dueMs, kind = 'commitment') {
+/** repeat: a rule parseRepeat understands ('daily', 'weekdays', 'every 2 hours', 'mon,wed,fri' …); it needs a due
+ *  time, the first one of the series. A repeating reminder moves on to its next time each time it fires; a repeating
+ *  commitment moves on when it's marked done. Dropping either ends the series. */
+export async function addCommitment(text, dueMs, kind = 'commitment', repeat = null) {
   const c = { id: newId('c'), text: String(text).trim().slice(0, 200), due: dueMs ?? null, createdAt: Date.now(), status: 'open', remindedAt: null, kind: kind === 'reminder' ? 'reminder' : 'commitment' };
+  const r = repeat ? parseRepeat(repeat) : null;
+  if (r && c.due != null) {
+    c.repeat = r.spec; c.repeatFrom = c.due;
+    // "Weekdays at 9" said on a Saturday: the first time is Monday's, not today's.
+    if (r.rule.on && !r.rule.on.includes(new Date(c.due).getDay())) c.due = c.repeatFrom = nextOccurrence(r.rule, c.due, c.due);
+  }
   loadMemory().commitments.push(c);
   // Cap the file: the oldest finished entries go first; open ones are never dropped.
   const done = memory.commitments.filter((x) => x.status !== 'open');
@@ -314,13 +431,23 @@ export async function addCommitment(text, dueMs, kind = 'commitment') {
   return c;
 }
 
-export async function updateCommitment(id, { status, dueMs }) {
+/** repeat: a new rule, or null to stop repeating (it then stays as a one-off at its current time). Marking a
+ *  repeating commitment done moves it on to its next time instead of closing it (`advanced` is set on the result). */
+export async function updateCommitment(id, { status, dueMs, repeat, now = Date.now() }) {
   const c = loadMemory().commitments.find((x) => x.id === id);
   if (!c) return null;
-  if (status) { c.status = status; if (status !== 'open') c.doneAt = Date.now(); }
-  if (dueMs !== undefined) { c.due = dueMs; c.remindedAt = null; }
+  if (dueMs !== undefined) { c.due = dueMs; c.remindedAt = null; if (c.repeat) c.repeatFrom = dueMs; }
+  if (repeat !== undefined) {
+    const r = repeat ? parseRepeat(repeat) : null;
+    if (r && c.due != null) { c.repeat = r.spec; c.repeatFrom = c.due; } else { delete c.repeat; delete c.repeatFrom; }
+  }
+  if (c.repeat && c.due == null) { delete c.repeat; delete c.repeatFrom; } // a series needs a time
+  let advanced = false;
+  if (status === 'done' && c.repeat && c.status === 'open') advanced = advance(c, now);
+  if (advanced) { c.lastDoneAt = now; c.timesDone = (c.timesDone ?? 0) + 1; }
+  if (status && !advanced) { c.status = status; if (status !== 'open') c.doneAt = now; else delete c.doneAt; }
   await saveMemory();
-  return c;
+  return { ...c, advanced };
 }
 
 // ---------- facts (long-term memory about the user) ----------
@@ -383,12 +510,25 @@ export async function forgetFact(id) {
 /** Open commitments whose time has come and that haven't been reminded yet. Marks them reminded; plain
  *  reminders are done once they've fired, so they never hang around as overdue. */
 export async function takeDueReminders(now = Date.now()) {
+  // A repeating commitment left undone past its next time: it moves on to the latest time that has come, and is
+  // nudged again (marked `missed`), so skipping Monday's gym doesn't silence Tuesday's.
+  const missed = new Set();
+  for (const c of openCommitments()) {
+    let t = missedAt(c);
+    if (t == null || t > now) continue;
+    const r = parseRepeat(c.repeat);
+    for (let i = 0, n; i < 10_000 && (n = nextOccurrence(r.rule, c.repeatFrom ?? c.due, t)) != null && n <= now; i++) t = n;
+    c.due = t; c.remindedAt = null; missed.add(c.id);
+  }
   const due = openCommitments().filter((c) => c.due && c.due <= now && !c.remindedAt);
   if (!due.length) return [];
+  const fired = due.map((c) => ({ ...c }));
   for (const c of due) {
     c.remindedAt = now;
+    // A repeating reminder moves on to its next time; times missed while the computer slept are skipped, not stacked.
+    if (c.kind === 'reminder' && c.repeat && advance(c, now)) continue;
     if (c.kind === 'reminder') { c.status = 'done'; c.doneAt = now; }
   }
   await saveMemory();
-  return due;
+  return fired.map((c, i) => ({ ...c, missed: missed.has(c.id), next: due[i].repeat && due[i].status === 'open' && due[i].due !== c.due ? due[i].due : null }));
 }

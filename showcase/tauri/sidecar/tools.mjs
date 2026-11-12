@@ -12,7 +12,7 @@ import dns from 'node:dns/promises';
 import { CARDS, DrawArgs, LIMITS, checkDraw, createParts, createPhotos, describeParts, faviconFor, pickTextMatch, quizNote, resolveTargets } from './draw.mjs';
 import { plain } from './intro.mjs';
 import { linuxSession, seesPointer } from './platform.mjs';
-import { addCommitment, forgetFact, parseDue, updateCommitment } from './store.mjs';
+import { addCommitment, forgetFact, parseDue, parseRepeat, repeatLabel, updateCommitment } from './store.mjs';
 
 const HOME = os.homedir();
 export const expand = (p) => path.resolve(String(p).replace(/^~(?=$|\/|\\)/, HOME));
@@ -942,28 +942,34 @@ A drawing stays until the user clears it or the window changes; your next drawin
     },
     {
       name: 'remember_commitment',
-      description: `Save something ${userName} has committed to doing, or anything they ask to be reminded about, so you can remind them at the right moment. Use it whenever they say they will do something or say "remind me". kind: 'reminder' for a plain "remind me to X at/in …" (it clears itself once the nudge is given), 'commitment' (default) for something they say they'll do or finish ("I'll finish the slides by Friday"), which stays open until they say it's done. due: a relative time like "in 90s", "in 5m", "in 1h30m" or "in 2 days" (best for short timers), or a local time YYYY-MM-DDTHH:mm:ss, YYYY-MM-DDTHH:mm, or YYYY-MM-DD if only the day is known; omit if there's no time at all. Resolve words like "Thursday", "at 2" or "tonight" from the timestamp on their message.`,
-      parameters: z.object({ text: z.string().min(2).max(200), due: z.string().optional(), kind: z.enum(['reminder', 'commitment']).optional() }),
-      execute: async ({ text, due, kind }) => {
+      description: `Save something ${userName} has committed to doing, or anything they ask to be reminded about, so you can remind them at the right moment. Use it whenever they say they will do something or say "remind me". kind: 'reminder' for a plain "remind me to X at/in …" (it clears itself once the nudge is given), 'commitment' (default) for something they say they'll do or finish ("I'll finish the slides by Friday"), which stays open until they say it's done. due: a relative time like "in 90s", "in 5m", "in 1h30m" or "in 2 days" (best for short timers), or a local time YYYY-MM-DDTHH:mm:ss, YYYY-MM-DDTHH:mm, or YYYY-MM-DD if only the day is known; omit if there's no time at all. Resolve words like "Thursday", "at 2" or "tonight" from the timestamp on their message. repeat: only when they ask for it again and again ("every morning", "every weekday at 9", "every 2 hours", "on Mondays and Thursdays"): one of daily, weekdays, weekends, weekly, monthly, yearly, "every N minutes|hours|days|weeks|months" (at least 5 minutes), or days like "mon,wed,fri". It needs due, set to the first time (e.g. tomorrow 09:00 for "every morning at 9"). A repeating 'reminder' moves to its next time each time it fires; a repeating 'commitment' (a habit they want held to, like the gym) moves on when they mark it done. One saved item covers the whole series: never save one per day.`,
+      parameters: z.object({ text: z.string().min(2).max(200), due: z.string().optional(), kind: z.enum(['reminder', 'commitment']).optional(), repeat: z.string().max(60).optional() }),
+      execute: async ({ text, due, kind, repeat }) => {
         const ms = parseDue(due);
         if (ms === undefined) throw new Error(`Couldn't read the time "${due}". Use YYYY-MM-DDTHH:mm or YYYY-MM-DD.`);
+        const r = repeat === undefined ? null : parseRepeat(repeat);
+        if (r === undefined) throw new Error(`Couldn't read the repeat "${repeat}". Use daily, weekdays, weekly, monthly, "every 2 hours" (5 minutes or more) or days like "mon,wed,fri".`);
+        if (r && !ms) throw new Error('A repeating reminder needs due: the first time it should go off.');
         // A plain reminder with no time has nothing to fire, so it's kept like a commitment.
-        const c = await addCommitment(text, ms, ms ? kind : 'commitment');
+        const c = await addCommitment(text, ms, ms ? kind : 'commitment', r?.spec);
         onCommitments(c);
-        return `Saved as ${c.id}${ms ? `, due ${fmtWhen(ms)}` : ''}. I'll remind them${ms ? ' when it is due' : ''}.`;
+        return `Saved as ${c.id}${c.due ? `, due ${fmtWhen(c.due)}` : ''}${c.repeat ? `, repeating ${repeatLabel(c.repeat)}` : ''}. I'll remind them${c.due ? ' when it is due' : ''}.`;
       },
     },
     {
       name: 'update_commitment',
-      description: 'Mark a saved commitment done or dropped, or change its due time (same format as remember_commitment; use "none" to clear it).',
-      parameters: z.object({ id: z.string(), status: z.enum(['open', 'done', 'dropped']).optional(), due: z.string().optional() }),
-      execute: async ({ id, status, due }) => {
+      description: 'Mark a saved commitment done or dropped, or change its due time (same format as remember_commitment; use "none" to clear it) or its repeat (same format; "none" stops it repeating). Done on a repeating one ticks off this time and moves it to the next; dropped ends the whole series, so only drop one when they want it gone for good.',
+      parameters: z.object({ id: z.string(), status: z.enum(['open', 'done', 'dropped']).optional(), due: z.string().optional(), repeat: z.string().max(60).optional() }),
+      execute: async ({ id, status, due, repeat }) => {
         const ms = due === undefined ? undefined : due === 'none' ? null : parseDue(due);
         if (ms === undefined && due !== undefined) throw new Error(`Couldn't read the time "${due}".`);
-        const c = await updateCommitment(id, { status, dueMs: ms });
+        const r = repeat === undefined ? undefined : parseRepeat(repeat);
+        if (r === undefined && repeat !== undefined) throw new Error(`Couldn't read the repeat "${repeat}".`);
+        const c = await updateCommitment(id, { status, dueMs: ms, repeat: repeat === undefined ? undefined : r?.spec ?? null });
         if (!c) throw new Error(`No commitment with id ${id}. Call list_commitments to see the ids.`);
         onCommitments(c);
-        return `${c.id} is now ${c.status}${c.due ? `, due ${fmtWhen(c.due)}` : ''}.`;
+        if (c.advanced) return `Ticked off this time. ${c.id} repeats ${repeatLabel(c.repeat)}; next due ${fmtWhen(c.due)}.`;
+        return `${c.id} is now ${c.status}${c.due ? `, due ${fmtWhen(c.due)}` : ''}${c.repeat ? `, repeating ${repeatLabel(c.repeat)}` : ''}.`;
       },
     },
     {
