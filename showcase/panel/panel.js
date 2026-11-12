@@ -124,9 +124,10 @@
     if (!text) return;
     if (tipFor !== target) { t.textContent = text; t.classList.remove('in'); void t.offsetWidth; t.classList.add('in'); }
     tipFor = target; t.hidden = false;
-    const r = target.getBoundingClientRect(), gut = 12, w = Math.min(300, innerWidth - gut * 2);
-    t.style.width = `${w}px`;
-    const h = t.offsetHeight, below = r.bottom + 6 + h <= innerHeight - 8;
+    const r = target.getBoundingClientRect(), gut = 12;
+    // Fit the text, up to 300px (or the window): a one-word tip gets a small card.
+    t.style.maxWidth = `${Math.min(300, innerWidth - gut * 2)}px`;
+    const w = t.offsetWidth, h = t.offsetHeight, below = r.bottom + 6 + h <= innerHeight - 8;
     const x = Math.round(Math.min(Math.max(r.left, gut), innerWidth - gut - w)), y = Math.round(below ? r.bottom + 6 : r.top - 6 - h);
     t.style.left = `${x}px`; t.style.top = `${y}px`;
     // The frame can be what "fixed" is measured from (its open/close effects): correct by where it actually landed.

@@ -279,7 +279,7 @@ html, body { height: 100%; background: transparent; }
 
 /* Tooltip: a small LED-framed card against its control, dissolving in like the rows. */
 .tip {
-  position: fixed; z-index: 20; padding: 9px 11px; --bc: var(--line-hi); --fill: #08201f;
+  position: fixed; z-index: 20; width: max-content; padding: 6px 10px; --bc: var(--line-hi); --fill: #08201f;
   font-size: var(--t-small); line-height: 1.45; color: var(--ink);
 }
 .tip[hidden] { display: none; }

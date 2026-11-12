@@ -1770,8 +1770,8 @@ let snap = null;
 async function areaSnap() {
   if (!SNAP_OK || snapping) return;
   snapping = true;
+  const file = path.join(os.tmpdir(), `sidekick-area-${Date.now()}.png`);
   try {
-    const file = path.join(os.tmpdir(), `sidekick-area-${Date.now()}.png`);
     const res = await hands('select', file);
     if (res.cancelled) return;
     await fitImage(file);
@@ -1793,7 +1793,7 @@ async function areaSnap() {
     enqueue(q.trim() || 'What is this? Explain it simply.', { image: s.image });
   } catch (e) {
     say(problem('screen', e).text, 'concerned');
-  } finally { snapping = false; }
+  } finally { snapping = false; fs.unlink(file).catch(() => {}); }
 }
 let snapping = false;
 // Words said while ⌃⌥ was held, maybe with an area marked by drawing on the screen at the same time.

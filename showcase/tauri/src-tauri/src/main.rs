@@ -1296,9 +1296,22 @@ fn log_stdio(name: &str) -> Stdio {
     std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(|h| PathBuf::from(h).join(".gg").join(name))
-        .and_then(|p| OpenOptions::new().create(true).append(true).open(p).ok())
+        .and_then(|p| {
+            rotate_log(&p);
+            OpenOptions::new().create(true).append(true).open(p).ok()
+        })
         .map(Stdio::from)
         .unwrap_or_else(Stdio::null)
+}
+
+// Each helper log stays under ~2 MB: past 1 MB it becomes <name>.old (replacing the last one) and starts again.
+const LOG_MAX: u64 = 1 << 20;
+fn rotate_log(p: &std::path::Path) {
+    if std::fs::metadata(p).is_ok_and(|m| m.len() > LOG_MAX) {
+        let mut old = p.as_os_str().to_owned();
+        old.push(".old");
+        let _ = std::fs::rename(p, old);
+    }
 }
 
 /// Open at Login. Only an installed copy registers (in Applications on macOS, not a build folder or the DMG),
@@ -1637,5 +1650,22 @@ mod tests {
         assert_eq!(cli_action(&args(&["roamies", "--talks"])), None);
         assert_eq!(cli_action(&args(&["--talk"])), None, "the first argument is the program");
         assert_eq!(cli_action(&args(&[])), None);
+    }
+
+    #[test]
+    fn a_helper_log_past_its_limit_starts_again_keeping_one_old_copy() {
+        let dir = std::env::temp_dir().join(format!("roamies-log-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (log, old) = (dir.join("sidekick.log"), dir.join("sidekick.log.old"));
+        std::fs::write(&log, vec![b'x'; 1000]).unwrap();
+        rotate_log(&log);
+        assert!(log.exists() && !old.exists(), "a small log is left alone");
+        std::fs::write(&log, vec![b'x'; LOG_MAX as usize + 1]).unwrap();
+        rotate_log(&log);
+        assert!(!log.exists() && std::fs::metadata(&old).unwrap().len() == LOG_MAX + 1, "a big one moves to .old");
+        std::fs::write(&log, vec![b'y'; LOG_MAX as usize + 1]).unwrap();
+        rotate_log(&log);
+        assert_eq!(std::fs::read(&old).unwrap()[0], b'y', "the newer one replaces the older .old");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
