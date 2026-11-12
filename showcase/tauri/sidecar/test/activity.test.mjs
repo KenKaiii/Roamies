@@ -4,7 +4,7 @@ import { createActivity, describe } from '../activity.mjs';
 // Plain words, and never a path, command or search text.
 assert.deepEqual(describe('read_file', { path: '/Users/ken/Secret Plans/notes.md' }), ['Reading notes.md', 'Read notes.md']);
 assert.deepEqual(describe('run_command', { command: 'rm -rf ~/x' }), ['Running a command', 'Ran a command']);
-assert.deepEqual(describe('fetch_url', { url: 'https://www.example.com/a?token=1' }), ['Opening example.com', 'Read example.com']);
+assert.deepEqual(describe('web_fetch', { url: 'https://www.example.com/a?token=1' }), ['Opening example.com', 'Read example.com']);
 assert.deepEqual(describe('search_files', { pattern: 'password' }), ['Searching your files', 'Searched your files']);
 assert.deepEqual(describe('take_screenshot', { target: 'screen' }), ['Looking at your screen', 'Looked at your screen']);
 assert.deepEqual(describe('take_screenshot', { target: 'Safari' }), ['Looking at Safari', 'Looked at Safari']);
@@ -22,7 +22,7 @@ assert.deepEqual(describe('see_photo', { url: 'https://upload.wikimedia.org/x/gu
   a.handoff('Book the flights to Rome for next Friday morning, window seats, and the hotel');
   assert.equal(a.recent[0].text, 'Handed off: Book the flights to Rome for next Friday morning, window se…');
 }
-assert.equal(describe('fetch_url', { url: 'not a url' })[1], 'Read a page');
+assert.equal(describe('web_fetch', { url: 'not a url' })[1], 'Read a page');
 
 // The recent list: newest first, capped; failures say so; "doing" is the tool still running.
 let t = 0;
