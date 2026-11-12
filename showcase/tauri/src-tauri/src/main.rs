@@ -731,6 +731,8 @@ fn show_panel(app: &AppHandle, rect: Option<tauri::Rect>, toggle: bool) {
                 .maximizable(false)
                 .minimizable(false)
                 .decorations(false)
+                // macOS: the first click acts even while another app is active, instead of only activating Roamies.
+                .accept_first_mouse(true)
                 .always_on_top(true)
                 .skip_taskbar(true)
                 .visible_on_all_workspaces(true)
@@ -885,6 +887,8 @@ fn open_onboarding(app: &AppHandle, mode: Option<&str>) {
         .maximizable(false)
         .minimizable(false)
         .center()
+        // macOS: the first click acts even while another app is active, instead of only activating Roamies.
+        .accept_first_mouse(true)
         .focused(true)
         .background_color(tauri::window::Color(5, 16, 18, 255));
     #[cfg(target_os = "macos")]
@@ -1070,6 +1074,9 @@ fn build_overlays(app: &AppHandle) -> tauri::Result<()> {
             .always_on_top(true)
             .visible_on_all_workspaces(true)
             .skip_taskbar(true)
+            // macOS: a click on its bubbles and buttons (Allow, Don't allow) acts even while another app is active,
+            // instead of only activating Roamies. It stays unfocusable: set_typing decides when it takes the keyboard.
+            .accept_first_mouse(true)
             .focused(false)
             .focusable(false)
             .position(pos.x, pos.y)
