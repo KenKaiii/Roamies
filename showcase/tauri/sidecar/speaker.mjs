@@ -8,10 +8,17 @@
 // - Beats: when something slow starts (a web search, a page, the screen) and the model hasn't said anything,
 //   a short line ("One sec.", "On it." and 32 more, picked at random) plays so it's never silent. They're made once
 //   in the voice and kept, so they play instantly.
+// - Provider: 'fish' (above) or 'voicestudio', the VoiceStudio app on this computer (voicestudio.mjs), in its
+//   selected engine and the user's saved VoiceStudio voice. A VoiceStudio reply that fails is reported and stays
+//   text; it never falls back to Fish Audio, which is paid. Beats aren't made in VoiceStudio (each one would hold
+//   up the GPU for seconds), so its replies have none.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_VOICE, FISH_MODELS, FREE_MODEL, FishVoice, RATE, fishAccount } from './fish.mjs';
+import { StudioVoice, studioStatus } from './voicestudio.mjs';
+
+export const VOICE_PROVIDERS = ['fish', 'voicestudio'];
 
 // One or two words each, so a beat never sounds canned; any of them must fit before a search, a page, the screen or a drawing.
 export const BEATS = [
@@ -40,8 +47,9 @@ export function bundledBeats(dir = path.join(path.dirname(fileURLToPath(import.m
   };
 }
 
-export function createSpeaker({ emit, onProblem = () => {}, log = () => {}, FishVoiceImpl = FishVoice, account = fishAccount, beatPhrases = BEATS, bundled = bundledBeats() }) {
+export function createSpeaker({ emit, onProblem = () => {}, log = () => {}, FishVoiceImpl = FishVoice, account = fishAccount, beatPhrases = BEATS, bundled = bundledBeats(), LocalVoiceImpl = StudioVoice, localStatus = studioStatus }) {
   let key = null, voice = DEFAULT_VOICE, pref = FISH_MODELS[0], model = pref, seq = 0, current = null, checking = null;
+  let provider = 'fish', localVoice = null, local = null; // local: the last VoiceStudio check ({ ok, reason, message, engine, voices, … })
   // The pick and the cheaper ones after it (FISH_MODELS runs from priciest to free).
   const chain = () => FISH_MODELS.slice(Math.max(0, FISH_MODELS.indexOf(pref)));
   let beats = new Map(), recent = [], warming = null; // phrase → [base64 PCM chunks], for the current key and voice
@@ -93,8 +101,59 @@ export function createSpeaker({ emit, onProblem = () => {}, log = () => {}, Fish
     emit({ kind: 'speech', stop: true });
   }
 
+  // Is VoiceStudio up, with a usable engine selected? Never throws; the answer is kept for the panel.
+  async function checkLocal() {
+    const s = await localStatus().catch((e) => ({ ok: false, reason: 'offline', message: e.message }));
+    local = s;
+    log('voicestudio_status', { ok: s.ok, reason: s.reason, engine: s.engine });
+    return s;
+  }
+
+  // A reply in VoiceStudio: its socket opens now, one request per sentence, played as each streams in.
+  // Fails → reported, text stays.
+  function startLocal() {
+    stopAll();
+    const id = `s${++seq}`, said = [], t0 = Date.now();
+    let heard = false, done = false, v = null;
+    const finish = (whole = false) => {
+      if (done) return;
+      done = true;
+      const chars = whole && heard ? said.join(' ').replace(/\[[^\]]*\]\s*/g, '').length : 0;
+      emit({ kind: 'speech', id, end: true, ...(chars ? { chars } : {}) });
+      if (current === me) current = null;
+    };
+    const me = {
+      id,
+      say(s) { if (done) return; said.push(s); v.say(s); },
+      beat() { return false; },
+      end() { if (!done) v.end(); },
+      abort() { if (done) return; done = true; v?.abort(); if (current === me) current = null; },
+    };
+    v = new LocalVoiceImpl({
+      voice: localVoice,
+      onAudio: (pcm, rate) => {
+        if (done) return;
+        if (!heard) { heard = true; log('speech_first_audio', { id, provider: 'voicestudio', ms: Date.now() - t0 }); if (local && !local.ok) checkLocal(); } // working again: refresh the panel's status
+        emit({ kind: 'speech', id, rate, pcm: Buffer.from(pcm.buffer, pcm.byteOffset, pcm.byteLength).toString('base64') });
+      },
+      onEnd: () => finish(true),
+      onError: (err) => {
+        if (done) return;
+        log('speech_error', { id, provider: 'voicestudio', heard: !!err.heard, reason: err.reason, message: err.message });
+        if (err.reason) local = { ...(local ?? {}), ok: false, reason: err.reason, message: err.message };
+        if (!heard) onProblem({ provider: 'voicestudio', reason: err.reason ?? 'error', message: err.message });
+        finish();
+      },
+    });
+    log('speech_start', { id, provider: 'voicestudio', voice: localVoice });
+    v.open?.(); // opening costs a moment: do it while the model thinks
+    current = me;
+    return me;
+  }
+
   /** A new reply's voice, its socket opening now. say(sentence) as they come, then end(). */
   function start() {
+    if (provider === 'voicestudio') return startLocal();
     if (!key) return null;
     stopAll();
     const id = `s${++seq}`, said = [];
@@ -172,9 +231,24 @@ export function createSpeaker({ emit, onProblem = () => {}, log = () => {}, Fish
     },
     get pick() { return pref; },
     setVoice(v) { if ((v || DEFAULT_VOICE) !== voice) beats = new Map(); voice = v || DEFAULT_VOICE; if (key) warm(); },
+    // 'fish' or 'voicestudio'. Switching stops whatever is playing, so the old provider never talks over the new one.
+    setProvider(p) {
+      if (!VOICE_PROVIDERS.includes(p) || p === provider) return;
+      stopAll();
+      provider = p;
+      if (p === 'voicestudio') checkLocal();
+    },
+    get provider() { return provider; },
+    // The VoiceStudio voice (a saved profile id; null: the engine's default voice).
+    setLocalVoice(v) { localVoice = typeof v === 'string' && v ? v : null; },
+    get localVoice() { return localVoice; },
+    get local() { return local; },
+    checkLocal,
     get ready() { return beats.size + beatPhrases.filter((p) => !beats.has(p) && shipped()?.has(p)).length; },
     get model() { return model; },
-    get on() { return !!key; },
+    // Fish needs a key; VoiceStudio is always "on" and reports its own problems per reply (no silent switch to Fish).
+    get on() { return provider === 'voicestudio' || !!key; },
+    get fishOn() { return !!key; },
     check,
     start,
     stop: stopAll,

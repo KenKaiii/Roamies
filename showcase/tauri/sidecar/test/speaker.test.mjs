@@ -207,3 +207,61 @@ console.log('speaker beat variety: passed');
   }
 }
 console.log('bundled beats: passed');
+
+{ // VoiceStudio (local) as the provider: no Fish key needed, its PCM goes out at its own rate, cues aren't counted.
+  made.length = 0;
+  const local = [], out = [], problems = [];
+  class FakeLocal { constructor(o) { Object.assign(this, o); this.said = []; this.ended = false; this.aborted = false; local.push(this); } open() { this.opened = true; return this; } say(s) { this.said.push(s); } end() { this.ended = true; } abort() { this.aborted = true; } }
+  const sp = createSpeaker({ emit: (m) => out.push(m), onProblem: (p) => problems.push(p), FishVoiceImpl: FakeVoice, account: async () => ({ ok: true, credit: 5 }), beatPhrases: [], bundled: () => null,
+    LocalVoiceImpl: FakeLocal, localStatus: async () => ({ ok: true, engine: 'omnivoice', voices: [{ id: 'en-Alice_woman', name: 'Alice' }] }) });
+  assert.equal(sp.provider, 'fish'); assert.equal(sp.on, false, 'Fish without a key is off');
+  sp.setProvider('voicestudio'); await tick();
+  assert.equal(sp.provider, 'voicestudio'); assert.equal(sp.on, true, 'VoiceStudio needs no key'); assert.equal(sp.fishOn, false);
+  assert.equal(sp.local.ok, true);
+  sp.setLocalVoice('en-Alice_woman');
+  const r = sp.start();
+  assert.equal(local.at(-1).voice, 'en-Alice_woman'); assert.ok(local.at(-1).opened, 'its socket opens as the reply starts');
+  assert.equal(r.beat(), false, 'no beats made in VoiceStudio');
+  r.say('[warm] Hello there.'); r.end();
+  assert.deepEqual(local.at(-1).said, ['[warm] Hello there.']); assert.ok(local.at(-1).ended);
+  local.at(-1).onAudio(new Uint8Array([4, 0]), 24000);
+  assert.deepEqual(out.at(-1), { kind: 'speech', id: r.id, rate: 24000, pcm: Buffer.from([4, 0]).toString('base64') });
+  local.at(-1).onEnd();
+  assert.deepEqual(out.at(-1), { kind: 'speech', id: r.id, end: true, chars: 12 });
+  assert.equal(made.length, 0, 'Fish was never used');
+
+  // Unavailable before any audio: reported with its reason and message, the reply ends as text, and Fish is NOT tried,
+  // even with a working Fish key saved.
+  sp.setKey('fish-key'); await tick();
+  const n = made.length;
+  const r2 = sp.start(); r2.say('Hi.'); r2.end();
+  local.at(-1).onError(Object.assign(new Error("VoiceStudio isn't running. Open VoiceStudio, then press Check again."), { reason: 'offline', heard: false }));
+  assert.deepEqual(problems, [{ provider: 'voicestudio', reason: 'offline', message: "VoiceStudio isn't running. Open VoiceStudio, then press Check again." }]);
+  assert.deepEqual(out.at(-1), { kind: 'speech', id: r2.id, end: true });
+  assert.equal(made.length, n, 'no Fish socket opened as a fallback');
+  assert.equal(sp.local.reason, 'offline', 'the panel shows the latest reason');
+
+  // Failing after audio started: no problem report (it was heard), just ends.
+  const r3 = sp.start(); r3.say('Hi.');
+  local.at(-1).onAudio(new Uint8Array([0, 0]), 24000);
+  local.at(-1).onError(Object.assign(new Error('dropped'), { reason: 'error', heard: true }));
+  assert.equal(problems.length, 1);
+
+  // Stop (and barge-in) aborts the local voice and quiets the overlay; a new reply aborts the old one.
+  const r4 = sp.start(); r4.say('Long one.');
+  sp.stop();
+  assert.ok(local.at(-1).aborted); assert.deepEqual(out.at(-1), { kind: 'speech', stop: true });
+  const a = sp.start(); a.say('Old.'); const old = local.at(-1);
+  sp.start(); assert.ok(old.aborted);
+  const before = out.length; old.onAudio(new Uint8Array([1, 0]), 24000); old.onEnd();
+  assert.equal(out.length, before, 'nothing from the stopped reply');
+
+  // Switching providers stops what's playing; back on Fish, replies use Fish again with the same model pick.
+  const r5 = sp.start(); r5.say('Local.'); const playing = local.at(-1);
+  sp.setProvider('fish');
+  assert.ok(playing.aborted, 'switching stops the old provider'); assert.deepEqual(out.at(-1), { kind: 'speech', stop: true });
+  const f = sp.start(); f.say('Fish again.');
+  assert.equal(made.at(-1).model, 'drama-3'); assert.deepEqual(made.at(-1).said, ['Fish again.']);
+  sp.setProvider('nope'); assert.equal(sp.provider, 'fish', 'unknown providers are ignored');
+  console.log('speaker provider tests: passed');
+}

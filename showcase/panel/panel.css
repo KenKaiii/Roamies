@@ -250,6 +250,7 @@ html, body { height: 100%; background: transparent; }
 /* Why pick a choice: one line under it, quieter than the setting it explains. */
 .why { margin: -2px 0 0; font-size: var(--t-small); line-height: 1.4; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .why.late { color: var(--danger); }
+.setting small.bad { color: var(--danger); white-space: normal; }
 
 /* Tooltip: a small LED-framed card against its control, dissolving in like the rows. */
 .tip {

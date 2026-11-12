@@ -463,26 +463,49 @@
     }));
     return g;
   }
+  // VoiceStudio on this computer: whether it's ready (or exactly why not), its engine, the voice, and Check again.
+  function studioRows() {
+    const vs = state.studio ?? { checking: true };
+    const status = vs.checking ? 'Checking VoiceStudio…' : vs.ok ? `Connected${vs.engine ? ` · ${vs.engine}` : ''}` : vs.message || "VoiceStudio isn't available.";
+    const voices = vs.voices ?? [];
+    const select = vs.ok ? el('span', { className: 'px field select' },
+      el('select', { 'aria-label': 'VoiceStudio voice', 'data-k': 'studiovoice', on: { change: (e) => act(`studiovoice:${e.target.value}`) } },
+        el('option', { value: 'default', textContent: 'Engine default', selected: !vs.voice || !voices.some((x) => x.id === vs.voice) }),
+        voices.map((x) => el('option', { value: x.id, textContent: x.name, selected: x.id === vs.voice })))) : null;
+    return [
+      el('div', { className: 'setting' },
+        el('span', {}, 'VoiceStudio', el('small', { className: vs.ok || vs.checking ? '' : 'bad', textContent: status, role: vs.ok || vs.checking ? null : 'alert' })),
+        el('span', { className: 'row-btns' }, link('Check again', () => act('voicestudio_check'), { k: 'voicestudio_check', aria: 'Check VoiceStudio again' }))),
+      select ? el('p', { className: 'sub', textContent: 'Voice' }) : null,
+      select,
+      vs.ok && !voices.length ? el('p', { className: 'why', textContent: 'Save a voice in VoiceStudio (clone or design one) to pick it here.' }) : null,
+    ];
+  }
   function voicePage() {
     const v = state.voice;
+    const local = state.voiceProvider === 'voicestudio';
     return [
       group('Spoken replies', 'Hear me as well as read me.', null,
         picks('Replies', [['text', 'Text only'], ['voice', 'Voice and text']], state.replies, (x) => {
-          if (x === 'voice' && !state.fishKey) { ui.key = 'fish'; render('key-fish'); note('Add a Fish Audio key to hear me talk.'); return; }
+          if (x === 'voice' && !local && !state.fishKey) { ui.key = 'fish'; render('key-fish'); note('Add a Fish Audio key to hear me talk.'); return; }
           act(`replies:${x}`);
         }, 'replies'),
-        state.replies === 'voice' && state.fishModels?.length ? [
+        el('p', { className: 'sub', textContent: 'Voice provider' }),
+        picks('Voice provider', [['fish', 'Fish Audio'], ['voicestudio', 'VoiceStudio (local)']], local ? 'voicestudio' : 'fish', (x) => act(`voiceprovider:${x}`), 'voiceprovider',
+          { fish: 'Cloud voices, billed to your own Fish Audio account.', voicestudio: 'The VoiceStudio app on this computer, in the engine and voices you set up there. Free, and nothing leaves your computer.' }),
+        local ? studioRows() : null,
+        !local && state.replies === 'voice' && state.fishModels?.length ? [
           el('p', { className: 'sub', textContent: 'Voice model' }),
           picks('Voice model', state.fishModels.map((c) => [c.id, c.name]), state.fishModel, (x) => act(`fishmodel:${x}`), 'fishmodel',
             Object.fromEntries(state.fishModels.map((c) => [c.id, `${WHY_LONG[c.id] ?? ''} ${price(c)}`.trim()]))),
           el('p', { className: `why${state.fishFree ? ' late' : ''}`, textContent: state.fishFree ? "No credit left, so it's on Fish's free tier" : WHY[state.fishModel] ?? '' }),
         ] : null,
-        el('div', { className: 'setting' },
+        local ? null : el('div', { className: 'setting' },
           el('span', {}, 'Fish Audio key', el('small', { textContent: state.fishKey ? `Saved in ${where()}` : 'Needed for spoken replies' })),
           el('span', { className: 'row-btns' },
             link(ui.key === 'fish' ? 'Cancel' : state.fishKey ? 'Change' : 'Add', () => { ui.key = ui.key === 'fish' ? null : 'fish'; render(ui.key ? 'key-fish' : 'addkey:fish'); }, { k: 'addkey:fish', aria: state.fishKey ? 'Change the Fish Audio key' : 'Add a Fish Audio key' }),
             state.fishKey && ui.key !== 'fish' ? armed('Remove', 'Confirm', 'fishkey-remove', 'fishkey_remove', 'Remove the Fish Audio key') : null)),
-        keyForm('fish', 'Fish Audio', (key) => send({ type: 'panel_fishkey', key }))),
+        local ? null : keyForm('fish', 'Fish Audio', (key) => send({ type: 'panel_fishkey', key }))),
       v ? group('Talking to me', 'Speak instead of typing.', null,
         toggle('Voice control', v.download
           ? (v.download.status === 'downloading' ? `Downloading the voice model… ${v.download.pct}%` : v.download.status === 'error' ? 'The download failed' : `Needs a ${v.download.size} download`)
@@ -745,6 +768,14 @@
     if (q.get('note') === 'bad') setTimeout(() => window.__panel({ kind: 'note', text: "That key didn't save (E30). Try again.", bad: true, copy: true }), 400);
     if (q.get('update') === 'failed') s.update.result = { ok: false, error: "Couldn't check for updates. Check your internet." };
     if (q.has('checking')) s.update.checking = true;
+    // ?studio: VoiceStudio is the voice provider (?studio=off: it isn't running; ?studio=engine: its engine isn't ready; ?studio=empty: no saved voices).
+    const STUDIO = {
+      on: { ok: true, engine: 'OmniVoice', voices: [{ id: 'a642d572', name: 'Ben' }, { id: 'fa08aff1', name: 'British · Female · Young Adult · High' }], voice: 'fa08aff1' },
+      empty: { ok: true, engine: 'KittenTTS', voices: [], voice: null },
+      off: { ok: false, reason: 'offline', message: "VoiceStudio isn't running. Open VoiceStudio, then press Check again." },
+      engine: { ok: false, reason: 'engine', message: "VoiceStudio's voice engine isn't ready (CosyVoice): not installed. Pick or install an engine in VoiceStudio, then press Check again." },
+    };
+    if (q.has('studio')) Object.assign(s, { voiceProvider: 'voicestudio', studio: STUDIO[q.get('studio')] ?? STUDIO.on });
     if (q.has('uptodate')) s.update.result = { ok: true, at: Date.now() + 60e3 };
     if (q.get('tab')) setTimeout(() => { if (q.get('mtab')) ui.mtab = q.get('mtab'); show(q.get('tab')); }, 0);
     setTimeout(() => window.__panel({ kind: 'state', state: s }), 0);
@@ -755,6 +786,8 @@
       if (args.msg?.type === 'copy_problem') setTimeout(() => window.__panel({ kind: 'copied', which: 'problem', ok: q.get('copy') !== 'fail' }), 150);
       const id = args.msg?.id ?? '';
       if (id.startsWith('size:')) { s.size = id.slice(5); setTimeout(() => window.__panel({ kind: 'state', state: s }), 120); }
+      if (id.startsWith('voiceprovider:')) { s.voiceProvider = id.slice(14); s.studio = s.voiceProvider === 'voicestudio' ? STUDIO[q.get('studio')] ?? STUDIO.on : null; setTimeout(() => window.__panel({ kind: 'state', state: s }), 120); }
+      if (id.startsWith('studiovoice:') && s.studio) { s.studio.voice = id.slice(12) === 'default' ? null : id.slice(12); setTimeout(() => window.__panel({ kind: 'state', state: s }), 120); }
       if (id.startsWith('look:')) { s.look = id.slice(5); s.name = s.looks.find(([v]) => v === s.look)?.[1] ?? s.name; setTimeout(() => window.__panel({ kind: 'state', state: s }), 120); }
       return null;
     };
