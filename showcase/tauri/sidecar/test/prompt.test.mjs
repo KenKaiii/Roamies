@@ -88,7 +88,7 @@ assert.match(side, /When news from your agents reaches you, pass it on in your o
 // The news never cuts in: it waits for a quiet moment, or rides along with their next message.
 assert.match(side, /setInterval\(\(\) => desk\.tick\(\), 1000\)/, 'the news desk checks every second');
 assert.match(side, /const along = desk\.along\(text, \{ intro: !!intro, news: !!news, agentish \}\);/, 'their message carries untold news');
-assert.match(side, /desk\.started\(news\);\n  if \(notReady\)/, 'a news turn counts as told before anything can fail');
+assert.match(side, /desk\.started\(news\);\r?\n  if \(notReady\)/, 'a news turn counts as told before anything can fail');
 assert.match(side, /const agentish = !intro && !news && wantsAgent\(text\);/, 'a news turn never hatches an agent');
 console.log('prompt tests: passed');
 // The chat's web tools are GG Coder's: it names both, and never the old fetch_url.
