@@ -41,6 +41,10 @@ Each provider's own privacy policy applies to what is sent to it.
 - **Windows and Linux:** speech is turned into text on your computer (Parakeet).
 - The microphone is used only while you hold the talk keys (or, on Linux with Wayland, from your talk shortcut
   until you press it again or pause).
+- **Wake word (macOS, off by default):** when you turn it on, the microphone stays open so Roamies can hear
+  "Hey Roamies", and macOS shows its microphone dot the whole time. That audio is turned into text only on your Mac
+  (it never starts on a Mac that would need Apple's servers). Nothing is kept or sent anywhere until you say the phrase;
+  the log notes only when it heard speech and how close that came to the phrase, never what was said.
 - The screen is captured only when Roamies answers something about your screen, or when you mark an area. On Linux
   with Wayland it's taken through your desktop's screenshot portal; the copy the portal saves is deleted right away.
 
@@ -56,6 +60,12 @@ Everything lives in `~/.gg` (on Windows, `%USERPROFILE%\.gg`) and stays on your 
 | `sidekick/logs/`         | activity logs: tool names, timings, errors and short snippets of tool results (such as a line of window or page text); text you type into apps or files is reduced to its length; kept 7 days |
 | `sidekick/usage.jsonl`   | token counts and timings only, never content                                       |
 | `auth.json`              | your AI sign-ins, shared with GG Coder                                              |
+
+**Save Diagnostics** (the panel's About page, or the tray icon's menu) writes one `roamies-diagnostics-….log` file to
+your Downloads folder, only when you ask. It holds the logs above, your system and screen details, your microphones and
+permission states, and your settings. Keys, tokens, email addresses, names, your home folder and user name are removed
+first. Nothing is uploaded: it stays on your computer unless you choose to send it (for example by attaching it to a
+GitHub issue).
 
 Your Fish Audio key is kept in the macOS Keychain, encrypted with DPAPI on Windows, or in your desktop's keyring
 (through the Secret Service) on Linux.

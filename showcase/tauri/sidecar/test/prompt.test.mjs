@@ -23,4 +23,34 @@ assert.ok(webCase && !/panel\(\)\?\.open/.test(webCase), 'a web lookup does not 
 // Regression: "how are you? draw something" drew first and said "I'm doing great" only after it, and the drawing's
 // silent write held up the first words. The prompt asks for a short line before draw.
 assert.match(side, /Before you call draw, write one short line first: the answer to anything they said or asked besides the drawing/, 'a line comes before the drawing');
+// Knowing when to draw: the prompt picks a card by the kind of question, and says what stays plain speech.
+const show = side.split('\n').find((l) => l.startsWith("Show, don't just tell."));
+for (const [ask, card] of [['How something works or happens', /a model with moving parts for a physical thing[^.]*; a flow for a process/], ['Comparing two or more things', /table/], ['How many, how much', /bars \(graph for a curve/], ['Where a place is', /map/], ['When, in what order', /timeline/],
+  ['Solving or working out maths', /math, a step per line \(geometry for a figure/], ['The parts of a thing', /see_photo, then a photo with labels/], ['"Test me" or "quiz me"', /quiz/]]) {
+  const at = show.indexOf(ask);
+  assert.ok(at >= 0, `the prompt covers: ${ask}`);
+  assert.match(show.slice(at, at + 260), card, `${ask}: names its card`);
+}
+assert.match(show, /draw it without being asked/, 'explaining draws by itself');
+assert.match(show, /Don't draw for a quick fact[^.]*, an opinion or advice, small talk, a yes or no, anything they asked for in one line or one sentence, or when they say not to: those are just said\./, 'what stays plain speech');
+// Regression: the voice style said explanations are "spoken, not put on screen", which argued against drawing them.
+assert.ok(!/an explanation, advice\) is spoken, not put on screen/.test(side), 'the voice style no longer keeps explanations off the screen');
+assert.match(side, /An explanation is spoken too, in a few sentences, with a drawing beside it when a picture carries it/, 'spoken replies explain out loud and draw');
+// Regression: "how tall are the five tallest mountains" came back as "- " points two runs in three, because the
+// reply style's list card won over the drawing. Both styles now send those answers to draw.
+assert.equal(side.split('Amounts, a comparison, a place, dates, a process and maths are drawn, not listed: for those use draw').length, 3, 'the bubble style and the voice style both hand lists that draw better to draw');
+assert.match(show, /quiz \(they answer by clicking and you're told how they did with their next message, so never ask them to tell you their answers or score\)/, 'a quiz never asks for the score');
+// Regression: counting out-of-stock items over three pages, the reply led with "4" and then named five, because the
+// number was written before anything was counted. Per-page counts as it goes keep the total right.
+assert.match(side, /A count or total gathered over several pages, files or results: note each one's count in a few words as you go[^\n]*check the total you lead with against the items you then name\./, 'totals are tallied before they are stated');
+// The draw tool spells out every card it can make, and that labels need a look at the picture first.
+const drawText = tools.slice(tools.indexOf("name: 'draw',"), tools.indexOf("name: 'see_photo'"));
+for (const k of ['bars (bars [{label, value, tone}], unit)', 'table (columns [headings], rows [[one cell per column]]', 'flow (nodes [{id, text, shape: box|round|diamond, tone}], links [{from, to, label, flow}]', 'map (region:', 'math (steps [{tex, note}])',
+  'geometry (vertices [{id, x, y}]', 'quiz (questions [{text, options: 2 to 4, answer: the right option word for word, explain}]', 'motion {do: spin|orbit|slide|pulse', 'labels [{text, x, y}]'])
+  assert.ok(drawText.includes(k), `the draw tool describes: ${k}`);
+assert.match(drawText, /only after see_photo has shown you that same picture/, 'labels come after a look');
+// A quiz answered on screen reaches the model with the next message, once, and never from an older conversation.
+assert.match(side, /m\.type === 'quiz_done'\) onQuizDone\(/, 'the overlay reports a finished quiz');
+assert.match(side, /const quiz = takeQuizNote\(\);\s*const stamped = `\[\$\{stampNow\(\)\}\] \$\{text\}\$\{quiz \? `\\n\(\$\{quiz\}\)` : ''\}`;/, 'the score rides along with their next message');
+assert.match(side, /newSession\(config\.provider, config\.model\); liveBlocks\.clear\(\); agent = null; pendingFold = null; lastInput = null; quizDone = null;/, 'a new conversation drops it');
 console.log('prompt tests: passed');

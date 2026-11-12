@@ -1,7 +1,7 @@
 // What the model is told about each system, and which features each one gets. Run: npm test
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { canCircle, canSnap, hasHands, hasHotkeys, hasVoice, linuxSession, needsVoiceModel, platformLine, seesPointer } from '../platform.mjs';
+import { canCircle, canSnap, hasHands, hasHotkeys, hasVoice, linuxSession, micTrouble, needsVoiceModel, platformLine, samePair, seesPointer, writeChord, writeChords } from '../platform.mjs';
 
 const win = platformLine('win32', { arch: 'x64', release: '10.0.22631' });
 assert.match(win, /^Platform: Windows 11 on x64\./);
@@ -57,4 +57,37 @@ const names = execFileSync(process.execPath, ['--input-type=module', '-e', `
   const { tools } = createTools({ allowActions: () => false, ui: () => {}, ask: noop, openUrl: noop, onCommitments: noop, showList: noop, fmtWhen: String, commitmentsText: () => '', userName: 'T' });
   console.log(tools.map((t) => t.name).join(','));`], { env: { ...process.env, ROAMIES_HANDS: 'fake-hands.mjs' }, encoding: 'utf8' }).trim().split(',');
 for (const n of ['list_windows', 'read_window', 'act_in_app']) assert.ok(names.includes(n), `${n} is offered with the helper`);
+// The microphone: each reason the voice helper gives gets its own advice, not "I can't find a microphone".
+assert.match(micTrouble('darwin'), /^I can't find a microphone\. Plug one in and try again\.$/, 'the Mac helper sends no reason');
+assert.match(micTrouble('win32', 'missing'), /input picked in Settings > System > Sound > Input/, 'a plugged-in mic that isn\'t the default');
+assert.match(micTrouble('linux', 'missing'), /input picked in your sound settings/);
+assert.match(micTrouble('win32', 'busy'), /exclusive control/);
+assert.ok(!/exclusive control/.test(micTrouble('linux', 'busy')), 'a Windows-only setting');
+assert.match(micTrouble('win32', 'blocked'), /Let desktop apps access your microphone/);
+assert.match(micTrouble('win32', 'blocked'), /antivirus or work settings/, 'when the switches are already on');
+assert.ok(!/Windows/.test(micTrouble('linux', 'blocked')));
+assert.match(micTrouble('win32', 'lost'), /Bluetooth/);
+assert.match(micTrouble('win32', 'failed', 'unsupported sample format I48'), /\(unsupported sample format I48\)/);
+assert.ok(micTrouble('win32', 'failed', 'x'.repeat(500)).length < 300, 'the system\'s words are cut short');
+for (const r of ['busy', 'blocked', 'lost', 'failed']) assert.ok(!/can't find a microphone/.test(micTrouble('win32', r)), `${r} isn't reported as a missing mic`);
+
+// The type-to-ask shortcut: a tap of two modifier keys, never the pair that talks.
+const TALK = ['control', 'option'];
+assert.deepEqual(writeChord('darwin', TALK, undefined), ['option', 'command'], 'the Mac default, also for a config from before the shortcut');
+assert.deepEqual(writeChord('win32', TALK, undefined), ['control', 'shift'], 'the PC default');
+assert.deepEqual(writeChord('linux', TALK, undefined), ['control', 'shift']);
+assert.deepEqual(writeChord('darwin', TALK, ['shift', 'control']), ['control', 'shift'], 'a saved pair, in whichever order it was written');
+assert.deepEqual(writeChord('darwin', ['command', 'option'], undefined), ['control', 'command'], 'talk already has the default: the next one');
+assert.deepEqual(writeChord('darwin', TALK, ['option', 'control']), ['option', 'command'], 'saved the same as talk: never both on one pair');
+assert.deepEqual(writeChord('win32', ['control', 'shift'], ['control', 'shift']), ['control', 'option'], 'on a PC too, where there are only two');
+for (const bad of ['option+command', ['option'], ['option', 'option'], ['command', 'shift'], ['control', 'hyper'], 7, null, {}]) {
+  assert.deepEqual(writeChord('darwin', TALK, bad), ['option', 'command'], `a bad saved value (${JSON.stringify(bad)}) falls back to the default`);
+}
+assert.deepEqual(writeChord('win32', TALK, ['option', 'command']), ['control', 'shift'], 'a Mac pair saved on a PC (no Win key there)');
+for (const p of ['darwin', 'win32', 'linux']) {
+  for (const c of writeChords(p)) assert.ok(c.length === 2 && new Set(c).size === 2 && c.every((m) => ['control', 'option', 'shift', 'command'].includes(m)), `${p}: ${c} is two different modifiers`);
+  for (const talk of writeChords(p)) assert.ok(!samePair(writeChord(p, talk, talk), talk), `${p}: never the talk pair (${talk})`);
+}
+assert.ok(!writeChords('win32').some((c) => c.includes('command')) && !writeChords('linux').some((c) => samePair(c, ['option', 'shift'])), 'no Win key and no Alt+Shift on a PC');
+assert.ok(samePair(['a', 'b'], ['b', 'a']) && !samePair(['a', 'b'], ['a', 'c']) && !samePair(['a', 'a'], ['a', 'b']) && !samePair(null, ['a', 'b']));
 console.log('platform tests: passed');

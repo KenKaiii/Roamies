@@ -22,6 +22,26 @@ assert.deepEqual(formats, [], 'no tool uses a string format');
 assert.ok(tools.some((t) => t.name === 'draw') && !tools.some((t) => t.name === 'point_at'), 'draw, not point_at');
 const drawSchema = JSON.stringify(resolveToolSchema(tools.find((t) => t.name === 'draw')));
 assert.ok(!/"(oneOf|anyOf|allOf)"/.test(drawSchema), 'draw is one flat object schema (no unions some providers reject)');
+// Labels on a photo need a look at the picture first: see_photo is there, and draw refuses labels on an unseen one
+// before anything is fetched or drawn, saying which call to make.
+{
+  assert.ok(tools.some((t) => t.name === 'see_photo'), 'see_photo is a tool');
+  const draw = tools.find((t) => t.name === 'draw'), see = tools.find((t) => t.name === 'see_photo');
+  const labelled = { beats: [{ say: 'The parts of a guitar.', marks: [{ kind: 'photo', query: 'Acoustic guitar', labels: [{ text: 'neck', x: 0.5, y: 0.3 }] }] }] };
+  await assert.rejects(draw.execute(labelled, { toolCallId: 't1' }), /labels go on a picture you have looked at[^\n]*First call see_photo with \{"query":"Acoustic guitar"\}/, 'labels on an unseen picture are refused with what to do');
+  await assert.rejects(see.execute({}), /Give query/, 'see_photo needs something to look at');
+  await assert.rejects(see.execute({ url: 'http://127.0.0.1:8080/cam.png' }), /Blocked for safety/, 'see_photo goes through the URL rules');
+}
+// What the model reads is what the schema takes: every new card's fields are there, and the text has real backslashes.
+{
+  const d = tools.find((t) => t.name === 'draw'), mark = resolveToolSchema(d).properties.beats.items.properties.marks.items.properties;
+  for (const f of ['nodes', 'links', 'columns', 'rows', 'bars', 'unit', 'labels', 'region', 'shade', 'pins', 'routes', 'steps', 'vertices', 'lines', 'angles', 'circles', 'questions']) assert.ok(mark[f], `a mark can have ${f}`);
+  for (const k of ['flow', 'table', 'bars', 'map', 'math', 'geometry', 'quiz']) assert.ok(mark.kind.enum.includes(k), `${k} is a kind of mark`);
+  assert.ok(mark.parts.items.properties.motion, 'a part can move');
+  assert.ok(d.description.includes('\\frac{a}{b}, \\sqrt{x}') && d.description.includes('no \\begin, & or \\\\ line breaks'), 'the LaTeX in the description reaches the model with single backslashes');
+  assert.ok(d.description.includes('At most 4 cards show at once (one more closes the oldest)'), 'the model knows only a few cards stay up');
+  assert.ok(d.description.length < 9000, `the draw description stays a readable size (${d.description.length})`);
+}
 console.log('tool schema ok');
 
 // act_in_app that only types a web address into a browser's bar becomes a direct open.

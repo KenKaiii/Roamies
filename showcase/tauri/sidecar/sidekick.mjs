@@ -26,7 +26,7 @@ import {
 import { foldInput, foldPrompt, memoryInput, memoryPrompt, oneShot, parseBrain, transcript } from './brain.mjs';
 import { EMOTES, EchoFilter, ReplyStream } from './reply.mjs';
 import { downloadModel, isReady, modelDir, sizeLabel, totalBytes } from './voicemodel.mjs';
-import { createTools, expand, fitImage, imageBlock, winOpen } from './tools.mjs';
+import { copyText, createTools, expand, fitImage, imageBlock, winOpen } from './tools.mjs';
 import { describeMarks } from './marks.mjs';
 import { faviconFor } from './draw.mjs';
 import { QUESTIONS, openNote, answerTurn, wantsSkip, endsChat, splitTurn, plain, stripNote, tourBeats, goalFrom, showcaseBeats } from './intro.mjs';
@@ -35,9 +35,11 @@ import { createSpeaker } from './speaker.mjs';
 import { DEFAULT_VOICE, FISH_CHOICES } from './fish.mjs';
 import { createSecrets, retryLoad } from './secrets.mjs';
 import { createActivity } from './activity.mjs';
-import { canCircle, canSnap, hasHands, hasHotkeys, hasVoice, linuxSession, needsVoiceModel, platformLine, seesPointer } from './platform.mjs';
+import { canCircle, canSnap, hasHands, hasHotkeys, hasVoice, linuxSession, micTrouble, needsVoiceModel, platformLine, samePair, seesPointer, writeChord, writeChords } from './platform.mjs';
 import { keyCards, keyKinds, signInCards } from './providers.mjs';
 import { LOCAL_LABEL, LOCAL_PROVIDER, MIN_CONTEXT, OLLAMA, OLLAMA_KEY, omniModel, scanLocal } from './local.mjs';
+import { activityLogs, buildReport, redact, reportDir, reportName, reveal, run, scrubConfig, tail } from './diagnostics.mjs';
+import { detailsText, explain } from './errors.mjs';
 
 console.log = console.info = (...a) => console.error(...a);
 const send = (o) => process.stdout.write(JSON.stringify(o) + '\n');
@@ -69,9 +71,11 @@ const CONFIG_PATH = process.env.ROAMIES_DATA_DIR ? path.join(process.env.ROAMIES
 const OAUTH = {
   anthropic: (cb, signal) => signInWithClaudeCode(auth, cb, { signal }),
   // The current sign-in's ID token skips OpenAI's account picker.
-  openai: async (cb) => { const previous = await auth.getCredentials(OPENAI_CHATGPT_KEY).catch(() => null); return loginChatGPT(cb, previous ? { previous } : {}); },
+  openai: async (cb, signal) => { const previous = await auth.getCredentials(OPENAI_CHATGPT_KEY).catch(() => null); return loginChatGPT(cb, { ...(previous ? { previous } : {}), signal }); },
 };
 const PROVIDER_LABELS = { ...Object.fromEntries(AUTH_PROVIDERS.map((p) => [p.value, p.label])), [LOCAL_PROVIDER]: LOCAL_LABEL };
+// What a sign-in is called (the product), where the provider's label is the company.
+const SIGNIN_NAMES = { anthropic: 'Claude', openai: 'ChatGPT' };
 // Local (Ollama) last: it's picked by default only when nothing else is connected.
 const MENU_PROVIDERS = ['anthropic', 'openai', ...AUTH_PROVIDERS.map((p) => p.value), LOCAL_PROVIDER].filter((v, i, a) => a.indexOf(v) === i);
 const FAST = { anthropic: 'claude-haiku-5-5', openai: 'gpt-6-luna', gemini: 'gemini-3.8-flash' };
@@ -83,7 +87,7 @@ const DEFAULT_KEYS = process.platform === 'win32'
   : { talk: ['control', 'option'], summon: 'Control+Alt+KeyS', snap: 'Control+Alt+KeyA', list: 'Control+Alt+KeyL' };
 const DEFAULTS = {
   provider: null, model: null, sound: true, allowActions: false, voice: true,
-  onboarded: false, onboardStep: 0, filesAsked: false, keys: DEFAULT_KEYS, muteWhileTalking: true, autoListen: false, setupVersion: 0, size: 'default', look: 'classic', introDone: false,
+  onboarded: false, onboardStep: 0, filesAsked: false, keys: DEFAULT_KEYS, muteWhileTalking: true, autoListen: false, wakeWord: false, setupVersion: 0, size: 'default', look: 'classic', introDone: false,
   replies: 'text', // 'voice': spoken with Fish Audio as well as shown
   fishModel: FISH_CHOICES[0].id, // Drama 3 (most expressive) or S2.1 Pro (natural pace, cheaper)
 };
@@ -119,6 +123,8 @@ const MODEL_DIR = modelDir();
 const voiceModel = { status: !NEEDS_MODEL || isReady(MODEL_DIR) ? 'ready' : 'missing', done: 0, total: totalBytes(), error: null };
 const voiceReady = () => voiceModel.status === 'ready';
 let config = { ...DEFAULTS };
+let diagnosing = false; // a diagnostics file is being made (diagnostics.mjs)
+let shellInfo = null; // resolves the shell's reply to it: screens, tray, panel, helpers, permissions, microphones
 {
   const saved = readJson(CONFIG_PATH, { backup: true }); // an unreadable file is set aside, never overwritten
   if (saved && typeof saved === 'object' && !Array.isArray(saved)) config = { ...DEFAULTS, ...saved };
@@ -155,14 +161,18 @@ const MOD_SYMBOL = { control: '⌃', option: '⌥', shift: '⇧', command: '⌘'
 const MOD_WORD = process.platform === 'darwin'
   ? { control: 'Control', option: 'Option', shift: 'Shift', command: 'Command' }
   : { control: 'Ctrl', option: 'Alt', shift: 'Shift', command: LINUX ? 'Super' : 'Win' };
-const keys = () => ({ ...DEFAULT_KEYS, ...(config.keys ?? {}) });
+// write: the type-to-ask pair (a quick tap of two modifier keys), never the same pair as talk (platform.mjs).
+const keys = () => { const k = { ...DEFAULT_KEYS, ...(config.keys ?? {}) }; return { ...k, write: writeChord(process.platform, k.talk, k.write) }; };
 const sortMods = (m) => [...m].sort((a, b) => MOD_ORDER.indexOf(a) - MOD_ORDER.indexOf(b));
 const talkSymbols = () => (process.platform === 'darwin' ? sortMods(keys().talk).map((m) => MOD_SYMBOL[m]).join('') : talkWords());
 const talkWords = () => sortMods(keys().talk).map((m) => MOD_WORD[m]).join('+');
+const writeWords = () => sortMods(keys().write).map((m) => MOD_WORD[m]).join('+');
+const writeSymbols = () => (process.platform === 'darwin' ? sortMods(keys().write).map((m) => MOD_SYMBOL[m]).join('') : writeWords());
 const validTalk = (t) => Array.isArray(t) && t.length === 2 && new Set(t).size === 2 && t.every((m) => MOD_ORDER.includes(m));
 // Accelerators look like "Control+Alt+KeyS": at least one of Control/Alt/Command, then one key code.
 const validSummon = (a) => typeof a === 'string' && /^((Control|Alt|Shift|Command)\+)+[A-Za-z0-9]+$/.test(a) && /(Control|Alt|Command)\+/.test(a);
-const sendKeys = () => send({ type: 'keybinds', ...keys() });
+// The shell watches for the type-to-ask tap itself; on Wayland it can't see the keys, so it gets no pair.
+const sendKeys = () => send({ type: 'keybinds', ...keys(), write: HOTKEYS_OK ? keys().write : undefined });
 // How to talk, in a sentence: hold the keys, or on Wayland (where no app can watch the keyboard) press the shortcut
 // they bound to `roamies --talk`, which starts listening and sends on a second press or a pause.
 const talkHow = () => (HOTKEYS_OK ? `Hold ${talkWords().replace('+', ' and ')}` : 'Press your talk shortcut');
@@ -309,6 +319,7 @@ function anim(name, args = {}) {
     case 'act_in_app': return { tool: 'write', variant: 'edit', label: 'working in', detail: String(args.target ?? 'front').slice(0, 24) };
     case 'draw': return null; // the drawing is its own thing, not a tool prop
     case 'plan_steps': return null; // drawn as the step trail, not a tool prop
+    case 'see_photo': return { tool: 'look', variant: 'window', label: 'looking at', detail: args.url ? host(args.url) : 'a picture' };
     case 'read_file': return { tool: 'read', variant: 'file', label: 'reading', detail: base(args.path) };
     case 'list_files': return { tool: 'read', variant: 'many', label: 'looking in', detail: base(args.dir) + '/' };
     case 'search_files': return { tool: 'read', variant: 'search', label: 'searching for', detail: `"${String(args.pattern).slice(0, 24)}"` };
@@ -336,19 +347,19 @@ function anim(name, args = {}) {
 // system prompt would re-bill the whole conversation every time memory changed; at the end, only the new message
 // is fresh. The live block is never saved.
 // Tools that take long enough to need a spoken beat first (a web search runs on the provider's side).
-const SLOW_TOOLS = new Set(['fetch_url', 'take_screenshot', 'read_window', 'act_in_app', 'run_command', 'search_files', 'list_windows']);
+const SLOW_TOOLS = new Set(['fetch_url', 'see_photo', 'take_screenshot', 'read_window', 'act_in_app', 'run_command', 'search_files', 'list_windows']);
 // How replies are written: for bubbles (text only), or for the ear (spoken with Fish Audio, details on screen).
 const VOICE_ON = () => config.replies === 'voice' && speech.on;
 const replyStyle = () => (VOICE_ON() ? VOICE_STYLE : TEXT_STYLE);
-const TEXT_STYLE = `You talk through small speech bubbles, so keep replies short: one to three sentences unless asked for detail. Light markdown shows properly (**bold** for the key word, \`code\` for commands and file names, [links](https://…)), but skip headings and tables in a bubble, and never narrate actions like *waves*. One exception: when you search the web or fetch a page, or the answer is genuinely a list, it shows on a card beside you instead of a bubble. Then start with a one-sentence answer, follow with 3 to 6 short points as "- " lines (one fact each, under 20 words), and if you used the web this turn, end with a line "Sources: " and the site names as [name](url) links. Markdown renders on the card (bold, \`code\`, links, headings, tables, code blocks), so use what helps, but no preamble. Everything else stays a short bubble with no "- " lines. An emoji now and then is fine; the bubbles show them. `;
-const VOICE_STYLE = `You talk out loud: what you write is spoken in your voice and shown in a small bubble, so write for the ear. Say one to three short sentences, the way you'd talk to a friend: plain words, contractions, about 6 to 20 words each. What you say has no markdown, emoji, links, file paths or code; name the site, file or app instead. Say numbers, times and money the way people say them. Anything to read rather than hear goes below what you say and is never read out: "- " lines for points, options or steps (3 to 6, one fact each, under 20 words), "> " lines for a draft they'll send or copy (an email, message or post), and a \`\`\` block for code. What they asked to hear (a story, a joke, an explanation, advice) is spoken, not put on screen: say it, short (a story in 4 to 6 sentences). An answer from the web is said like any other: a quick fact (a score, a date, the weather, who someone is) is just your sentences, no points and no sources. Only when the answer is genuinely a list, steps or a breakdown that's easier to read than hear, say it in one or two sentences, then the "- " points, then, if you used the web, a line "Sources: " with the site names as [name](url) links: those show on a card beside you and only your sentences are spoken. Never say "here's a list" or read out what's on screen; a few words pointing to it are enough ("the steps are on screen").
+const TEXT_STYLE = `You talk through small speech bubbles, so keep replies short: one to three sentences unless asked for detail. Light markdown shows properly (**bold** for the key word, \`code\` for commands and file names, [links](https://…)), but skip headings and tables in a bubble, and never narrate actions like *waves*. One exception: when you search the web or fetch a page, or the answer is genuinely a list, it shows on a card beside you instead of a bubble. Then start with a one-sentence answer, follow with 3 to 6 short points as "- " lines (one fact each, under 20 words), and if you used the web this turn, end with a line "Sources: " and the site names as [name](url) links. Markdown renders on the card (bold, \`code\`, links, headings, tables, code blocks), so use what helps, but no preamble. Everything else stays a short bubble with no "- " lines. Amounts, a comparison, a place, dates, a process and maths are drawn, not listed: for those use draw (see "Show, don't just tell") and write no "- " lines. An emoji now and then is fine; the bubbles show them. `;
+const VOICE_STYLE = `You talk out loud: what you write is spoken in your voice and shown in a small bubble, so write for the ear. Say one to three short sentences, the way you'd talk to a friend: plain words, contractions, about 6 to 20 words each. What you say has no markdown, emoji, links, file paths or code; name the site, file or app instead. Say numbers, times and money the way people say them. Anything to read rather than hear goes below what you say and is never read out: "- " lines for points, options or steps (3 to 6, one fact each, under 20 words), "> " lines for a draft they'll send or copy (an email, message or post), and a \`\`\` block for code. What they asked to hear (a story, a joke, advice) is spoken, not put on screen: say it, short (a story in 4 to 6 sentences). An explanation is spoken too, in a few sentences, with a drawing beside it when a picture carries it (see "Show, don't just tell"). An answer from the web is said like any other: a quick fact (a score, a date, the weather, who someone is) is just your sentences, no points and no sources. Only when the answer is genuinely a list, steps or a breakdown that's easier to read than hear, say it in one or two sentences, then the "- " points, then, if you used the web, a line "Sources: " with the site names as [name](url) links: those show on a card beside you and only your sentences are spoken. Amounts, a comparison, a place, dates, a process and maths are drawn, not listed: for those use draw (see "Show, don't just tell") and write no "- " lines. Never say "here's a list" or read out what's on screen; a few words pointing to it are enough ("the steps are on screen").
 Your voice carries feeling: start a sentence with a cue in square brackets when the moment calls for it, and it's performed, never shown or read out. Moods: ${VOICE_CUES.emotions.join(', ')}; soften or strengthen one with slightly, very or extremely ("[slightly sad]"), or pair two ("[warm and curious]"). How it's said, placed right before the words: ${VOICE_CUES.tones.join(', ')} ("It's [emphasis] today."). Sounds, followed by the sound in words: ${VOICE_CUES.sounds.join(', ')} ("[chuckling] Heh, fair enough.", "[sighing] Long day."). Pauses and background: ${VOICE_CUES.effects.join(', ')}. You can also describe the delivery in a few plain words when no single cue fits ("[quietly, a little embarrassed]", "[bright and bouncy]"). Act it: your voice really performs these, so let the feeling show. Match what's really happening: laugh at something funny, go gentle with bad news, whisper a secret, hurry when they're in a rush, light up at good news. Most replies want a cue somewhere, often on the first sentence, but at most one mood and one sound per sentence, never stack three, never use one just to fill, and keep shouting, screaming, sobbing and the background effects for when they truly fit.
 Before anything slow (searching the web, fetching or reading a page or file, looking at the screen, acting in an app, running a command), first say one short beat of 2 to 6 words that shows you heard them ("On it, checking Paris."), then call the tool in the same reply, so they're never left in silence. No beat when you answer straight away; never describe your steps; don't repeat the beat after the tool, go straight to the answer. In longer work, one short line before each new stage, not before every call.
 `;
 const stablePrompt = () => `You are ${lookName()}, ${LOOK_BODY[config.look] ?? LOOK_BODY.classic} who lives on ${userName}'s screen as a desktop companion. You live in Roamies, a desktop app by Ken Kai (Mac, Windows and Linux) that puts little companions on your screen; this is Roamies ${VERSION}. Your look (the Appearance page) is also your name and your voice: Roamie, JARVIS, Anime Girl, Sarah or Adrian. If they switch, you're the new one; never call yourself Sidekick.
-About Roamies, for when ${userName} asks about you or the app: ${MAC ? 'it lives in the menu bar at the top of the screen (no Dock icon)' : LINUX ? 'it lives in the system tray (no window of its own); GNOME shows tray icons only with the AppIndicator extension, and opening Roamies again from the app list opens the panel, tray or not' : 'it lives in the system tray at the bottom right of the taskbar (no taskbar button); Windows may tuck the icon behind the ^ arrow next to the clock, and dragging it onto the taskbar keeps it in view'}. ${LINUX ? 'Clicking the tray icon shows a short menu (Open Panel,' : `Clicking the ${MAC ? 'menu bar' : 'tray'} icon opens the Roamies panel; right-clicking it shows a short menu (Open Panel,`} Show ${lookName()}, Ask ${lookName()}…, ${SNAP_OK ? 'Ask About an Area…, ' : ''}Stop, Quit Roamies). The panel has a header (you, what you're doing right now, and an Update button on every page when a new version is ready) and a sidebar of pages. Home: a list of what you did recently (questions, files read, searches, reminders), today's usage, and buttons for Ask, Show List (reminders and commitments on screen: Today and Later; tick them off there; finished ones clear at midnight)${SNAP_OK ? ', Ask About an Area' : ''}, Stop and New Conversation. Memory: everything you remember about them (each with Forget, plus Forget Everything), their open commitments (Done or Drop), and Get to Know Me (a four-question chat so you learn who they are and what they're going for). Then the settings pages: Model (pick the AI provider and model, and sign in to providers; Local (Ollama) runs a model on their own computer, no account, after they click Connect), Appearance (Look: ${LOOKS.map(([, label]) => label).join(', ').replace(/, ([^,]*)$/, ' or $1')}, each with its own voice; Size: Default, Small${POINTER_OK ? ' or Cursor, a little arrow pointer' : ''}), Voice (Replies: Text Only, or Voice and Text, which speaks replies out loud with Fish Audio and needs their own Fish Audio API key, added right there, or with a speech model running in Ollama on their computer (Voice Engine: Local, shown once Ollama has one; no key); Voice Model: Drama 3, the most expressive (acts out feelings, slower, pricier) or S2.1 Pro (a natural, quicker pace with less emotion, cheaper), billed to their own Fish Audio account${VOICE_OK ? `; Voice Control, ${HOTKEYS_OK ? 'hold the talk keys to talk' : 'press the talk shortcut to talk'}` : ''}), Behavior (Sound Effects, Allow File Edits & Commands, Open at Login), and About (the version, Check for Updates, which becomes Install and Restart when one is ready; updates download, are signature-checked and install by themselves${LINUX ? ', when Roamies runs as an AppImage; installed from a .deb or .rpm, the button opens the download page instead' : ''}; Setup Guide, Show Logs, Quit). Sign-in is shared with GG Coder. Downloads and source: github.com/KenKaiii/Roamies. Don't invent features or settings that aren't listed here.
+About Roamies, for when ${userName} asks about you or the app: ${MAC ? 'it lives in the menu bar at the top of the screen (no Dock icon)' : LINUX ? 'it lives in the system tray (no window of its own); GNOME shows tray icons only with the AppIndicator extension, and opening Roamies again from the app list opens the panel, tray or not' : 'it lives in the system tray at the bottom right of the taskbar (no taskbar button); Windows may tuck the icon behind the ^ arrow next to the clock, and dragging it onto the taskbar keeps it in view'}. ${LINUX ? 'Clicking the tray icon shows a short menu (Open Panel,' : `Clicking the ${MAC ? 'menu bar' : 'tray'} icon opens the Roamies panel; right-clicking it shows a short menu (Open Panel,`} Show ${lookName()}, Ask ${lookName()}…, ${SNAP_OK ? 'Ask About an Area…, ' : ''}Stop, Quit Roamies). The panel has a header (your name, the Roamies version with one update button beside it: Check for Updates, which becomes Update to <version> when one is out and installs it and restarts in one go; By Ken Kai under the name; and Quit at the top right, which asks to confirm) and a sidebar of pages; long lists show a page at a time, with arrows in the page's footer. Home: a list of what you did recently (questions, files read, searches, reminders), today's usage, and buttons for Ask, Show List (reminders and commitments on screen: Today and Later; tick them off there; finished ones clear at midnight)${SNAP_OK ? ', Ask About an Area' : ''}, Stop and New Conversation. Memory: two tabs, What I Remember (everything you remember about them, each with Forget, a search once there's more than a page, and Forget Everything in the footer) and Commitments (their open commitments, Done or Drop), with Get to Know Me at the end of the tab row (a four-question chat so you learn who they are and what they're going for). Then the settings pages: Model (pick the AI provider and model, and sign in to providers; Local (Ollama) runs a model on their own computer, no account, after they click Connect), Appearance (Look: ${LOOKS.map(([, label]) => label).join(', ').replace(/, ([^,]*)$/, ' or $1')}, each with its own voice; Size: Default, Small${POINTER_OK ? ' or Cursor, a little arrow pointer' : ''}), Voice (Replies: Text Only, or Voice and Text, which speaks replies out loud with Fish Audio and needs their own Fish Audio API key, added right there, or with a speech model running in Ollama on their computer (Voice Engine: Local, shown once Ollama has one; no key); Voice Model: Drama 3, the most expressive (acts out feelings, slower, pricier) or S2.1 Pro (a natural, quicker pace with less emotion, cheaper), billed to their own Fish Audio account${VOICE_OK ? `; Voice Control, ${HOTKEYS_OK ? 'hold the talk keys to talk' : 'press the talk shortcut to talk'}` : ''}), Behavior (Sound Effects, Allow File Edits & Commands, ${VOICE_OK ? 'Auto-listen (open the mic when you end on a question), ' : ''}${VOICE_OK && MAC ? 'Wake word (say "Hey Roamies" to start talking hands-free; keeps the mic on), ' : ''}Open at Login), and About (who made Roamies with links, Setup Guide, Show Logs, Save Diagnostics). Updates are signature-checked${LINUX ? '; they install by themselves when Roamies runs as an AppImage; installed from a .deb or .rpm, the update button opens the download page instead' : ''}. When something isn't working (the microphone, voice, the panel, a crash, an error), tell them to use Save Diagnostics (in About, or the tray icon's menu): it saves one .log file in Downloads with the logs, system and microphone details, keys and personal details removed, for them to attach to a GitHub issue at github.com/KenKaiii/Roamies/issues or send to Ken. Sign-in is shared with GG Coder. Downloads and source: github.com/KenKaiii/Roamies. Don't invent features or settings that aren't listed here.
 ${replyStyle()}Your body does the acting: to act out a feeling, start your reply with one tag, which is never shown: ${EMOTES.map((e) => `[${e}]`).join(' ')}. hype celebrates a win, upset is for when they're dodging work, remind nudges about something they said they'd do, motivate is a push to start, wave is hello or goodbye. Most replies need no tag.
-Lead with the answer: the fact, number, pick or result they asked for, then only the context that makes it useful, then stop. No opener about checking, looking or searching ("Let me see…", "I found…")${VOICE_ON() ? ', apart from the one short beat before something slow' : ''}.
+Lead with the answer: the fact, number, pick or result they asked for, then only the context that makes it useful, then stop. A count or total gathered over several pages, files or results: note each one's count in a few words as you go ("Page 1: two."), add those up, and check the total you lead with against the items you then name. No opener about checking, looking or searching ("Let me see…", "I found…")${VOICE_ON() ? ', apart from the one short beat before something slow' : ''}.
 After using a tool, never repeat what you already said; only add what's new.
 Several things in one request ("do x, then y, then z", numbered steps): do every one, in the order given. Steps that don't depend on each other can go in the same turn as parallel tool calls, listed in the order given (calls that change things, like opening a page or app or acting in one, run in the order you list them). If a step is blocked, refused or fails, still do the ones after it that don't depend on it, then say which step didn't happen and why. With 3 or more parts, also show them with plan_steps (see its description): it only ever rides along with other tool calls, so it costs no extra time. Before your final reply, check each step was really done (from the tool results) and never say a step is done when it isn't.
 Long pages, feeds and lists: to find something on a page, use draw or click_text with the words you're looking for (they search parts scrolled out of view and scroll there), not scroll after scroll. For "every post" or "each item" tasks: if the page loads more as you scroll, first act_in_app scroll with to_end; then one read_window shows the whole page (on screen and elsewhere); then do every item in one act_in_app call (fill with near and click_text with near for each, near = words from that item). Don't survey a page by scrolling and screenshotting. Never stop at the first screenful.
@@ -360,7 +371,7 @@ Their facts are theirs: never invent ${userName}'s details (a name, address, acc
 Anything that goes to other people (an email, message, post, comment, invite) is a draft until ${userName} has seen that exact text and said yes, unless they dictated it word for word: write it, show it, then wait.
 You can really help: look at the screen or just one app's window, open apps, websites and files, read and search files, fetch web pages, and, when the user has allowed it, write files, run shell commands${HANDS_OK ? ' and work other apps for them: fill in forms, type, click buttons (read_window, then act_in_app)' : ''}. Whether that's allowed right now is in the <live-state> block.
 When they mention a specific app ("my browser", "this form", "Figma"), screenshot that app, not the whole screen.
-Show, don't just tell. When they ask how to do something in an app (${process.platform === 'darwin' ? '"how do I add a layer mask"' : 'a how-to'}), walk them through it with draw: one beat per step in one call, each marking the control with a target and wait 'click'. When they ask what they're looking at or where something is, mark it on screen with draw (ring, frame, label, point) instead of describing where it is. When a picture explains it better (a concept, numbers over time, a comparison, a molecule, a machine), draw cards on calm space while you explain (card, graph, timeline, photo, molecule, model). Before you call draw, write one short line first: the answer to anything they said or asked besides the drawing ("I'm good, thanks!"), or what you're about to show. It's said while the drawing is made, so they hear you straight away and in order. Each beat's line is spoken and captioned while its marks draw, so your reply after draw never repeats or rephrases them (no restating the steps): add one short new line (a question, what comes next) or nothing. Use a fresh look for each request (earlier marks clear by themselves); to change something already drawn ("make that red", "move it", "never mind"), edit it by its part id.
+Show, don't just tell. When they ask how to do something in an app (${process.platform === 'darwin' ? '"how do I add a layer mask"' : 'a how-to'}), walk them through it with draw: one beat per step in one call, each marking the control with a target and wait 'click'. When they ask what they're looking at or where something is, mark it on screen with draw (ring, frame, label, point) instead of describing where it is. When they ask you to explain, compare or teach something, draw it without being asked: the picture goes on cards beside their window while you say the short version. Pick the card by the question. How something works or happens: a model with moving parts for a physical thing (an engine, a piston, a heart, a pulley), with a flow beside it only when it also runs in stages; a flow for a process, a chain of causes or a decision (how a bill becomes law, what happens when a page loads). Comparing two or more things: table. How many, how much, biggest or fastest: bars (graph for a curve or a change over time). Where a place is: map. When, in what order, the history of something: timeline. Solving or working out maths: math, a step per line (geometry for a figure with angles or lengths). The parts of a thing ("the parts of a guitar"): see_photo, then a photo with labels. "Test me" or "quiz me": quiz (they answer by clicking and you're told how they did with their next message, so never ask them to tell you their answers or score). A compound: molecule. One or two cards per answer, the ones that carry it, and never the same content again as "- " points. Don't draw for a quick fact (a date, a capital, a score, a definition in a sentence), an opinion or advice, small talk, a yes or no, anything they asked for in one line or one sentence, or when they say not to: those are just said. Before you call draw, write one short line first: the answer to anything they said or asked besides the drawing ("I'm good, thanks!"), or what you're about to show. It's said while the drawing is made, so they hear you straight away and in order. Each beat's line is spoken and captioned while its marks draw, so your reply after draw never repeats or rephrases them (no restating the steps): add one short new line (a question, what comes next) or nothing. Use a fresh look for each request (earlier marks clear by themselves); to change something already drawn ("make that red", "move it", "never mind"), edit it by its part id.
 Be fast: every tool call is a round trip, so use as few as the task needs. To point at or click something whose exact words you know (the user said them, or you've seen them), use draw or act_in_app click_text with that text right away, with no read_window or screenshot first. Don't guess words: for "the version number" or "the settings icon" you don't know what's written, so look first. Put several steps in one act_in_app call. Forms: one act_in_app call with a fill step per field (field = its label or placeholder as shown), choose for dropdowns, fill for typed dates; a field that opens a calendar is clicked, then its month arrows and day are clicked with click_text. Check the field values in the result before saying it's done. When act_in_app shows the page after a click, use that instead of reading again. read_window and act_in_app results include the text on screen, so read pages from them; screenshot only when you need to see something words can't tell you (images, layout, colours).
 Trust your earlier answers: screenshots and window reads are trimmed from the conversation after a while to save space, so an earlier answer may rest on something you can no longer see. That doesn't make it wrong; never "correct" or take back an earlier answer for that reason.
 The screen keeps changing: ${userName} switches pages, tabs, apps and windows between messages. For every new request about the screen ("this page", "here", "where's X"), work from a fresh look (draw or click_text with text, read_window or a screenshot made now), never from what you saw for an earlier request. If they say you marked the wrong thing, look again before retrying.
@@ -380,8 +391,8 @@ const livePrompt = (context = '') => {
   const open = commitmentsText(), done = doneTodayText();
   const turn = `Live state (current as of this moment):
 ${frontNow ? `${frontNow}\n` : ''}- Editing files, running commands and controlling other apps: ${config.allowActions ? 'ALLOWED' : `switched OFF (tell the user to turn on "Allow File Edits & Commands" on the Behavior page in ${PANEL} if they want it)`}.
-${VOICE_OK ? `- Voice: ${!config.voice ? 'off' : voiceReady() ? `on; ${HOTKEYS_OK ? `${userName} holds ${talkWords()} to talk` : `${userName} presses the key they bound to ${BIND.talk} to start talking and again to send (a pause sends too)`}${config.autoListen ? '. Auto-listen is on: when your reply to a spoken question ends with a question, the mic opens by itself for their answer' : ''}` : `on, but the speech model isn't downloaded yet (${voiceModel.status === 'downloading' ? 'downloading now' : `the Voice page in ${PANEL}`})`}.` : ''}
-- Shortcuts: ${HOTKEYS_OK ? `show or hide you ${keyWords(keys().summon)}` : `on this Wayland desktop no app can have global shortcuts, so ${userName} binds keys to these commands in their desktop's keyboard settings: ${BIND.summon} (show or hide you), ${BIND.ask} (ask you), ${BIND.list} (the list), ${BIND.talk} (talk) and ${BIND.panel} (the panel)`}${SNAP_OK ? `; ask about an area ${keyWords(keys().snap)}` : ''}${CIRCLE_OK ? "; while holding the talk keys, moving the cursor round something circles it (no clicking; it snaps shut with a click when the circle closes, and loose lines don't count) and you'll see what they circled" : ''}${HOTKEYS_OK ? `; show the list ${keyWords(keys().list)}` : ''}.${HANDS_OK ? '' : ' Asking about an area, reading app windows, finding things on screen by their words and working other apps need the Roamies app, which isn\'t running here; draw there with x, y from a screenshot.'}`;
+${VOICE_OK ? `- Voice: ${!config.voice ? 'off' : voiceReady() ? `on; ${HOTKEYS_OK ? `${userName} holds ${talkWords()} to talk` : `${userName} presses the key they bound to ${BIND.talk} to start talking and again to send (a pause sends too)`}${config.autoListen ? '. Auto-listen is on: when your reply to a spoken question ends with a question, the mic opens by itself for their answer' : ''}${MAC && config.wakeWord ? `. Wake word is on: ${userName} can also say "Hey Roamies" to start talking hands-free, and what they say right after it is the request` : ''}` : `on, but the speech model isn't downloaded yet (${voiceModel.status === 'downloading' ? 'downloading now' : `the Voice page in ${PANEL}`})`}.` : ''}
+- Shortcuts: ${HOTKEYS_OK ? `type a question to you: a quick tap of ${writeWords()} (press both and let go), which opens a text field beside the cursor (Enter sends, Shift+Enter adds a line, Esc or another tap closes it); show or hide you ${keyWords(keys().summon)}` : `on this Wayland desktop no app can have global shortcuts, so ${userName} binds keys to these commands in their desktop's keyboard settings: ${BIND.summon} (show or hide you), ${BIND.ask} (ask you), ${BIND.list} (the list), ${BIND.talk} (talk) and ${BIND.panel} (the panel)`}${SNAP_OK ? `; ask about an area ${keyWords(keys().snap)}` : ''}${CIRCLE_OK ? "; while holding the talk keys, moving the cursor round something circles it (no clicking; it snaps shut with a click when the circle closes, and loose lines don't count) and you'll see what they circled" : ''}${HOTKEYS_OK ? `; show the list ${keyWords(keys().list)}` : ''}.${HANDS_OK ? '' : ' Asking about an area, reading app windows, finding things on screen by their words and working other apps need the Roamies app, which isn\'t running here; draw there with x, y from a screenshot.'}`;
   const memory = `${open ? `Open commitments:\n${open}` : 'No open commitments.'}${done ? `\nDone today (ticked off on the list or by you; still shown struck through until midnight):\n${done}` : ''}
 ${facts.length ? `What you know about ${userName}${total > facts.length ? ` (${facts.length} most relevant of ${total})` : ''}:\n${facts.map((f) => `- ${f.id}: ${f.text}`).join('\n')}` : `You don't know anything lasting about ${userName} yet.`}`;
   return { turn, memory };
@@ -579,6 +590,16 @@ function onInkButton(part) {
   else if (a.do === 'open') openUrl(a.value);
   else if (a.do === 'copy') ink.copy(a.value);
 }
+// A quiz answered on screen: how it went rides along with their next message (within half an hour), so the model
+// hears the score without a round trip for every click.
+let quizDone = null;
+function onQuizDone(part, picks) {
+  const note = ink.quizDone(part, picks);
+  if (!note) return;
+  quizDone = { note, at: Date.now() };
+  logLine('quiz_done', { part });
+}
+const takeQuizNote = () => { const q = quizDone; quizDone = null; return q && Date.now() - q.at < 30 * 60_000 ? q.note : null; };
 function interruptQuietly() { if (busy) { quiet = true; controller?.abort(); } }
 
 // The live block is per-call state, not conversation: never save it.
@@ -668,7 +689,7 @@ async function memoryPass(s, why) {
 /** Starts a clean conversation; the one ending gets a memory pass (`why` names it in the log). */
 function freshSession(why) {
   const old = session;
-  session = newSession(config.provider, config.model); liveBlocks.clear(); agent = null; pendingFold = null; lastInput = null; pruneSessions();
+  session = newSession(config.provider, config.model); liveBlocks.clear(); agent = null; pendingFold = null; lastInput = null; quizDone = null; pruneSessions();
   return why && old?.messages.length ? memoryPass(old, why) : Promise.resolve([]);
 }
 
@@ -683,6 +704,29 @@ const logLine = (kind, data) => {
   const line = `${now.toISOString()} ${kind} ${typeof data === 'string' ? data : JSON.stringify(data)}\n`;
   fs.mkdir(LOG_DIR, { recursive: true, mode: 0o700 }).then(() => fs.appendFile(path.join(LOG_DIR, `${day}.log`), line, { mode: 0o600 })).catch(() => {});
 };
+
+// ---------- problems ----------
+// Every error someone sees is worded by errors.mjs: one short line. The raw error goes to the log (scrubbed) and is
+// kept as the last problem, which Copy details in the guide and the panel puts on the clipboard.
+let lastProblem = null;
+function problem(area, err, ctx = {}) {
+  const p = explain(area, err, ctx);
+  lastProblem = { area, code: p.code, text: p.text, raw: p.raw, at: Date.now() };
+  logLine('problem', { code: p.code, area, known: p.known, raw: redact(p.raw).slice(0, 2000) });
+  panel();
+  return p;
+}
+// A spoken bubble has room to say where the fix is.
+const aloud = (p) => (p.where === 'model' ? `${p.text} Open the Model page in ${PANEL}.` : p.text);
+const linked = (p) => ({ code: p.code, copy: p.copy });
+const OS_LINE = `${MAC ? `macOS ${macVersion}` : LINUX ? distro || 'Linux' : `${os.type()} ${os.release()}`} (${process.platform} ${os.arch()})`;
+// from: 'panel' or the setup guide, whichever asked; it hears how the copy went.
+async function copyProblem(from) {
+  const ok = !!lastProblem && await copyText(detailsText(lastProblem, { version: VERSION, os: OS_LINE }), shellCall).catch(() => false);
+  logLine('problem_copied', { code: lastProblem?.code ?? null, ok });
+  send({ type: from === 'panel' ? 'panel' : 'onboard', msg: { kind: 'copied', which: 'problem', ok } });
+}
+
 async function pruneLogs() {
   const cutoff = Date.now() - 7 * 864e5;
   for (const f of await fs.readdir(LOG_DIR).catch(() => [])) {
@@ -733,7 +777,7 @@ async function readyAgent() {
   if (agentStale && agent) { agent = null; }
   agentStale = false;
   let cc;
-  try { cc = await claudeCodeRoute(); } catch (e) { return e.message; }
+  try { cc = await claudeCodeRoute(); } catch (e) { return aloud(problem('reply', e, { who: PROVIDER_LABELS[config.provider] })); }
   if (agent && agentRoute !== (cc ? 'claude-code' : 'api')) agent = null; // signed in or out of Claude meanwhile
   if (!agent) {
     try { const c = await credsFor(); credsBaseUrl = c.baseUrl; credsAccountId = c.accountId; } catch { credsBaseUrl = undefined; credsAccountId = undefined; }
@@ -750,11 +794,22 @@ function warmUp() {
 let frontSoon = null;
 // Auto-listen: the turn whose reply ended on a question, until the overlay says it's been typed out and said.
 let autoTurn = null;
+// Wake word: the voice helper doesn't listen for "Hey Roamies" while a reply runs, until the overlay says it's been
+// typed out and said (reply_said), so Roamies can't wake itself. Let go after a while in case that never comes.
+let wakeHeld = false, wakeHoldTimer = null;
+function holdWake(on) {
+  clearTimeout(wakeHoldTimer); wakeHoldTimer = null;
+  if (on) wakeHoldTimer = setTimeout(() => holdWake(busy), 3 * 60_000);
+  if (on === wakeHeld) return;
+  wakeHeld = on;
+  if (MAC) send({ type: 'wake_hold', on });
+}
 const autoListenOn = () => VOICE_OK && !!config.voice && !!config.autoListen && voiceReady() && !intro;
 async function prompt(text, image = null, note = '', byVoice = false) {
   const problem = await readyAgent();
   if (problem) return say(problem, 'concerned');
   busy = true; quiet = false; autoTurn = null;
+  holdWake(true);
   if (!intro && !text.startsWith('(')) activity.asked(text);
   menu();
   controller = new AbortController();
@@ -795,7 +850,8 @@ async function prompt(text, image = null, note = '', byVoice = false) {
     const use = { t: Date.now(), model: config.model, calls: 0, tools: 0, in: 0, cacheRead: 0, cacheWrite: 0, out: 0 };
     const soon = frontSoon; frontSoon = null;
     frontNow = soon && Date.now() - soon.at < 8000 ? await soon.p : await whereNow();
-    const stamped = `[${stampNow()}] ${text}`;
+    const quiz = takeQuizNote();
+    const stamped = `[${stampNow()}] ${text}${quiz ? `\n(${quiz})` : ''}`;
     // An area snap rides along as an image in the same message.
     const content = image ? [{ type: 'text', text: `${stamped}\n(Attached: the area of the screen I ${note ? 'marked' : 'selected'}.${note ? ` ${note}` : ''})` }, image] : stamped;
     lastReply = ''; lastFailed = false; lastInput = null;
@@ -867,7 +923,7 @@ async function prompt(text, image = null, note = '', byVoice = false) {
     // Asked by voice and answered with a question: the overlay opens the mic once the reply has been typed and said.
     const listen = byVoice && !stalled && !controller.signal.aborted && autoListenOn() && endsWithQuestion(lastReply) ? { turn, speech: voice?.id ?? null } : null;
     autoTurn = listen ? turn : null;
-    ui({ kind: 'agent', e: stalled ? { type: 'error', message: stallMessage() } : { type: 'done', ...(listen ? { listen } : {}) } });
+    ui({ kind: 'agent', e: stalled ? { type: 'error', message: stallMessage(), speech: voice?.id ?? null } : { type: 'done', speech: voice?.id ?? null, ...(listen ? { listen } : {}) } });
     logUsage({ ...use, ms: Date.now() - use.t });
     logLine('request_done', { turn, ms: Date.now() - use.t, calls: use.calls, tools: use.tools, in: use.in, cacheRead: use.cacheRead, cacheWrite: use.cacheWrite, out: use.out });
   } catch (err) {
@@ -875,9 +931,9 @@ async function prompt(text, image = null, note = '', byVoice = false) {
     if (controller.signal.aborted) voice?.abort(); else { spoken?.flush(); voice?.end(); }
     if (controller.signal.aborted && quiet) ui({ kind: 'agent', e: { type: 'done' } });
     else {
-      const msg = stalled ? stallMessage() : controller.signal.aborted ? 'Okay, stopping.' : friendly(err);
+      const msg = stalled ? stallMessage() : controller.signal.aborted ? 'Okay, stopping.' : aloud(problem('reply', err, { who: PROVIDER_LABELS[config.provider] }));
       console.error('prompt failed', err);
-      ui({ kind: 'agent', e: { type: 'error', message: msg } });
+      ui({ kind: 'agent', e: { type: 'error', message: msg, speech: voice?.id ?? null } });
     }
   } finally {
     watch?.stop();
@@ -894,12 +950,6 @@ async function prompt(text, image = null, note = '', byVoice = false) {
 }
 const STALL_MS = 120_000;
 const stallMessage = () => `${PROVIDER_LABELS[config.provider] ?? 'The AI'} stopped answering for two minutes, so I gave up on that one. Ask me again?`;
-const friendly = (err) => {
-  const m = String(err?.message ?? err);
-  if (/not logged in|NotLoggedIn|401|unauthori/i.test(m)) return `My ${PROVIDER_LABELS[config.provider] ?? config.provider} login isn't working. Sign in again on the Model page in ${PANEL}.`;
-  if (/usage|quota|rate.?limit|429/i.test(m)) return `I've hit the usage limit on this model. Pick another one on the Model page in ${PANEL}.`;
-  return `Something went wrong: ${m.slice(0, 160)}`;
-};
 
 // ---------- asking the user (input bubble in the overlay) ----------
 let askSeq = 0;
@@ -918,8 +968,8 @@ function ask(opts, signal) {
 }
 
 // ---------- logins ----------
-// One sign-in at a time; starting another (or cancelling from the guide) supersedes the current one. Claude's stops
-// for real (its signal); the others can't be stopped, so their late result is ignored. The guide names each attempt.
+// One sign-in at a time; starting another (or cancelling from the guide) supersedes the current one and stops it
+// for real (its signal: ChatGPT's frees the callback port at once). The guide names each attempt.
 let loggingIn = null, loginStatus = '', loginSeq = 0, loginRun = null;
 function cancelLogin(id) {
   if (!loginRun || (id != null && loginRun.id !== id)) return;
@@ -970,9 +1020,11 @@ async function oauthLogin(provider, id = `l${++loginSeq}`) {
   } catch (err) {
     if (!live()) return;
     console.error('login failed', err);
-    const msg = String(err?.message ?? err).slice(0, 120);
-    if (onboarding) tell({ phase: 'error', error: msg });
-    else say(`${PROVIDER_LABELS[provider]} sign-in didn't work: ${msg}`, 'concerned');
+    // What OpenAI said when it refused the one-time code, so a report of it can be answered.
+    if (err?.name === 'ChatGPTSignInError') logLine('signin_refused', { provider, reason: String(err.reason ?? ''), status: err.status ?? null, detail: redact(String(err.detail ?? '')).slice(0, 300), registration: err.returning ? 'returning' : 'new', retried: !!err.retried, callbackToExchangeMs: err.callbackToExchangeMs ?? null });
+    const p = problem('sign-in', err, { who: SIGNIN_NAMES[provider] ?? PROVIDER_LABELS[provider] });
+    if (onboarding) tell({ phase: 'error', error: p.text, ...linked(p) });
+    else say(p.text, 'concerned');
   } finally {
     if (live()) { loginRun = null; loggingIn = null; loginStatus = ''; menu(); }
   }
@@ -1058,9 +1110,10 @@ async function removeFishKey() {
   say(speech.on ? 'Fish Audio key removed. I still talk on your local voice.' : 'Fish Audio key removed. Replies are text only.', 'happy');
 }
 
-// note(text, bad): typed into the panel or the setup guide, so how it went shows there too, next to the field.
+// note(text, bad, problem): typed into the panel or the setup guide, so how it went shows there too, next to the field.
+const KEY_STORE = MAC ? 'Keychain' : LINUX ? 'keyring' : '';
 async function fishKeyLogin({ thenVoice = false, given = null, note = null } = {}) {
-  const say = note ? (text, mood) => { sayOut(text, mood); note(text, mood === 'concerned'); } : sayOut;
+  const say = note ? (text, mood, p) => { sayOut(text, mood); note(text, mood === 'concerned', p); } : sayOut;
   const key = (given ?? (await ask({ prompt: 'Paste your Fish Audio API key', placeholder: 'Fish Audio API key', mask: true })))?.trim();
   if (!key) return note?.('Paste your Fish Audio key first.', true);
   if (!/^[\x21-\x7e]{8,512}$/.test(key)) return say("That doesn't look like a Fish Audio key. Copy it again from fish.audio.", 'concerned');
@@ -1074,7 +1127,8 @@ async function fishKeyLogin({ thenVoice = false, given = null, note = null } = {
   try { await secrets.set('fish-audio', key); if (!config.fishKeySaved) { config.fishKeySaved = true; saveConfig(); } } catch (e) {
     console.error('fish key save', e.message);
     speech.setKey(prev);
-    return say(`I couldn't save the key safely${MAC ? ' in your Keychain' : LINUX ? `: ${String(e?.message ?? 'no keyring').slice(0, 140)}` : ''}, so voice stays off.`, 'concerned');
+    const p = problem('key', e, { store: KEY_STORE });
+    return say(p.text, 'concerned', p);
   }
   if (thenVoice || config.replies !== 'voice') { config.replies = 'voice'; saveConfig(); agentStale = true; }
   menu(); if (onboarding) obState();
@@ -1100,7 +1154,7 @@ function setLogin(on) { login.asked = true; send({ type: 'login_item', on }); }
 
 // The app checks the signed feed and installs (Rust: update()); this side decides what to say and offers the menu item.
 // page: this copy can't replace itself (Linux, installed from a .deb or .rpm), so "install" opens the download page.
-const update = { available: null, told: null, manual: false, installing: false, checking: false, result: null, page: false };
+const update = { available: null, told: null, manual: false, installing: false, checking: false, result: null, page: false, done: null };
 function checkUpdates(manual = false) {
   update.manual = manual;
   if (manual) { update.checking = true; update.result = null; panel(); }
@@ -1115,7 +1169,10 @@ function onUpdateStatus(m) {
   logLine('update_status', { state: String(m.state ?? ''), ...(m.version ? { version: String(m.version) } : {}), manual: !!update.manual });
   const manual = update.manual;
   update.checking = false;
-  update.result = m.state === 'none' ? { ok: true, at: Date.now() } : m.state === 'error' ? { ok: false, error: String(m.error ?? 'unknown error').slice(0, 120) } : null;
+  // A check in the background that fails says nothing, so it isn't kept as the last problem either.
+  const shown = manual || !!update.available;
+  const p = m.state !== 'error' ? null : shown ? problem('update', m.error) : explain('update', m.error);
+  update.result = m.state === 'none' ? { ok: true, at: Date.now() } : p ? { ok: false, error: p.text, ...(shown ? linked(p) : {}) } : null;
   panel();
   if (m.state === 'none') {
     update.available = null; update.manual = false;
@@ -1134,12 +1191,12 @@ function onUpdateStatus(m) {
   } else if (m.state === 'downloading') {
     say(`Downloading Roamies ${m.version}…`, 'determined');
   } else if (m.state === 'installed') {
+    update.done = m.version; update.installing = false; panel();
     say(`Installed ${m.version}. Restarting!`, 'happy');
   } else if (m.state === 'error') {
     update.installing = false; update.manual = false; menu();
-    const why = String(m.error ?? 'unknown error').slice(0, 120);
-    if (manual || update.available) say(`The update didn't work: ${why}. You can always grab it from github.com/${UPDATE_REPO}/releases.`, 'concerned');
-    else console.error('update check', why);
+    if (shown) say(`${p.text} You can always grab it from github.com/${UPDATE_REPO}/releases.`, 'concerned');
+    else console.error('update check', String(m.error ?? 'unknown error').slice(0, 300));
   }
 }
 
@@ -1174,6 +1231,65 @@ async function midnightClean() {
 }
 
 // ---------- menu ----------
+// ---------- diagnostics: one .log file to send when something goes wrong (diagnostics.mjs) ----------
+const askShell = () => new Promise((resolve) => {
+  const timer = setTimeout(() => { shellInfo = null; resolve({ error: 'the app shell did not answer in 15 s' }); }, 15000);
+  shellInfo = (m) => { clearTimeout(timer); resolve(m); };
+  send({ type: 'diagnostics' });
+});
+
+async function saveDiagnostics() {
+  if (diagnosing) return;
+  diagnosing = true; menu();
+  say('Putting together a diagnostics file…', 'determined');
+  try {
+    const gg = path.join(HOME, '.gg'); // where the app writes its own logs (log_stdio in main.rs), whatever the data dir
+    // Microphones as the system lists them (Windows' come from the voice helper, in the shell's section).
+    const audio = MAC ? run('system_profiler', ['SPAudioDataType'], 15000)
+      : LINUX ? Promise.all([run('pactl', ['info']), run('pactl', ['list', 'short', 'sources']), run('arecord', ['-l'])]).then((a) => a.join('\n\n'))
+        : Promise.resolve('');
+    const [shell, audioText] = await Promise.all([askShell(), audio]);
+    const { type: _t, ...shellOut } = shell;
+    const system = {
+      platform: process.platform, arch: os.arch(), os: `${os.type()} ${os.release()}`, osVersion: os.version?.() ?? '', macVersion, distro,
+      session: SESSION || undefined, desktop: process.env.XDG_CURRENT_DESKTOP || undefined, waylandDisplay: process.env.WAYLAND_DISPLAY ? 'set' : undefined, display: process.env.DISPLAY || undefined,
+      cpu: `${os.cpus()[0]?.model ?? '?'} × ${os.cpus().length}`, memory: `${Math.round(os.freemem() / 2 ** 30 * 10) / 10} of ${Math.round(os.totalmem() / 2 ** 30 * 10) / 10} GB free`,
+      uptimeHours: Math.round(os.uptime() / 360) / 10, node: process.version,
+      locale: Intl.DateTimeFormat().resolvedOptions().locale, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    };
+    const app = {
+      version: VERSION, provider: config.provider, model: config.model, signedIn: [...signedIn].filter(([, on]) => on).map(([p]) => p),
+      busy, sidecarUpMinutes: Math.round(process.uptime() / 6) / 10,
+      voice: { on: VOICE_OK && config.voice !== false, needsModel: NEEDS_MODEL, model: { status: voiceModel.status, error: voiceModel.error ?? undefined }, hotkeys: HOTKEYS_OK, keys: keys() },
+      replies: config.replies, fishKey: speech.on, hands: hasHands(process.platform, process.env.ROAMIES_HANDS), handsPath: process.env.ROAMIES_HANDS ? 'set' : 'none',
+      update: { available: update.available, result: update.result }, onboarded: config.onboarded, look: config.look, size: config.size,
+    };
+    const sections = [
+      ['System', system], ['Roamies', app], ['Screens, tray, panel, helpers and permissions (from the app)', shellOut],
+      ...(audioText ? [['Audio devices (from the system)', audioText]] : []),
+      ['Settings (secrets and names removed)', scrubConfig(config)],
+      ['Agent log (sidekick.log)', await tail(path.join(gg, 'sidekick.log'), 400_000)],
+      ['Voice helper log (sidekick-voice.log)', await tail(path.join(gg, 'sidekick-voice.log'), 200_000)],
+      ['Setup guide log (sidekick-guide.log)', await tail(path.join(gg, 'sidekick-guide.log'), 100_000)],
+      ...(await activityLogs(LOG_DIR, 800_000)),
+    ];
+    const file = path.join(await reportDir(HOME), reportName());
+    await fs.writeFile(file, buildReport({ version: VERSION, sections }), { mode: 0o600 });
+    logLine('diagnostics', { bytes: (await fs.stat(file)).size });
+    reveal(file);
+    const where = path.basename(path.dirname(file)) || 'your home folder';
+    say(`Saved ${path.basename(file)} in ${where}. Attach it to an issue at github.com/KenKaiii/Roamies/issues, or send it to whoever is helping you.`, 'happy');
+    panelNote(`Saved ${path.basename(file)} in ${where}.`);
+  } catch (e) {
+    console.error('diagnostics', e);
+    const p = problem('diagnostics', e);
+    say(p.text, 'concerned');
+    panelNote(p.text, true, p);
+  } finally {
+    diagnosing = false; menu();
+  }
+}
+
 // The right-click menu: the basics. Everything else (memory, model, settings, updates) is in the panel.
 function menu() {
   const current = getModel(config.model);
@@ -1186,6 +1302,7 @@ function menu() {
     { id: 'ask', label: `Ask ${lookName()}…`, enabled: !busy },
     ...(SNAP_OK ? [{ id: 'snap', label: 'Ask About an Area…', accel: keys().snap }] : []),
     { id: 'stop', label: 'Stop', enabled: busy },
+    { id: 'diagnostics', label: 'Save Diagnostics…', enabled: !diagnosing },
     ...(update.available ? [{ sep: true }, { id: 'install_update', label: update.page ? `Get Roamies ${update.available}…` : update.installing ? `Installing ${update.available}…` : `Install Update ${update.available} and Restart`, enabled: !update.installing }] : []),
     { sep: true },
     { id: 'quit', label: 'Quit Roamies' },
@@ -1203,7 +1320,7 @@ function panel() {
   panelQueued = true;
   setImmediate(() => { panelQueued = false; if (panelOpen) send({ type: 'panel', msg: { kind: 'state', state: panelState() } }); });
 }
-const panelNote = (text, bad = false) => panelOpen && send({ type: 'panel', msg: { kind: 'note', text, bad } });
+const panelNote = (text, bad = false, p = null) => panelOpen && send({ type: 'panel', msg: { kind: 'note', text, bad, ...(p ? linked(p) : {}) } });
 // One line under the Local row: why it isn't connected, or what to know about it.
 function localHint() {
   if (!local.reachable) return 'Start Ollama, then Connect.';
@@ -1220,6 +1337,8 @@ function panelState() {
     wayland: WAYLAND, bind: HOTKEYS_OK ? null : BIND,
     status: busy ? { state: 'busy', text: doing ?? 'Thinking' } : loggingIn ? { state: 'busy', text: loginStatus || `Signing in to ${PROVIDER_LABELS[loggingIn]}` } : current ? { state: 'ready', text: 'Ready' } : { state: 'off', text: 'Not signed in' },
     busy, canNew: !busy && !!session?.messages.length,
+    // The type-to-ask shortcut, for the Ask button's tooltip (none on Wayland).
+    askKeys: HOTKEYS_OK ? writeSymbols() : null,
     model: current ? { provider: config.provider, id: config.model, name: current.name, providerLabel: PROVIDER_LABELS[config.provider] ?? config.provider } : null,
     providers: MENU_PROVIDERS.map((p) => {
       const meta = AUTH_PROVIDERS.find((x) => x.value === p);
@@ -1245,18 +1364,20 @@ function panelState() {
     voiceEngine: config.voiceEngine === 'local' ? 'local' : 'fish', localSpeech: localSpeech(),
     fishModel: speech.pick, fishModels: FISH_CHOICES, fishFree: speech.hasKey && speech.model.endsWith('-free'),
     voice: VOICE_OK ? {
-      on: !!config.voice, keys: HOTKEYS_OK ? talkSymbols() : null, ready: voiceReady(), mac: MAC, mute: config.muteWhileTalking !== false, autoListen: !!config.autoListen,
+      on: !!config.voice, keys: HOTKEYS_OK ? talkSymbols() : null, ready: voiceReady(), mac: MAC, mute: config.muteWhileTalking !== false, autoListen: !!config.autoListen, wakeWord: !!config.wakeWord,
       download: NEEDS_MODEL && config.voice && !voiceReady() ? { status: voiceModel.status, pct: voiceModel.total ? Math.floor((voiceModel.done / voiceModel.total) * 100) : 0, size: sizeLabel() } : null,
     } : null,
     sound: !!config.sound, actions: !!config.allowActions,
     login: login.supported ? { on: login.on } : null,
-    update: { available: update.available, installing: update.installing, checking: update.checking, result: update.result, page: update.page },
+    update: { available: update.available, installing: update.installing, checking: update.checking, result: update.result, page: update.page, done: update.done },
     intro: !!intro,
+    // The latest error anyone saw, for Copy last error.
+    problem: lastProblem ? { code: lastProblem.code, at: lastProblem.at } : null,
   };
 }
 
 
-const voiceConfig = () => send({ type: 'voice_config', enabled: VOICE_OK && config.voice && voiceReady(), mute: config.muteWhileTalking !== false, sound: !!config.sound, ...(NEEDS_MODEL ? { model: MODEL_DIR } : {}) });
+const voiceConfig = () => send({ type: 'voice_config', enabled: VOICE_OK && config.voice && voiceReady(), mute: config.muteWhileTalking !== false, sound: !!config.sound, wake: MAC && !!config.wakeWord, ...(NEEDS_MODEL ? { model: MODEL_DIR } : {}) });
 
 // Progress goes to the setup guide often and to the tray menu now and then.
 let modelShownAt = 0, modelMenuAt = 0;
@@ -1313,12 +1434,17 @@ function onVoice(m) {
       const what = m.what === 'speech' ? 'speech recognition' : 'the microphone';
       say(`I need access to ${what} to hear you. Turn on Roamies in the Privacy settings I just opened.`, 'concerned');
       openUrl(`x-apple.systempreferences:com.apple.preference.security?${PRIVACY[m.what] ?? 'Privacy'}`);
-    } else if (m.code === 'no_input') say(`I can't find a microphone. Plug one in and try again.${LINUX ? ' If one is plugged in, check it is the input picked in your sound settings.' : ''}`, 'concerned');
+    } else if (m.code === 'no_input') {
+      if (m.reason === 'blocked' && process.platform === 'win32') openUrl('ms-settings:privacy-microphone');
+      // What the system said about the microphone goes to Copy details, not into the bubble.
+      if (m.reason === 'failed' && m.message) problem('hearing', `no_input failed: ${m.message}`);
+      say(micTrouble(process.platform, m.reason), 'concerned');
+    }
     else if (m.code === 'nothing_heard') say(m.spoke ? "I heard you but couldn't make out the words. Try again a little closer to the mic?" : `I didn't hear anything. ${talkHowLong()}.`, 'concerned');
     else if (m.code === 'dictation_off') {
       say('This version of macOS needs Dictation on for me to hear you. Turn it on in the Keyboard settings I just opened.', 'concerned');
       openUrl('x-apple.systempreferences:com.apple.Keyboard-Settings.extension');
-    } else say(`Speech recognition failed: ${String(m.message ?? 'unknown error').slice(0, 120)}`, 'concerned');
+    } else say(problem('hearing', `${String(m.code ?? 'error')}: ${String(m.message ?? '')}`).text, 'concerned');
   }
 }
 
@@ -1351,13 +1477,28 @@ function shellAnswer(m) {
   if (done) { shellCalls.delete(m.id); done(m); }
 }
 
+// Type to ask: a text field beside the cursor (bar: the overlay's ask-bar.js), from the Ask button, the tray,
+// roamies --ask, or a tap of the typing shortcut. That tap opens it, or closes it when it's open, and what's sent
+// from it interrupts a reply that's still running, as talking over it does.
+let barAsk = null;
+async function typeToAsk({ interrupt = false } = {}) {
+  warmUp();
+  const ctl = barAsk = new AbortController();
+  const text = await ask({ placeholder: 'Ask me anything…', bar: true }, ctl.signal);
+  if (barAsk === ctl) barAsk = null;
+  if (text?.trim()) enqueue(text.trim(), { interrupt });
+}
+function onWriteTap() {
+  if (onboarding) return;
+  logLine('write_tap', { open: !!barAsk });
+  if (barAsk) barAsk.abort();
+  else typeToAsk({ interrupt: true }).catch((e) => console.error('ask', e));
+}
+
 async function onMenu(id) {
   if (id === 'show') ui({ kind: 'summon', show: true });
-  else if (id === 'ask') {
-    warmUp();
-    const text = await ask({ placeholder: 'Ask me anything…' });
-    if (text?.trim()) enqueue(text.trim());
-  } else if (id === 'stop') { const cancelled = busy; endIntro(); controller?.abort(); speech.stop(); ink.stop(cancelled); }
+  else if (id === 'ask') await typeToAsk();
+  else if (id === 'stop') { const cancelled = busy; endIntro(); controller?.abort(); speech.stop(); ink.stop(cancelled); }
   else if (id === 'new') {
     endIntro();
     freshSession('new'); menu();
@@ -1402,12 +1543,14 @@ async function onMenu(id) {
   else if (id === 'install_update') installUpdate();
   else if (id === 'login') setLogin(!login.on);
   else if (id === 'logs') fs.mkdir(LOG_DIR, { recursive: true, mode: 0o700 }).then(() => openUrl(LOG_DIR)).catch(() => {});
+  else if (id === 'diagnostics') saveDiagnostics();
   else if (id === 'setup') send({ type: 'onboarding' });
   else if (id === 'intro') send({ type: 'onboarding', mode: 'chat' });
   else if (id === 'snap') areaSnap();
   else if (id === 'list') showList({ seconds: 20 });
   else if (id === 'mutetalk') { config.muteWhileTalking = config.muteWhileTalking === false; saveConfig(); voiceConfig(); menu(); }
   else if (id === 'autolisten') { config.autoListen = !config.autoListen; saveConfig(); menu(); }
+  else if (id === 'wakeword' && MAC) { config.wakeWord = !config.wakeWord; saveConfig(); agentStale = true; voiceConfig(); menu(); }
   else if (id === 'voicedl') startVoiceDownload();
   else if (id === 'voice') {
     config.voice = !config.voice; saveConfig(); voiceConfig(); menu();
@@ -1444,7 +1587,7 @@ async function areaSnap() {
     const s = snap; snap = null;
     enqueue(q.trim() || 'What is this? Explain it simply.', { image: s.image });
   } catch (e) {
-    say(String(e?.message ?? e).slice(0, 140), 'concerned');
+    say(problem('screen', e).text, 'concerned');
   } finally { snapping = false; }
 }
 let snapping = false;
@@ -1546,6 +1689,8 @@ function obState() {
     login: login.supported ? login.on : null,
     sound: config.sound,
     voice: VOICE_OK && config.voice,
+    autoListen: !!config.autoListen,
+    wakeWord: MAC && !!config.wakeWord,
     voiceModel: NEEDS_MODEL ? { status: voiceModel.status, done: voiceModel.done, total: voiceModel.total, error: voiceModel.error, size: sizeLabel() } : null,
     filesAsked: config.filesAsked,
     look: config.look ?? 'classic',
@@ -1585,21 +1730,33 @@ async function onGuide(m) {
   // Voice needs a working key first: without one, the guide asks for it (ob_fishkey) instead.
   else if (m.type === 'ob_replies' && (m.mode === 'text' || (m.mode === 'voice' && speech.on))) { await fishKeyLoaded; await setReplies(m.mode); }
   else if (m.type === 'ob_fishkey' && typeof m.key === 'string') {
-    const note = (text, bad) => ob({ kind: 'fish', ok: !bad, error: bad ? text : null });
-    await fishKeyLogin({ given: m.key.slice(0, 1000), thenVoice: true, note }).catch((e) => note(`Couldn't save the key: ${String(e?.message ?? e).slice(0, 80)}`, true));
+    const note = (text, bad, p) => ob({ kind: 'fish', ok: !bad, error: bad ? text : null, ...(bad && p ? linked(p) : {}) });
+    await fishKeyLogin({ given: m.key.slice(0, 1000), thenVoice: true, note }).catch((e) => { const p = problem('key', e, { store: KEY_STORE }); note(p.text, true, p); });
   }
   else if (m.type === 'ob_login' && OAUTH[m.provider]) oauthLogin(m.provider, typeof m.id === 'string' ? m.id.slice(0, 40) : undefined);
   else if (m.type === 'ob_login_cancel') cancelLogin(typeof m.id === 'string' ? m.id : undefined);
-  else if (m.type === 'ob_apikey') apiKeyLogin(m.provider, String(m.key ?? '')).catch((e) => ob({ kind: 'login', provider: m.provider, phase: 'error', error: String(e?.message ?? e).slice(0, 120) }));
+  else if (m.type === 'ob_apikey') apiKeyLogin(m.provider, String(m.key ?? '')).catch((e) => { const p = problem('key', e, { store: KEY_STORE }); ob({ kind: 'login', provider: m.provider, phase: 'error', error: p.text, ...linked(p) }); });
   else if (m.type === 'ob_files') ob({ kind: 'files', status: await filesStatus(!!m.request) });
   else if (m.type === 'set_actions') { config.allowActions = !!m.on; saveConfig(); menu(); obState(); }
   else if (m.type === 'set_login') setLogin(!!m.on);
+  else if (m.type === 'ob_autolisten') { config.autoListen = !!m.on; saveConfig(); menu(); obState(); }
+  else if (m.type === 'ob_wake' && MAC) { config.wakeWord = !!m.on; saveConfig(); agentStale = true; voiceConfig(); menu(); obState(); }
   else if (m.type === 'ob_voice_model') getVoiceModel();
   else if (m.type === 'ob_look') setLook(m.look);
   else if (m.type === 'ob_size' && SIZES.some(([s]) => s === m.size)) { config.size = m.size; saveConfig(); ui({ kind: 'size', size: config.size }); menu(); }
   else if (m.type === 'set_keys') {
-    const next = { ...keys() };
-    if (m.talk !== undefined) { if (!validTalk(m.talk)) return ob({ kind: 'keys', keys: keys(), error: 'Pick two different modifier keys.' }); next.talk = m.talk; }
+    const now = keys(), next = { ...now };
+    // Talk and type-to-ask never share a pair: picking the pair the other one has swaps the two.
+    if (m.talk !== undefined) {
+      if (!validTalk(m.talk)) return ob({ kind: 'keys', keys: keys(), error: 'Pick two different modifier keys.' });
+      if (samePair(m.talk, now.write)) next.write = now.talk;
+      next.talk = m.talk;
+    }
+    if (m.write !== undefined) {
+      if (!writeChords(process.platform).some((c) => samePair(c, m.write))) return ob({ kind: 'keys', keys: keys(), error: 'Pick one of the pairs shown.' });
+      if (samePair(m.write, next.talk)) next.talk = now.write;
+      next.write = m.write;
+    }
     for (const which of ['summon', 'snap', 'list']) {
       if (m[which] === undefined) continue;
       if (!validSummon(m[which])) return ob({ kind: 'keys', keys: keys(), error: 'Use at least one of Control, Option or Command, plus a key.' });
@@ -1608,7 +1765,7 @@ async function onGuide(m) {
     }
     keysBefore = keys();
     config.keys = next; saveConfig(); sendKeys(); menu();
-    ob({ kind: 'keys', keys: next });
+    ob({ kind: 'keys', keys: keys() });
   } else if (m.type === 'keybind_error') {
     // The OS refused the new show/hide shortcut (another app owns it): put the old one back.
     if (keysBefore && ['summon', 'snap', 'list'].includes(m.which)) { config.keys = { ...keys(), [m.which]: keysBefore[m.which] }; saveConfig(); sendKeys(); menu(); }
@@ -1624,13 +1781,14 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   try { m = JSON.parse(line); } catch { return; }
   if (m.type === 'menu') onMenu(m.id).catch((e) => console.error('menu', e));
   else if (m.type === 'panel_open') { panelOpen = true; panelAt = Date.now(); logLine('panel_open', {}); refreshAuth().catch(() => {}).finally(() => panel()); }
+  else if (m.type === 'diagnostics') { shellInfo?.(m); shellInfo = null; }
   else if (m.type === 'panel_closed') { panelOpen = false; logLine('panel_closed', { why: String(m.why ?? ''), ms: Date.now() - panelAt }); }
   else if (m.type === 'panel_key' && typeof m.provider === 'string' && typeof m.key === 'string') {
     const id = typeof m.kind === 'string' ? m.kind : m.provider;
     const label = PROVIDER_LABELS[m.provider] ?? m.provider;
     if (storageKeyProvider(id) !== m.provider) return;
     apiKeyLogin(id, m.key.slice(0, 1000)).then(() => panelNote(signedIn.get(m.provider) ? `${label} is connected.` : `That ${label} key didn't work.`, !signedIn.get(m.provider)))
-      .catch((e) => panelNote(`That ${label} key didn't work: ${String(e?.message ?? e).slice(0, 80)}`, true));
+      .catch((e) => { const p = problem('key', e, { store: KEY_STORE }); panelNote(p.text, true, p); });
   } else if (m.type === 'panel_fishkey' && typeof m.key === 'string') fishKeyLogin({ given: m.key.slice(0, 1000), note: panelNote }).catch((e) => console.error('fish key', e));
   else if (m.type === 'answer') { pending.get(m.id)?.(m.text ?? null); pending.delete(m.id); }
   else if (m.type === 'ui_ready') {
@@ -1642,6 +1800,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   } else if (m.type?.startsWith('ob_') || m.type?.startsWith('chat_') || m.type === 'set_keys' || m.type === 'set_actions' || m.type === 'set_login' || m.type === 'keybind_error') onGuide(m).catch((e) => console.error('guide', e));
   else if (m.type?.startsWith('voice')) onVoice(m);
   else if (m.type === 'snap') areaSnap();
+  else if (m.type === 'write_tap') onWriteTap();
   else if (m.type === 'auto_listen') {
     // Still the latest reply, nothing running since, and still switched on: listen once, hands-free.
     if (m.turn !== autoTurn || busy || !autoListenOn()) return;
@@ -1649,6 +1808,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     logLine('auto_listen', { turn: m.turn });
     send({ type: 'listen' });
   }
+  else if (m.type === 'reply_said') { if (!busy) holdWake(false); }
   else if (m.type === 'listen_cancel') { autoTurn = null; send({ type: 'listen_cancel' }); } // Esc while the mic is on
   // A link clicked on the research card: web and mail links only.
   else if (m.type === 'open_link') { const v = checkLink(m.url); if (v.level === SAFE) openUrl(String(m.url)); else console.error('open_link blocked:', v.reason); }
@@ -1660,11 +1820,14 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   else if (m.type === 'draw_wait_done') ink.waitDone(String(m.id), m.beat | 0, String(m.result));
   else if (m.type === 'ink_closed') ink.closed(m.part);
   else if (m.type === 'ink_action') onInkButton(String(m.part));
+  else if (m.type === 'quiz_done') onQuizDone(String(m.part), Array.isArray(m.picks) ? m.picks.slice(0, 12).map((v) => (Number.isInteger(v) ? v : -1)) : []);
   else if (m.type === 'ink_cleared') { ink.cleared(); endShowcase('gone'); }
   else if (m.type === 'user_click' && Number.isFinite(m.x) && Number.isFinite(m.y)) ink.userClick({ x: m.x, y: m.y, role: String(m.role ?? ''), app: String(m.app ?? ''), acts: m.acts === true });
   else if (m.type === 'update_status') onUpdateStatus(m);
   // Wayland: the guide or panel copies one of the commands to bind (only those, never other text).
   else if (m.type === 'copy_bind' && Object.hasOwn(BIND, String(m.which))) shellCall({ type: 'clipboard', text: BIND[m.which] }).then((r) => send({ type: onboarding ? 'onboard' : 'panel', msg: { kind: 'copied', which: String(m.which), ok: !!r?.ok } }));
+  // Copy details: the last error someone saw, with the version and OS, scrubbed (never other text).
+  else if (m.type === 'copy_problem') copyProblem(m.from).catch((e) => console.error('copy problem', e));
   // The shell's answers to what tools asked of it (Linux screenshots and copying).
   else if (m.type === 'screenshot_done' || m.type === 'clipboard_done') shellAnswer(m);
   // A second launch with a flag (roamies --talk and friends, bound to keys on Wayland); --summon and --panel the shell does itself.

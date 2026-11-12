@@ -15,6 +15,7 @@ export function describe(name, args = {}) {
     case 'read_window': { const a = appOf(args.target); return a ? [`Reading ${a}`, `Read ${a}`] : ['Reading a window', 'Read a window']; }
     case 'act_in_app': { const a = appOf(args.target); return a ? [`Working in ${a}`, `Worked in ${a}`] : ['Working in an app', 'Worked in an app']; }
     case 'draw': return (args.beats ?? []).length ? ['Drawing on your screen', 'Drew on your screen'] : ['Changing the drawing', 'Changed the drawing'];
+    case 'see_photo': return args.url ? [`Looking at a picture on ${host(args.url)}`, `Looked at a picture on ${host(args.url)}`] : ['Looking at a picture', 'Looked at a picture'];
     case 'read_file': return [`Reading ${short(base(args.path))}`, `Read ${short(base(args.path))}`];
     case 'list_files': return [`Looking in ${short(base(args.dir))}`, `Looked in ${short(base(args.dir))}`];
     case 'search_files': return ['Searching your files', 'Searched your files'];

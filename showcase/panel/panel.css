@@ -73,26 +73,26 @@ html, body { height: 100%; background: transparent; }
 /* The Roamie stands on a small LED pad, like the setup guide's. */
 .avatar { flex: none; width: 100px; height: 74px; margin-inline-end: -10px; background: radial-gradient(closest-side, rgba(120, 255, 226, 0.10), transparent) 50% 92% / 70% 22% no-repeat; }
 /* Something it says (a new look, an update; not the setup guide's .quip bubble): in the status line's place for a moment, typed in its own font. */
-.head-text .now, .head-text .saying { grid-area: 2 / 1; }
+.head-text .by, .head-text .saying { grid-area: 2 / 1; }
 .saying {
   margin: 4px 0 0; font: 700 var(--t-body)/1.4 var(--display); letter-spacing: 0.03em; color: var(--accent);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; visibility: hidden;
 }
 .saying.on { visibility: visible; animation: dissolve-in 200ms step-end both; }
-.now.quiet { visibility: hidden; }
+.by.quiet { visibility: hidden; }
 .who { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .who h1 {
   margin: 0; font: 900 22px/1.1 var(--display); letter-spacing: 0.02em; color: var(--ink);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.now {
-  margin: 4px 0 0; font-size: var(--t-small); line-height: 1.4; color: var(--ink-2);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.now b { font-weight: 700; color: var(--ink); }
-/* An update to install, at the end of the header on every page: the one accent fill while it's there. */
-.head-update { flex: none; }
-.head-update[hidden] { display: none; }
+/* The version and the one update button beside the name: Check for updates, then Update to x (the one accent
+   fill while it's there), then Done. */
+.ver { flex: none; font: 500 var(--t-small)/1.25 var(--mono); color: var(--ink-3); }
+#head-update { flex: none; margin-inline-start: 2px; }
+#head-update[hidden] { display: none; }
+.by { margin: 2px 0 0; font-size: var(--t-small); line-height: 1.35; color: var(--ink-3); }
+/* Quit, top right: asks first (the .arm Confirm, like Forget). */
+.head-quit { flex: none; margin-inline-start: auto; font-size: var(--t-small); }
 
 /* ---------- look tiles: each look, live ---------- */
 .looks { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 8px; }
@@ -134,12 +134,36 @@ html, body { height: 100%; background: transparent; }
 @keyframes navi-ping { 0% { filter: brightness(1.9); } 100% { filter: none; } }
 
 /* ---------- panes ---------- */
-.body { min-height: 0; overflow-y: auto; padding: 4px var(--gut) var(--gut); }
-/* The scrollbar has its own lane at the frame's edge, kept even when nothing scrolls (WebKit ignores
-   scrollbar-gutter on styled bars), so nothing shifts and the lane plus padding make the usual gutter. */
-.body { overflow-y: scroll; scrollbar-gutter: stable; padding-inline-end: calc(var(--gut) - var(--sb)); }
-.pane { display: grid; gap: var(--group); padding-top: 12px; }
+/* Pages fit the window and never scroll: long lists show a page at a time with arrows in the page's footer. */
+.body { min-height: 0; overflow: hidden; padding: 4px var(--gut) 0; display: flex; flex-direction: column; }
+.pane { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; gap: var(--group); padding: 12px 0 var(--gut); }
+.pane.paged { padding-bottom: 0; }
 .pane[hidden] { display: none; }
+/* A paged list takes the room left and shows as many rows as fit there (panel.js measures). */
+.group.paged { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.pagebox { flex: 1; min-height: 0; overflow: hidden; }
+/* An account: its row, and its key field under it while that's open. */
+.acct { display: grid; gap: 6px; padding: 4px 0; }
+/* The page's footer: what's about the whole list on the left, the page arrows on the right. */
+.pfoot {
+  flex: none; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  min-height: 44px; margin-top: calc(var(--step) - var(--group)); border-top: 1px dashed var(--line);
+}
+.pfoot-l { min-width: 0; display: flex; align-items: center; }
+.pager { display: flex; align-items: center; gap: 8px; margin-inline-start: auto; }
+.pnum { min-width: 4.5em; text-align: center; font-size: var(--t-small); line-height: 1.25; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+/* Memory: its two lists as tabs, with Get to know me at the end of the same row. */
+.mhead { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.tabs { display: flex; gap: 16px; min-width: 0; }
+.mhead .link { flex: none; }
+.tab {
+  appearance: none; border: 0; background: none; cursor: pointer; padding: 4px 0 6px; display: flex; align-items: baseline; gap: 8px;
+  font: 700 var(--t-body)/1.3 var(--mono); font-stretch: 87.5%; color: var(--ink-3); white-space: nowrap;
+  box-shadow: inset 0 -2px 0 transparent; transition: color 120ms steps(2, end), box-shadow 120ms steps(2, end);
+}
+.tab:hover { color: var(--ink-2); }
+.tab[aria-selected="true"] { color: var(--ink); box-shadow: inset 0 -2px 0 var(--accent); }
+.tab:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 .group { display: grid; gap: var(--step); min-width: 0; }
 .group[hidden] { display: none; }
 .ghead { display: grid; gap: 3px; min-width: 0; }
@@ -149,8 +173,9 @@ html, body { height: 100%; background: transparent; }
 .ghead p { margin: 0; font-size: var(--t-body); line-height: 1.4; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sub { margin: 0; font: 700 var(--t-small)/1.3 var(--mono); font-stretch: 87.5%; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); }
 
-/* Buttons here are a size down from the guide's. */
+/* Buttons here are a size down from the guide's; mini ones (header, footer, row ends) a size down again. */
 .body .btn, .head .btn { padding: 8px 12px; font-size: var(--t-small); line-height: 1.25; white-space: nowrap; }
+.body .btn.mini, .head .btn.mini { padding: 5px 9px; }
 .actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
 .actions .btn { width: 100%; }
 .actions .btn.wide { grid-column: 1 / -1; }
@@ -175,7 +200,7 @@ html, body { height: 100%; background: transparent; }
 .item.ask .mark { background: none; border-left: 3px solid var(--ink-3); border-right: 3px solid var(--ink-3); height: 8px; width: 9px; }
 .row-btns { display: inline-flex; gap: 10px; }
 .empty { margin: 0; font-size: var(--t-body); line-height: 1.4; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.usage { margin: 0; font-size: var(--t-small); line-height: 1.4; color: var(--ink-3); }
+.usage { margin: 0; font-size: var(--t-small); line-height: 1.4; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* A long list: a search field once there are more than a page, and "Show more" at the end. */
 .find { display: flex; }
@@ -241,10 +266,14 @@ html, body { height: 100%; background: transparent; }
   font-size: var(--t-body); animation: dissolve-in 160ms step-end both; line-height: 1.4; color: var(--accent); background: var(--panel);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+/* With Copy details: the line shortens first, the link stays whole at the end of the row. */
+.note:has(> .link) { display: flex; align-items: baseline; gap: 12px; }
+.note > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.note > .link { flex: none; padding: 0; }
 .note.bad { color: var(--danger); }
 .note[hidden] { display: none; }
 
 @media (prefers-reduced-motion: reduce) {
   .frame.opening, .frame.shutting, .pane.enter > *, .pane.enter .list > li, .navi.ping, .item.leaving, .note, .arm[aria-pressed="true"] > .yes { animation: none; }
-  .navi, .arm > span { transition: none; }
+  .navi, .arm > span, .tab { transition: none; }
 }

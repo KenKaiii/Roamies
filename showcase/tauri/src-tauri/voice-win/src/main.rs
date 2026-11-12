@@ -11,6 +11,7 @@
 //
 // roamies-voice --model <dir> [--chord control,option]   normal use (Roamies starts it)
 // roamies-voice --perms                                   prints {"type":"perms","mic":…}
+// roamies-voice --devices                                 prints {"type":"devices",…}: every mic, the default, formats
 // roamies-voice --model <dir> --transcribe <wav>          dev: transcribe a file and exit
 // roamies-voice --model <dir> --test-audio <wav>          dev: a file stands in for the mic ({"cmd":"listen"} starts)
 
@@ -18,7 +19,7 @@ mod audio;
 mod ink;
 mod keys;
 
-use audio::{Sink, Source};
+use audio::{MicError, Sink, Source};
 use parakeet_rs::{ExecutionConfig, ParakeetTDT, Transcriber};
 use serde_json::{json, Value};
 use std::io::{BufRead, Write};
@@ -40,11 +41,16 @@ pub fn log(s: &str) {
     eprintln!("[voice] {s}");
 }
 
+/// The error the app shows when the microphone can't be used; `reason` picks what the Roamie says.
+fn mic_error(e: &MicError) -> Value {
+    json!({ "type": "error", "code": "no_input", "reason": e.reason, "message": e.detail })
+}
+
 pub enum Ev {
     Cmd(Value),
     StdinClosed,
     Level(f64),
-    AudioFailed(String),
+    AudioFailed(MicError),
     Text { take: u64, text: String, last: bool },
     EngineFailed(String),
 }
@@ -356,14 +362,14 @@ impl Voice {
         self.buf.lock().unwrap().clear();
         let sink = Sink::new(self.buf.clone(), self.tx.clone());
         let started = match &self.test_audio {
-            Some(p) => audio::play_file(p, sink),
+            Some(p) => audio::play_file(p, sink).map_err(|e| MicError::new("failed", e)),
             None => audio::open_mic(sink),
         };
         match started {
             Ok(s) => self.source = Some(s),
             Err(e) => {
-                log(&format!("audio: {e}"));
-                emit(json!({ "type": "error", "code": "no_input" }));
+                log(&format!("audio: {} ({})", e.detail, e.reason));
+                emit(mic_error(&e));
                 self.cancel();
             }
         }
@@ -548,9 +554,9 @@ impl Voice {
             Ev::StdinClosed => return true,
             Ev::Level(v) => self.on_level(v),
             Ev::AudioFailed(e) => {
-                log(&format!("audio stream: {e}"));
+                log(&format!("audio stream: {} ({})", e.detail, e.reason));
                 if matches!(self.phase, Phase::Armed | Phase::Holding | Phase::HandsFree) {
-                    emit(json!({ "type": "error", "code": "no_input" }));
+                    emit(mic_error(&e));
                     self.cancel();
                 }
             }
@@ -572,6 +578,12 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--perms") {
         emit(json!({ "type": "perms", "mic": if keys::mic_allowed() { "granted" } else { "denied" }, "input": audio::has_input() }));
+        return;
+    }
+    if args.iter().any(|a| a == "--devices") {
+        let mut v = audio::devices();
+        v["mic_allowed"] = json!(keys::mic_allowed());
+        emit(v);
         return;
     }
     let model = arg(&args, "--model").map(PathBuf::from);
@@ -708,6 +720,27 @@ mod tests {
         v.tick();
         assert!(jobs.try_recv().is_err(), "silence isn't read (Parakeet makes words up from it)");
         assert_eq!(v.phase, Phase::Idle);
+        let _ = std::fs::remove_file(wav);
+    }
+
+    #[test]
+    fn a_mic_error_tells_the_app_why() {
+        let v = mic_error(&MicError::new("busy", "device in use"));
+        assert_eq!(v["code"], "no_input", "the code older app builds already handle");
+        assert_eq!(v["reason"], "busy");
+        assert_eq!(v["message"], "device in use");
+    }
+
+    #[test]
+    fn losing_the_mic_mid_take_ends_it_and_idle_ignores_it() {
+        let (mut v, _jobs, wav) = voice();
+        v.handle(Ev::AudioFailed(MicError::new("lost", "unplugged")));
+        assert_eq!(v.phase, Phase::Idle, "nothing to end while idle");
+        v.toggle();
+        assert_eq!(v.phase, Phase::HandsFree);
+        v.handle(Ev::AudioFailed(MicError::new("lost", "unplugged")));
+        assert_eq!(v.phase, Phase::Idle, "the take ends");
+        assert!(v.source.is_none(), "the microphone is off");
         let _ = std::fs::remove_file(wav);
     }
 }

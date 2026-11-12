@@ -53,36 +53,20 @@ pub fn press_key(combo: &str) -> bool {
     }
 }
 
-/// Types text as characters (any language), 16 at a time; new lines and tabs as their keys.
+/// Types text as characters (any language), one per input call; new lines and tabs as their keys.
 pub fn type_text(s: &str) {
-    let mut batch: Vec<INPUT> = vec![];
-    let flush = |b: &mut Vec<INPUT>| {
-        if !b.is_empty() {
-            send(b);
-            b.clear();
-            ms(12);
-        }
-    };
     for ch in s.chars() {
         match ch {
             '\r' => {}
-            '\n' | '\t' => {
-                flush(&mut batch);
-                press_combo(0, if ch == '\n' { 0x0D } else { 0x09 });
-            }
+            '\n' | '\t' => press_combo(0, if ch == '\n' { 0x0D } else { 0x09 }),
             _ => {
-                let mut u = [0u16; 2];
-                for &unit in ch.encode_utf16(&mut u).iter() {
-                    batch.push(key_input(0, unit, KEYEVENTF_UNICODE));
-                    batch.push(key_input(0, unit, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP));
-                }
-                if batch.len() >= 32 {
-                    flush(&mut batch);
-                }
+                let strokes: Vec<INPUT> = unicode_strokes(ch).into_iter().map(|(unit, up)| key_input(0, unit, if up { KEYEVENTF_UNICODE | KEYEVENTF_KEYUP } else { KEYEVENTF_UNICODE })).collect();
+                send(&strokes);
+                // The WinUI Notepad on Windows 11 garbles characters that arrive in one big burst.
+                ms(8);
             }
         }
     }
-    flush(&mut batch);
 }
 
 pub fn move_to(x: f64, y: f64) {

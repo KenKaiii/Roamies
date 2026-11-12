@@ -8,13 +8,14 @@ mod linux;
 mod sidecar;
 #[cfg(target_os = "macos")]
 mod snapshot;
+mod tap;
 mod voice;
 
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::Instant;
 use std::{thread, time::Duration};
@@ -73,8 +74,12 @@ fn hide_console(cmd: &mut Command) -> &mut Command {
 
 /// The voice helper is drawing the cursor-form sidekick (buddy.swift), so the page needs far fewer cursor updates.
 static BUDDY_ON: AtomicBool = AtomicBool::new(false);
+/// An overlay has the keyboard (an input bubble, or the field beside the cursor, which rides with the cursor).
+static TYPING: AtomicBool = AtomicBool::new(false);
 /// A drawing is waiting for the user to click a marked control: the cursor loop watches the left button meanwhile.
 static INK_WAIT: AtomicBool = AtomicBool::new(false);
+/// The type-to-ask pair as tap.rs bits (0: none, as on Wayland): a quick tap of it opens the text field by the cursor.
+static WRITE_CHORD: AtomicU8 = AtomicU8::new(0);
 /// The cursor is over something clickable in an overlay (a card, its buttons): a click there is on Roamies, not the app below.
 pub(crate) static OVERLAY_HOT: AtomicBool = AtomicBool::new(false);
 
@@ -160,6 +165,71 @@ fn left_button_down() -> bool {
 }
 #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 fn left_button_down() -> bool {
+    false
+}
+
+/// The modifier keys held right now, as tap.rs bits. Like the button above, reading key state needs no permission.
+#[cfg(target_os = "macos")]
+fn mods_down() -> u8 {
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGEventSourceFlagsState(state: i32) -> u64;
+    }
+    // kCGEventSourceStateCombinedSessionState
+    let flags = unsafe { CGEventSourceFlagsState(0) };
+    // Shift, Control, Alternate, Command and SecondaryFn in CGEventFlags. Caps Lock is a state, not a key held.
+    [(0x2_0000, tap::SHIFT), (0x4_0000, tap::CONTROL), (0x8_0000, tap::OPTION), (0x10_0000, tap::COMMAND), (0x80_0000, tap::OTHER_MOD)]
+        .iter()
+        .filter(|(flag, _)| flags & flag != 0)
+        .fold(0, |m, (_, bit)| m | bit)
+}
+/// Whether any key that isn't a modifier, or a mouse button, is down. Only asked while a tap is under way.
+#[cfg(target_os = "macos")]
+fn other_input_down() -> bool {
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGEventSourceKeyState(state: i32, key: u16) -> bool;
+        fn CGEventSourceButtonState(state: i32, button: u32) -> bool;
+    }
+    // Virtual key codes 54 to 63 are the modifiers (Command, Shift, Caps Lock, Option, Control, their right twins, Fn).
+    unsafe { (0..5).any(|b| CGEventSourceButtonState(0, b)) || (0..128u16).any(|k| !(54..=63).contains(&k) && CGEventSourceKeyState(0, k)) }
+}
+#[cfg(target_os = "windows")]
+fn vk_down(vk: i32) -> bool {
+    #[link(name = "user32")]
+    extern "system" {
+        fn GetAsyncKeyState(key: i32) -> i16;
+    }
+    unsafe { (GetAsyncKeyState(vk) as u16 & 0x8000) != 0 }
+}
+#[cfg(target_os = "windows")]
+fn mods_down() -> u8 {
+    // VK_CONTROL, VK_LMENU (left Alt), VK_SHIFT, VK_LWIN, VK_RWIN. VK_RMENU (right Alt) is AltGr on many layouts,
+    // reported as Ctrl+Alt: never the pair's Alt, and held it spoils a tap (as in voice-win's keys.rs).
+    [(0x11, tap::CONTROL), (0xA4, tap::OPTION), (0x10, tap::SHIFT), (0x5B, tap::COMMAND), (0x5C, tap::COMMAND), (0xA5, tap::OTHER_MOD)]
+        .iter()
+        .filter(|(vk, _)| vk_down(*vk))
+        .fold(0, |m, (_, bit)| m | bit)
+}
+/// Mouse buttons (0x01 to 0x06) and every key but the modifiers.
+#[cfg(target_os = "windows")]
+fn other_input_down() -> bool {
+    (0x01..=0xFE).filter(|vk| !matches!(vk, 0x10..=0x12 | 0x5B | 0x5C | 0xA0..=0xA5)).any(vk_down)
+}
+#[cfg(target_os = "linux")]
+fn mods_down() -> u8 {
+    linux::keys_state(false).0
+}
+#[cfg(target_os = "linux")]
+fn other_input_down() -> bool {
+    linux::keys_state(true).1
+}
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+fn mods_down() -> u8 {
+    0
+}
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+fn other_input_down() -> bool {
     false
 }
 
@@ -254,6 +324,7 @@ fn sidecar_send(app: AppHandle, msg: Value) {
 /// The input bubble needs keystrokes: make the overlay key while typing, then hand focus back.
 #[tauri::command]
 fn set_typing(app: AppHandle, window: WebviewWindow, on: bool) {
+    TYPING.store(on, Ordering::Relaxed);
     let _ = window.set_focusable(on);
     if on {
         let _ = window.set_focus();
@@ -291,6 +362,50 @@ fn helper_perms(args: &[&str]) -> Value {
         .and_then(|o| String::from_utf8(o.stdout).ok())
         .and_then(|t| t.lines().rev().find_map(|l| serde_json::from_str::<Value>(l).ok()))
         .unwrap_or_else(|| json!({ "type": "perms", "error": true }))
+}
+
+/// What the shell knows for a diagnostics report (the sidecar writes it): screens, the tray icon, the panel, the
+/// webview, the helpers, and the voice helper's view of permissions and microphones.
+fn diagnostics(app: &AppHandle) -> Value {
+    let screens: Vec<Value> = app
+        .available_monitors()
+        .unwrap_or_default()
+        .iter()
+        .map(|m| {
+            let (p, z, wa) = (m.position(), m.size(), m.work_area());
+            json!({ "name": m.name(), "at": [p.x, p.y], "size": [z.width, z.height], "scale": m.scale_factor(),
+                    "usable": [wa.position.x, wa.position.y, wa.size.width, wa.size.height] })
+        })
+        .collect();
+    let rect = |r: tauri::Rect| {
+        let (p, z) = (r.position.to_physical::<f64>(1.0), r.size.to_physical::<f64>(1.0));
+        json!([p.x, p.y, z.width, z.height])
+    };
+    let panel = app.get_webview_window(PANEL_LABEL).map(|w| {
+        json!({ "visible": w.is_visible().ok(), "at": w.outer_position().ok().map(|p| [p.x, p.y]),
+                "size": w.outer_size().ok().map(|s| [s.width, s.height]), "opens_upward": PANEL_FROM_BOTTOM.load(Ordering::SeqCst) })
+    });
+    let mut perms = helper_perms(&["--perms"]);
+    if cfg!(target_os = "macos") {
+        perms["accessibility"] = json!(accessibility(false));
+    }
+    // Windows and Linux: every microphone, the default one and the format it records in (voice-win --devices).
+    let mics = if cfg!(any(windows, target_os = "linux")) { helper_perms(&["--devices"]) } else { Value::Null };
+    json!({
+        "type": "diagnostics",
+        "os": std::env::consts::OS, "arch": std::env::consts::ARCH,
+        "webview": tauri::webview_version().ok(),
+        "screens": screens,
+        "primary": app.primary_monitor().ok().flatten().and_then(|m| m.name().cloned()),
+        "tray_icon": app.tray_by_id("roamies").and_then(|t| t.rect().ok().flatten()).map(rect),
+        "panel": panel,
+        "windows": app.webview_windows().keys().cloned().collect::<Vec<_>>(),
+        "voice_helper": voice_binary().map(|p| p.exists()),
+        "hands_helper": helper_binary("roamies-hands").map(|p| p.exists()),
+        "voice_running": app.state::<Voice>().0.lock().map(|v| v.is_some()).unwrap_or(false),
+        "permissions": perms,
+        "microphones": mics,
+    })
 }
 
 /// Accessibility (reading and controlling other apps) is checked by the hands helper.
@@ -1032,6 +1147,7 @@ fn pump_cursor(app: AppHandle) {
     let mut sent: std::collections::HashMap<String, (f64, f64)> = std::collections::HashMap::new();
     let mut last_raw = (f64::NAN, f64::NAN);
     let mut was_down = false;
+    let mut tap = tap::Tap::new();
     thread::spawn(move || loop {
         // A steady 8 ms beat (sleep alone drifts and bunches samples up).
         next += Duration::from_millis(8);
@@ -1042,6 +1158,12 @@ fn pump_cursor(app: AppHandle) {
             next = now;
         }
         n = n.wrapping_add(1);
+        // The type-to-ask shortcut: a quick tap of its two modifier keys. Not while the setup guide is open (its
+        // Shortcuts step is where the pair is picked, and its chat has a field of its own).
+        let chord = WRITE_CHORD.load(Ordering::Relaxed);
+        if chord != 0 && tap.step(chord, mods_down(), other_input_down, start.elapsed().as_millis() as u64) && !ONBOARDING.load(Ordering::Relaxed) {
+            to_sidecar(&app, &json!({ "type": "write_tap" }));
+        }
         // A drawing waits for a click: report each press (where, when) to the overlays, which check it hit the mark.
         if INK_WAIT.load(Ordering::Relaxed) {
             let down = left_button_down();
@@ -1070,7 +1192,8 @@ fn pump_cursor(app: AppHandle) {
             was_down = false;
         }
         // The voice helper draws the following sidekick itself: the page only needs the cursor for its own bookkeeping.
-        if BUDDY_ON.load(Ordering::Relaxed) && n % 4 != 1 {
+        // Except while typing: the field beside the cursor follows every sample.
+        if BUDDY_ON.load(Ordering::Relaxed) && !TYPING.load(Ordering::Relaxed) && n % 4 != 1 {
             continue;
         }
         // Each monitor query is a round trip to the main thread, so the main screen's scale is looked up rarely.
@@ -1305,6 +1428,10 @@ fn handle_sidecar(app: &AppHandle, msg: Value) {
             }
         }
         Some("panel_show") => show_panel(app, None, false),
+        Some("diagnostics") => {
+            let app = app.clone();
+            thread::spawn(move || to_sidecar(&app, &diagnostics(&app)));
+        }
         // A drawing is on a window (or isn't any more): the voice helper reports clicks there that change the screen.
         Some("watch_clicks") => to_voice(app, &json!({ "cmd": "watch_clicks", "on": msg.get("on").and_then(Value::as_bool) == Some(true) })),
         Some("quit") => app.exit(0),
@@ -1330,6 +1457,11 @@ fn handle_sidecar(app: &AppHandle, msg: Value) {
                     to_voice(app, &json!({ "cmd": "chord", "mods": mods }));
                 }
             }
+            // The type-to-ask pair; none sent (Wayland) switches the tap off.
+            let write = msg.get("write").and_then(Value::as_array).and_then(|m| {
+                tap::mask(&m.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect::<Vec<_>>())
+            });
+            WRITE_CHORD.store(write.unwrap_or(0), Ordering::Relaxed);
         }
         // Listen right away, hands-free (after an area snap: snap, then just talk).
         Some("listen") => to_voice(app, &json!({ "cmd": "listen" })),
@@ -1349,6 +1481,8 @@ fn handle_sidecar(app: &AppHandle, msg: Value) {
         }
         // `roamies --talk` (Linux): start a take, or send the one under way.
         Some("talk_toggle") => to_voice(app, &json!({ "cmd": "toggle" })),
+        // Roamies is answering or speaking: the wake word waits, so it can't wake itself.
+        Some("wake_hold") => to_voice(app, &json!({ "cmd": "wake_hold", "on": msg.get("on").and_then(Value::as_bool) == Some(true) })),
         // Esc while it's listening: drop the take.
         Some("listen_cancel") => to_voice(app, &json!({ "cmd": "cancel" })),
         Some("voice_config") => {
@@ -1362,6 +1496,8 @@ fn handle_sidecar(app: &AppHandle, msg: Value) {
                 to_voice(app, &json!({ "cmd": "mute", "on": mute }));
                 let sound = msg.get("sound").and_then(Value::as_bool).unwrap_or(true);
                 to_voice(app, &json!({ "cmd": "sound", "on": sound }));
+                let wake = msg.get("wake").and_then(Value::as_bool).unwrap_or(false);
+                to_voice(app, &json!({ "cmd": "wake", "on": wake }));
             } else {
                 stop_voice(app);
             }

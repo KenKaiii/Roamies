@@ -123,6 +123,15 @@
   const led = (mode = 'on') => el('i', { className: `led ${mode}`, ariaHidden: 'true' });
   const el = (tag, props = {}, ...kids) => { const n = Object.assign(document.createElement(tag), props); n.append(...kids.filter((k) => k != null)); return n; };
   const okMark = (label) => el('span', { className: 'status' }, led(), label);
+  // An error row: the line as the app worded it and, when it has more to tell than fits (copy), a link that puts
+  // the full error on the clipboard to send with a report. The link says how copying went.
+  let copyLink = null;
+  function showError(id, text, copy = false) {
+    const e = $(id);
+    const link = copy ? el('button', { className: 'link', type: 'button', textContent: 'Copy details', onclick: () => { copyLink = link; send({ type: 'copy_problem' }); } }) : null;
+    e.replaceChildren(el('span', { textContent: text, title: text }), ...(link ? [link] : []));
+    e.removeAttribute('title'); e.hidden = false;
+  }
   const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
   const CHEERS = ['Got it!', 'Nice!', 'Perfect.', 'Yes!'];
   const isMac = () => state?.platform === 'darwin';
@@ -415,7 +424,7 @@
     cancel(why) {
       if (!ai.busy) return;
       ai.stop();
-      if (why) { const e = $('login-error'); e.hidden = false; e.textContent = e.title = why; quip('Hmm. Try again?'); }
+      if (why) { showError('login-error', why); quip('Hmm. Try again?'); }
       else quip('Okay, stopped.');
       ai.render();
     },
@@ -431,7 +440,7 @@
       clearTimeout(ai.timer);
       ai.busy = null; ai.loginId = null; ai.status = ''; ai.keyBusy = null; poseFn = null;
       if (msg.phase === 'done') { act('hype'); quip('Ooh, a brain!'); $('code-form').hidden = true; }
-      else { const e = $('login-error'); e.hidden = false; e.textContent = e.title = `That didn't work: ${msg.error}`; quip('Hmm. Try again?'); }
+      else { showError('login-error', msg.error || "That didn't work. Try again.", msg.copy); quip('Hmm. Try again?'); }
       ai.render();
     },
     enter() {
@@ -452,6 +461,9 @@
     send({ type: 'answer', id: askId, text: v });
     askId = null; $('code-form').hidden = true; $('code-input').value = '';
   });
+  for (const [id, type, line] of [['autolisten-switch', 'ob_autolisten', "I'll listen right after."], ['wake-switch', 'ob_wake', 'Just say hey!']]) {
+    $(id).addEventListener('click', () => { const on = $(id).getAttribute('aria-checked') !== 'true'; $(id).setAttribute('aria-checked', String(on)); send({ type, on }); if (on) quip(line); });
+  }
   $('key-toggle').addEventListener('click', () => {
     ai.mode = ai.mode === 'key' ? 'signin' : 'key';
     $('login-error').hidden = true;
@@ -505,6 +517,11 @@
       $('fish-change').setAttribute('aria-expanded', String(replies.changing));
       $('fish-save').disabled = replies.saving;
       $('fish-save').textContent = replies.saving ? 'Checking…' : 'Save';
+      // Talking hands-free (needs voice): open the mic for an answer, and on macOS, wake on "Hey Roamies".
+      $('talk-rows').hidden = !state?.voice;
+      $('wake-row').hidden = !isMac();
+      $('autolisten-switch').setAttribute('aria-checked', String(!!state?.autoListen));
+      $('wake-switch').setAttribute('aria-checked', String(!!state?.wakeWord));
       nav();
     },
     choose(id) {
@@ -520,7 +537,7 @@
     onFish(msg) {
       replies.saving = false;
       if (msg.ok) { act('hype'); $('fish-error').hidden = true; replies.changing = false; }
-      else { const e = $('fish-error'); e.hidden = false; e.textContent = e.title = msg.error || "That key didn't work."; }
+      else showError('fish-error', msg.error || "That key didn't work.", msg.copy);
       replies.render();
     },
     enter() {
@@ -614,6 +631,15 @@
         b.setAttribute('aria-checked', String(on));
         b.setAttribute('aria-label', `Hold ${c.map((x) => (isMac() ? x[0].toUpperCase() + x.slice(1) : PC_MOD[x])).join(' and ')}`);
         b.onclick = () => { if (!on) { send({ type: 'set_keys', talk: c }); quip('Ooh, fancy.'); } };
+        return b;
+      }));
+      // Type to me: a quick tap of a pair. Picking the pair the other shortcut has swaps the two (the sidecar does it).
+      $('write-chords').replaceChildren(...chords().map((c) => {
+        const on = !!k.write && same(c, k.write);
+        const b = el('button', { className: 'px chord', type: 'button', role: 'radio', tabIndex: on ? 0 : -1 }, capsEl(capsFor(c)));
+        b.setAttribute('aria-checked', String(on));
+        b.setAttribute('aria-label', `Tap ${c.map((x) => (isMac() ? x[0].toUpperCase() + x.slice(1) : PC_MOD[x])).join(' and ')}`);
+        b.onclick = () => { if (!on) { send({ type: 'set_keys', write: c }); quip('Tap, tap.'); } };
         return b;
       }));
       keys.tryLabel();
@@ -721,7 +747,7 @@
     },
   };
 
-  for (const id of ['chords', 'looks', 'sizes']) $(id).addEventListener('keydown', (e) => {
+  for (const id of ['chords', 'write-chords', 'looks', 'sizes']) $(id).addEventListener('keydown', (e) => {
     if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
     e.preventDefault();
     const btns = [...$(id).children], i = btns.findIndex((b) => b.getAttribute('aria-checked') === 'true');
@@ -735,7 +761,7 @@
     if (e.key === 'Escape') return keys.stop();
     if (['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) return;
     const mods = [e.ctrlKey && 'Control', e.altKey && 'Alt', e.shiftKey && 'Shift', e.metaKey && 'Command'].filter(Boolean);
-    if (!mods.some((x) => x !== 'Shift')) { $('keys-error').hidden = false; $('keys-error').textContent = isMac() ? 'Hold Control, Option or Command too.' : 'Hold Ctrl or Alt too.'; return; }
+    if (!mods.some((x) => x !== 'Shift')) { showError('keys-error', isMac() ? 'Hold Control, Option or Command too.' : 'Hold Ctrl or Alt too.'); return; }
     if (!/^(Key[A-Z]|Digit\d|F\d{1,2}|Space|Backquote|Minus|Equal|BracketLeft|BracketRight|Backslash|Semicolon|Quote|Comma|Period|Slash)$/.test(e.code)) return;
     const which = keys.recording;
     keys.stop();
@@ -833,6 +859,7 @@
       recap.replaceChildren();
       const b = bind();
       if (state?.voice && k) recap.append(el('dt', {}, capsEl(b ? ['Your talk key'] : capsFor(k.talk))), el('dd', { textContent: b ? 'Press to talk to me, again to send' : canCircle() ? 'Hold to talk to me. Circle something to mark it' : 'Hold to talk to me' }));
+      if (k?.write && !b) recap.append(el('dt', {}, capsEl(capsFor(k.write))), el('dd', { textContent: 'Tap, then type to me' }));
       if (k) recap.append(el('dt', {}, capsEl(b ? ['Your show key'] : accelCaps(k.summon))), el('dd', { textContent: 'Show or hide me' }));
       if (k?.snap && canSnap()) recap.append(el('dt', {}, capsEl(accelCaps(k.snap))), el('dd', { textContent: 'Ask about an area of the screen' }));
       const tray = el('span', { className: 'caps' }); const cap = el('kbd', { className: 'px cap' }); cap.innerHTML = TRAY_SVG; tray.append(cap);
@@ -1163,6 +1190,12 @@
   window.__onboard = (msg) => {
     switch (msg.kind) {
       case 'copied': {
+        if (msg.which === 'problem') {
+          const b = copyLink; copyLink = null;
+          if (b?.isConnected) { b.textContent = msg.ok ? 'Copied' : "Couldn't copy"; setTimeout(() => { b.textContent = 'Copy details'; }, 2400); }
+          quip(msg.ok ? 'Copied! Paste it in your report' : "Couldn't copy that");
+          break;
+        }
         const cmd = !msg.ok && document.getElementById(`bind-${msg.which}`);
         if (cmd) cmd.hidden = false;
         quip(msg.ok ? 'Copied!' : "Couldn't copy. Select it instead?");
@@ -1192,7 +1225,7 @@
       case 'files': perms.applyFiles(msg.status); if (at('perms')) perms.render(); break;
       case 'keys':
         if (state) state.keys = msg.keys;
-        if (msg.error) { const e = $('keys-error'); e.hidden = false; e.textContent = e.title = msg.error; quip('Hmm, taken.'); }
+        if (msg.error) { showError('keys-error', msg.error, msg.copy); quip('Hmm, taken.'); }
         else $('keys-error').hidden = true;
         keys.render();
         break;
@@ -1229,7 +1262,7 @@
       kind: 'state', platform: q.get('platform') || 'darwin', step: +(q.get('step') || 0), sound: true, look: q.get('look') || 'classic', size: q.get('size') || 'default', voice: true, actions: false, login: true, filesAsked: q.get('filesAsked') === '1',
       replies: q.get('replies') === 'voice' ? 'voice' : 'text', fishKey: q.get('fish') === '1',
       bind: q.get('session') === 'wayland' ? Object.fromEntries(['summon', 'talk', 'ask', 'list', 'panel'].map((k) => [k, `'/home/sam/Apps/Roamies 0.1.33.AppImage' --${k}`])) : null,
-      keys: q.get('platform') === 'win32' ? { talk: ['control', 'option'], summon: 'Control+Shift+KeyS', snap: 'Control+Shift+KeyA' } : { talk: ['control', 'option'], summon: 'Control+Alt+KeyS', snap: 'Control+Alt+KeyA' }, connected: null,
+      keys: q.get('platform') === 'win32' ? { talk: ['control', 'option'], write: ['control', 'shift'], summon: 'Control+Shift+KeyS', snap: 'Control+Shift+KeyA' } : { talk: ['control', 'option'], write: win ? ['control', 'shift'] : ['option', 'command'], summon: 'Control+Alt+KeyS', snap: 'Control+Alt+KeyA' }, connected: null,
       voiceModel: win ? { status: q.get('model') || 'missing', done: q.get('model') === 'downloading' ? 281601575 : 0, total: 670479942, error: q.get('model') === 'error' ? 'Download failed. Check your internet.' : null, size: '670 MB' } : null,
       oauth: [['anthropic', 'Claude', 'Anthropic'], ['openai', 'ChatGPT', 'OpenAI']].map(([id, name, company]) => ({ id, name, company, connected: false })),
       apikey: [['anthropic', 'Anthropic'], ['openai', 'OpenAI'], ['gemini', 'Gemini'], ['xai', 'xAI'], ['kimi-code', 'Kimi Code'], ['moonshot', 'Moonshot'], ['glm', 'Z.AI'], ['minimax', 'MiniMax'],
@@ -1253,13 +1286,23 @@
       else if (m.type === 'ob_files') { if (m.request) filesAsked = true; reply({ kind: 'files', status: Object.fromEntries(['Desktop', 'Documents', 'Downloads'].map((f) => [f, filesAsked ? 'granted' : 'unknown'])) }, m.request ? 1200 : 0); }
       else if (m.type === 'ob_login') {
         // Claude: the one-time download, then the browser. &login=hang: the browser never comes back (cancel or time out).
+        // &login=error: a failure Roamies doesn't recognise (its code, and Copy details); &login=refused: one it does,
+        // still worth reporting; &login=offline and &login=long (the longest line): ones with nothing to report. &copy=fail: copying the details fails.
+        const fail = {
+          error: { error: "Sign-in didn't work (E10). Try again.", code: 'E10', copy: true },
+          refused: { error: "ChatGPT sign-in didn't finish. Try again.", code: 'E13', copy: true },
+          offline: { error: "Can't reach ChatGPT. Check your internet.", code: 'E1A', copy: false },
+          long: { error: "ChatGPT didn't come back from the browser. Try again.", code: 'E15', copy: false },
+        }[q.get('login')];
         const id = m.id, t = [], at = (ms, f) => t.push(setTimeout(f, ms));
         logins.set(id, t);
         let ms = 300;
         if (m.provider === 'anthropic') for (const pct of [0, 12, 31, 55, 78, 100]) at((ms += 450), () => window.__onboard?.({ kind: 'login', provider: m.provider, id, phase: 'status', text: `Downloading Claude Code… ${pct}% (${Math.round(pct * 1.4)} of 140 MB)` }));
         at((ms += 300), () => window.__onboard?.({ kind: 'login', provider: m.provider, id, phase: 'browser' }));
-        if (q.get('login') !== 'hang') at(ms + 1500, () => { st.connected = { provider: 'Anthropic', model: 'Claude Haiku 5.5' }; st.oauth.find((p) => p.id === m.provider).connected = true; window.__onboard?.({ kind: 'login', provider: m.provider, id, phase: 'done' }); window.__onboard?.({ ...st }); });
-      } else if (m.type === 'ob_login_cancel') { (logins.get(m.id) ?? []).forEach(clearTimeout); logins.delete(m.id); }
+        if (fail) at(ms + 1500, () => window.__onboard?.({ kind: 'login', provider: m.provider, id, phase: 'error', ...fail }));
+        else if (q.get('login') !== 'hang') at(ms + 1500, () => { st.connected = { provider: 'Anthropic', model: 'Claude Haiku 5.5' }; st.oauth.find((p) => p.id === m.provider).connected = true; window.__onboard?.({ kind: 'login', provider: m.provider, id, phase: 'done' }); window.__onboard?.({ ...st }); });
+      } else if (m.type === 'copy_problem') reply({ kind: 'copied', which: 'problem', ok: q.get('copy') !== 'fail' }, 150);
+      else if (m.type === 'ob_login_cancel') { (logins.get(m.id) ?? []).forEach(clearTimeout); logins.delete(m.id); }
       else if (m.type === 'ob_apikey') {
         setTimeout(() => {
           if (m.key === 'bad') return window.__onboard?.({ kind: 'login', provider: m.provider, phase: 'error', error: 'That key was refused.' });
@@ -1273,7 +1316,14 @@
           if (m.key === 'bad') return window.__onboard?.({ kind: 'fish', ok: false, error: "That key didn't work. Copy it again from fish.audio and retry." });
           Object.assign(st, { fishKey: true, replies: 'voice' }); window.__onboard?.({ kind: 'fish', ok: true }); window.__onboard?.({ ...st });
         }, 900);
-      } else if (m.type === 'set_keys') { if (m.talk) st.keys.talk = m.talk; if (m.summon) st.keys.summon = m.summon; if (m.snap) st.keys.snap = m.snap; reply({ kind: 'keys', keys: st.keys }); }
+      } else if (m.type === 'set_keys') {
+        // As the sidecar does: talk and type never share a pair, so picking the other one's pair swaps them.
+        const k = st.keys, both = (a, b) => a.every((x) => b.includes(x));
+        if (m.talk) { if (both(m.talk, k.write)) k.write = k.talk; k.talk = m.talk; }
+        if (m.write) { if (both(m.write, k.talk)) k.talk = k.write; k.write = m.write; }
+        if (m.summon) k.summon = m.summon; if (m.snap) k.snap = m.snap;
+        reply({ kind: 'keys', keys: k });
+      }
       else if (m.type === 'chat_start' || m.type === 'chat_answer') {
         // A canned chat: &chat=nomodel previews not being signed in.
         if (q.get('chat') === 'nomodel') return reply({ kind: 'chat_state', status: 'no_model' }, 300);
@@ -1309,6 +1359,8 @@
       else if (m.type === 'chat_skip') { /* nothing comes back */ }
       else if (m.type === 'set_actions') { st.actions = m.on; }
       else if (m.type === 'set_login') { st.login = m.on; }
+      else if (m.type === 'ob_autolisten') { st.autoListen = m.on; }
+      else if (m.type === 'ob_wake') { st.wakeWord = m.on; }
       else if (m.type === 'ob_voice_model' && st.voiceModel) {
         const vm = st.voiceModel; Object.assign(vm, { status: 'downloading', done: 0, error: null });
         const t = setInterval(() => {

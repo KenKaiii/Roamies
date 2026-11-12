@@ -185,6 +185,12 @@ console.log('safety tests: passed');
   assert.equal(r.steps[0].field, 'Email', 'which field is kept; what went in is not');
   assert.deepEqual(redactArgs('write_file', { path: '~/a.txt', content: 'hello' }), { path: '~/a.txt', content: '[5 chars]' });
   assert.deepEqual(redactArgs('open', { target: 'Safari' }), { target: 'Safari' });
+  // Regression: a model sent act_in_app's steps as one string; logging it threw "(args.steps ?? []).map is not a
+  // function" and the whole request died instead of the tool answering that steps must be a list.
+  assert.deepEqual(redactArgs('act_in_app', { target: 'Safari', steps: '[{"do":"type","text":"hunter2"}]' }), { target: 'Safari', steps: '[string, 32 chars]' }, 'steps as a string: its size only, never what was typed');
+  assert.deepEqual(redactArgs('act_in_app', { steps: { do: 'type', text: 'hunter2' } }).steps, '[object, 30 chars]');
+  assert.deepEqual(redactArgs('act_in_app', { target: 'Safari' }).steps, [], 'no steps at all');
+  assert.deepEqual(redactArgs('act_in_app', { steps: [null, { do: 'type', text: 'abc' }] }).steps, [null, { do: 'type', text: '[3 chars]' }], 'a step that is not an object is left as it is');
   console.log('log redaction tests: passed');
 }
 

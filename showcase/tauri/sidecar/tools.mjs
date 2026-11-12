@@ -9,7 +9,7 @@ import { z } from 'zod';
 import { parseSipsSize, readProblem, rematch, sameBounds, shotFits, shotMap, shotProblem, snapRect, toScreen } from './pointing.mjs';
 import { ASK, BLOCK, checkDrawAction, checkOpen, checkRead, checkUrl, checkWrite, classifyCommand, isPrivateAddress, isRiskyClick, isYes, riskyKind } from './safety.mjs';
 import dns from 'node:dns/promises';
-import { CARDS, DrawArgs, checkDraw, createParts, faviconFor, photoFor, pickTextMatch, resolveTargets } from './draw.mjs';
+import { CARDS, DrawArgs, LIMITS, checkDraw, createParts, createPhotos, describeParts, faviconFor, pickTextMatch, quizNote, resolveTargets } from './draw.mjs';
 import { plain } from './intro.mjs';
 import { linuxSession, seesPointer } from './platform.mjs';
 import { addCommitment, forgetFact, parseDue, updateCommitment } from './store.mjs';
@@ -202,6 +202,14 @@ const GIT_SAFE = {
   GIT_CONFIG_KEY_3: 'core.hooksPath', GIT_CONFIG_VALUE_3: '/dev/null',
 };
 
+/** Puts text on the clipboard; true when it got there. It goes in through stdin (Linux: through the app itself,
+ *  askShell), so nothing in it is ever parsed as a command. */
+export const copyText = (text, askShell) => (LINUX ? askShell({ type: 'clipboard', text: String(text) }).then((r) => !!r?.ok) : new Promise((res) => {
+  const [cmd, args] = process.platform === 'darwin' ? ['pbcopy', []] : process.platform === 'win32' ? ['powershell', ['-NoProfile', '-NonInteractive', '-Command', '$input | Set-Clipboard']] : ['xclip', ['-selection', 'clipboard']];
+  const p = execFile(cmd, args, { timeout: 5000, windowsHide: true }, (err) => res(!err));
+  p.stdin?.end(String(text));
+}));
+
 // askShell: Linux asks the app itself for screenshots and copying ({type:'screenshot'|'clipboard', …} → its answer).
 export function createTools({ allowActions, ui, ask, openUrl, onCommitments, showList, fmtWhen, commitmentsText, userName, onPlan = () => {}, speak = () => false, onHandoff = () => {}, watchClicks = () => {}, onInkGone = () => {}, askShell = async () => ({ ok: false, error: 'Roamies isn\'t running.' }) }) {
   let axNudged = 0;
@@ -355,7 +363,10 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, sho
   // drew nothing.
   // Parts (p1 …) stay editable meanwhile.
   const parts = createParts();
+  // Pictures looked at with see_photo: a photo's labels are only drawn on one of these.
+  const photos = createPhotos();
   const buttons = new Map(); // part id → the button's action, for when it's clicked
+  const quizzes = new Map(); // part id → the quiz drawn there, to score what was clicked
   // Parts of drawings that go by themselves (the tour, the setup showcase): about no window, so switching windows keeps them.
   const loose = new Set();
   const windowBound = () => parts.ids.some((p) => !loose.has(p));
@@ -369,7 +380,7 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, sho
     ink.waits.set(key, done);
   });
   const clearScreenInk = (stop = false) => { parts.clearScreen(); for (const id of buttons.keys()) if (!parts.has(id)) buttons.delete(id); ui({ kind: 'agent', e: { type: 'ink_clear', screen: true, stop } }); };
-  const clearAllInk = () => { parts.clear(); buttons.clear(); loose.clear(); ui({ kind: 'agent', e: { type: 'ink_clear' } }); };
+  const clearAllInk = () => { parts.clear(); buttons.clear(); quizzes.clear(); loose.clear(); ui({ kind: 'agent', e: { type: 'ink_clear' } }); };
   // The window a drawing belongs to: the front window's id and place. Its title isn't part of it (a page updating
   // its title, a document being edited, isn't the screen changing).
   // Its rect and app too, so a click can be told to be in it.
@@ -420,12 +431,7 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, sho
   // Steps that change what a window shows: the agent doing one is the screen changing under a drawing.
   const CHANGING = new Set(['click', 'click_text', 'press_button', 'key', 'click_at', 'choose']);
   const agentChangesScreen = () => { if (windowBound() && !ink.active) screenChanged('agent'); };
-  // Copied text goes to the clipboard through stdin, so nothing in it is ever parsed as a command.
-  const toClipboard = (text) => (LINUX ? askShell({ type: 'clipboard', text: String(text) }).then((r) => !!r?.ok) : new Promise((res) => {
-    const [cmd, args] = process.platform === 'darwin' ? ['pbcopy', []] : process.platform === 'win32' ? ['powershell', ['-NoProfile', '-NonInteractive', '-Command', '$input | Set-Clipboard']] : ['xclip', ['-selection', 'clipboard']];
-    const p = execFile(cmd, args, { timeout: 5000, windowsHide: true }, (err) => res(!err));
-    p.stdin?.end(String(text));
-  }));
+  const toClipboard = (text) => copyText(text, askShell);
   // How each kind of place is found. retry: just after a click, when a menu or dialog may still be opening.
   function lookups(spec, retry) {
     let live = null, shotOk = null, controls = null, fitQueue = null, wins = null;
@@ -536,7 +542,7 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, sho
     // Pictures and favicons are fetched all at once (each is a network round trip).
     await Promise.all(marks.map(async (m) => {
       if (m.kind === 'photo') {
-        try { Object.assign(m, await photoFor({ query: m.query, url: m.url })); } catch (e) { m.missing = true; notes.push(`No photo for ${m.query ?? 'that link'} (${e.message}); drew its frame and caption only.`); }
+        try { Object.assign(m, await photos.get(m)); } catch (e) { m.missing = true; notes.push(`No photo for ${m.query ?? 'that link'} (${e.message}); drew its frame and caption only.`); }
       } else if (m.kind === 'sources' || m.sources?.length) {
         m.sources = await Promise.all(m.sources.map(async (x) => ({ ...x, icon: checkDrawAction({ kind: 'favicon', url: x.url }).level === BLOCK ? null : await faviconFor(x.url).catch(() => null) })));
       }
@@ -560,6 +566,9 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, sho
   async function draw(args, ctx, opts = {}) {
     const problems = checkDraw(args);
     if (problems.length) throw new Error(problems.join('\n'));
+    // Labels on a picture the model hasn't seen would be guesses: it looks first (see_photo), then draws.
+    const unseen = photos.unseen(args.beats);
+    if (unseen) throw new Error(unseen);
     const t = String(args.target || 'front'), spec = t === 'front' ? 'front' : t === 'screen' ? 'screen' : `app:${t}`;
     const id = ctx.toolCallId, edits = args.edit ?? [], notes = [], said = [];
     // Clicks and hovers in other apps can't be seen here (Wayland): the beats play one after another instead.
@@ -574,7 +583,7 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, sho
     // are still being looked up (each lookup is a helper round trip). after: it comes after a click or hover.
     const segs = beats.map((b, i) => ({ from: i, to: i + 1, after: i > 0 && !!beats[i - 1].wait }));
     if (!segs.length) segs.push({ from: 0, to: 0 });
-    const drawn = [];
+    const drawn = [], shut = [];
     // Cut off (they spoke over it): the overlay stops too, or it keeps the caption up waiting for a click.
     const stopped = () => { if (ctx?.signal?.aborted) clearAllInk(); return 'Stopped.'; };
     // Where there's room for cards: the screen minus the front window; and what's on it, so names avoid covering words.
@@ -602,9 +611,13 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, sho
         // Cancelled while this step's places were looked up: it never shows.
         if (ctx?.signal?.aborted) return stopped();
         const ids = parts.assign(seg);
-        drawn.push(...ids);
+        drawn.push(...ids.map((p) => [p, parts.get(p)]));
         if (opts.fade) for (const p of ids) loose.add(p);
+        // Only a few cards stay up at once (the overlay closes the oldest as each new one is drawn), so the oldest are
+        // forgotten here too. Eight cards at once covered the screen, and the last one landed on top of the first.
+        else for (const p of parts.trimCards(LIMITS.cardsShown, (q) => loose.has(q))) { shut.push(p); buttons.delete(p); }
         for (const b of seg) for (const m of b.marks) if (m.action && m.part) buttons.set(m.part, m.action);
+        for (const b of seg) for (const m of b.marks) if (m.kind === 'quiz' && m.part) quizzes.set(m.part, m);
         const out = seg.map((b, j) => ({ ...b, n: sg.from + j + 1, caption: plain(b.say), voiced: !!speak(b.say) }));
         said.push(...out.map((b) => b.caption));
         ui({ kind: 'agent', e: { type: 'draw', id, seg: k, beats: out, edits: k ? [] : edits, last: k === segs.length - 1, win, busy: k ? [] : busy, ...(opts.fade ? { fade: opts.fade } : {}) } });
@@ -626,11 +639,14 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, sho
       }
     } finally { ink.active--; }
     if (windowBound()) { [ink.win, ink.page] = await Promise.all([frontWin(), frontPage()]); ink.front = ink.win?.key ?? ''; watchStale(); if (ink.win) watchClicks(true); }
-    const list = parts.describe(drawn);
+    const list = describeParts(drawn);
+    if (shut.length) notes.push(`Only ${LIMITS.cardsShown} cards stay up at once, so the oldest closed as newer ones were drawn (${shut.join(', ')}).`);
     // The lines were already said (and captioned) as it drew. Said here, right before the reply is written, so the
     // reply doesn't say them again: models restated each step after a walkthrough even with the rule in the prompt.
     const spoken = said.filter(Boolean);
     const heard = spoken.length ? `Already said out loud as it drew: ${spoken.map((s) => `"${s}"`).join(' ')} Don't repeat or rephrase any of that in your reply: add nothing, or one short sentence they haven't heard yet (a question, or what comes after).` : '';
+    // A quiz is answered on screen: without this, models asked the user to report their score.
+    if (beats.some((b) => b.marks.some((m) => m.kind === 'quiz'))) notes.push(`${userName} answers the quiz by clicking and sees right or wrong on the card; how they did reaches you with their next message, so don't ask for their answers or score.`);
     return [drawn.length ? `Drew ${list}.` : edits.length ? 'Edited the drawing.' : 'Done.', ...notes, edits.length || drawn.length ? `On screen now: ${parts.describe() || 'nothing'}.` : '', heard].filter(Boolean).join(' ');
   }
   // From the overlay: a segment started drawing, a wait ended, a card was closed, a button was clicked.
@@ -639,6 +655,8 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, sho
     waitDone: (id, beat, result) => ink.waits.get(`${id}:wait:${beat}`)?.(['clicked', 'hovered', 'skipped'].includes(result) ? result : 'skipped'),
     closed: (part) => { parts.remove(String(part)); buttons.delete(String(part)); loose.delete(String(part)); },
     button: (part) => buttons.get(String(part)) ?? null,
+    // A quiz was answered on screen (the option clicked for each question): how it went, in words for the model.
+    quizDone: (part, picks) => quizNote(quizzes.get(String(part)), picks),
     // A request ended: if it drew nothing, the marks from before it are done with.
     endRequest: () => { if (ink.turn !== turn && parts.screenCount) clearScreenInk(); },
     // Stop. Cancelling a request that drew: all of its drawing goes, diagrams and cards too, and the overlay stops
@@ -790,11 +808,31 @@ beats: [{say, marks, wait?}]. say: one short line, under 20 words, spoken while 
 Places (at, to, tie), best first: {text: the exact words shown on screen} (exact bounds, scrolls to it; target 'screen' searches every app; also words inside paragraphs, text in images or canvases, and a single character, which matches case); add every: true to mark every place that text appears (each letter s, each mention of a word), one mark per place, and within: {x, y, w, h} (screenshot pixels, x, y the centre) to keep to one part of the screen (every s in one sentence); {id} from read_window, for controls without words; {x, y, w, h} pixels in your latest screenshot, for icons, shapes and areas without words: x, y is the thing's centre, and w, h its whole width and height; the box is then fitted to what's really drawn there, so a close guess is enough.
 Which mark: one control they should click: target (with wait 'click' in a walkthrough); one thing to notice: ring (follows its shape; r sets the corner radius); a small spot or icon: point; a region or panel: frame; key words: underline (outdated ones: strike); right or wrong: check, cross; order of steps: num; a name beside something: label (text) or label on any mark; how two things relate: connect (at → to); an odd-shaped group: trace (points); scroll here: scroll (dir); one thing above all else: spotlight (sparingly); something to hover: hover with wait 'hover'; big words: write (text, size).
 Walkthroughs ("how do I…"): one beat per step, each a target on that step's control with label and wait 'click'; the next step is found after they click, on the screen as it is then.
-Explanations that a picture makes clearer go on cards beside the window (tie connects a card to what it explains): card (title, heading, text, items, sources), note (text, tone), list (title, items), clip (title, text), sources ([{name, url}]), photo (query: a thing with a Wikipedia page, or url; text = caption), graph (x_range, y_range, plots [{points, tone, label}], dots [{x, y, label}]) for numbers, timeline (events [{when, text}]) for dates, legend (keys [{tone, text}]), molecule (smiles, label) for chemistry, model (parts [{shape: box|sphere|cylinder|cone|torus, at [x,y,z], size [x,y,z], rot [deg x,y,z], tone, label}] within about -1 to 1, title) for objects and machines. Things saved with remember_commitment or update_commitment already show on their reminders list by themselves: never draw a list or note of them; list and note are for things that aren't being saved.
+Explanations that a picture makes clearer go on cards beside the window (tie connects a card to what it explains; every card can take a title): card (heading, text, items, sources), note (text, tone), list (title, items), clip (title, text), sources ([{name, url}]), legend (keys [{tone, text}]).
+photo (query: a thing with a Wikipedia page, or url; text = caption). To name its parts add labels [{text, x, y}], x and y as fractions of the picture from its top left (0 to 1): only after see_photo has shown you that same picture, never from memory.
+Numbers: bars (bars [{label, value, tone}], unit) compares amounts; graph (x_range, y_range, plots [{points, tone, label}], dots [{x, y, label}]) is for curves and change over time; timeline (events [{when, text}]) for dates. table (columns [headings], rows [[one cell per column]], up to ${LIMITS.columns} by ${LIMITS.rows}) compares things side by side: the first column names each row, cells stay short, and a cell of exactly "yes" or "no" is drawn as a tick or a cross.
+flow (nodes [{id, text, shape: box|round|diamond, tone}], links [{from, to, label, flow}] by node id, dir: down|right) for a process, cause and effect or a decision: round for a start or an end, diamond for a question, flow: true runs moving dots along a link (what travels: data, blood, current). Up to ${LIMITS.nodes} nodes, a few words each; it lays itself out.
+map (region: world, a continent, or country names with commas between; shade [{name, tone}] colours countries in; pins [{name, lat, lon}]; routes [{from, to}] between pins by name). Country outlines only, no streets: cities, states and very small countries have no outline, so mark them with pins. Without region it fits what is shaded and pinned.
+math (steps [{tex, note}]) writes worked maths one step at a time. tex: one line of LaTeX per step (\\frac{a}{b}, \\sqrt{x}, x^{2}, x_{1}, \\left( \\right), \\text{words}, Greek, \\times \\cdot \\pm \\le \\ne \\approx \\pi \\infty; no \\begin, & or \\\\ line breaks); note: a few plain words on what changed. geometry (vertices [{id, x, y}] in your own units with y up, lines [{from, to, label, dash}], angles [{at, from, to, label}] with at the corner, circles [{at, r, label}]) for triangles, circles and angles.
+molecule (smiles, label) for chemistry. model (parts [{shape: box|sphere|cylinder|cone|torus, at [x,y,z], size [x,y,z], rot [deg x,y,z], tone, label, motion}] within about -1 to 1, title) for objects and machines. motion {do: spin|orbit|slide|pulse, axis: x|y|z, around [x,y,z], to [x,y,z], secs} makes a part move to show how the thing works: slide goes from at to "to" and back (a piston), orbit circles the point "around" (a planet, a crank pin), spin turns it in place (a round part spinning on its own axis looks still, so spin a box or orbit one round it), pulse swells and shrinks (a heart).
+quiz (questions [{text, options: 2 to 4, answer: the right option word for word, explain}], up to ${LIMITS.questions}) for "test me": they answer by clicking and see right or wrong at once, and their score comes to you with their next message, so say a line and stop; don't ask the questions in words too.
+Things saved with remember_commitment or update_commitment already show on their reminders list by themselves: never draw a list or note of them; list and note are for things that aren't being saved.
 Actions: type (text into the field at; needs actions allowed), copy (text to the clipboard), open (url), handoff (task), button (text + action {do: ask|open|copy, value}: a likely next step they can click), emote (name: hype, wave, upset, remind, motivate), sfx (name). tone: accent, teal, amber, coral, lilac, sky, lime, red, white.
-A drawing stays until the user clears it or the window changes; your next drawing replaces it. Every drawn piece gets an id (p1, p2 …) in the result. To change what's drawn ("make that red", "move it left", "never mind"): edit [{do: recolor|move|erase|clear, part, tone, dx, dy}] with no beats. Up to 12 beats, 40 marks each.${POINTER_OK ? '' : " On this desktop (Wayland) clicks and hovers in other apps can't be seen: never use wait; beats play one after another, so say each step's line in an order that reads well without pausing."}`,
+A drawing stays until the user clears it or the window changes; your next drawing replaces it. At most ${LIMITS.cardsShown} cards show at once (one more closes the oldest), so make a point with the fewest cards. Every drawn piece gets an id (p1, p2 …) in the result. To change what's drawn ("make that red", "move it left", "never mind"): edit [{do: recolor|move|erase|clear, part, tone, dx, dy}] with no beats. Up to 12 beats, 40 marks each.${POINTER_OK ? '' : " On this desktop (Wayland) clicks and hovers in other apps can't be seen: never use wait; beats play one after another, so say each step's line in an order that reads well without pausing."}`,
       parameters: DrawArgs, executionMode: 'sequential', timeoutMs: 30 * 60_000,
       execute: draw,
+    },
+    {
+      name: 'see_photo',
+      description: "Look at a picture before naming its parts. Give the same query (a thing with a Wikipedia page) or url you will give draw's photo mark: you get that picture back, so you can see where each part is. Needed once before a photo with labels; a photo without labels doesn't need it.",
+      parameters: z.object({ query: z.string().max(100).optional(), url: z.string().max(2000).optional() }),
+      execute: async ({ query, url }) => {
+        const p = await photos.see({ query, url });
+        return { content: [
+          { type: 'text', text: `This is the picture a photo mark with ${url ? 'this url' : `query "${query}"`} shows${p.title ? ` (${p.title})` : ''}. To name its parts, draw that photo with labels [{text, x, y}]: x and y are fractions of this picture, x from 0 at its left edge to 1 at its right, y from 0 at its top to 1 at its bottom. Put each point on the middle of the part it names, and only name parts you can see here.` },
+          { type: 'image', mediaType: p.mediaType, data: p.data },
+        ] };
+      },
     },
     {
       name: 'read_file', description: 'Read a text file. Paths may start with ~. Files with passwords or keys (.ssh, .env, auth.json, keychains) are off limits.',

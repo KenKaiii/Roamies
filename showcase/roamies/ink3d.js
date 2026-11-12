@@ -1,6 +1,7 @@
 // 3D models for drawings: a tiny WebGL renderer (boxes, spheres, cylinders, cones, tori with their own transforms,
 // Lambert light plus a rim light, a slow turn), read back at a small size and dithered into the Sidekick's five LED
-// levels, so a model looks like the rest of it. ink.js draws the cells inside a card. No dependencies.
+// levels, so a model looks like the rest of it. A part can move (spin, orbit, slide, pulse) to show how a thing works.
+// ink.js draws the cells inside a card. No dependencies.
 (() => {
   const R = window.Roamie;
   if (!R || typeof document === 'undefined') return;
@@ -54,12 +55,30 @@
 
   const VS = `attribute vec3 p; attribute vec3 n; uniform mat4 mvp; uniform mat4 model; varying vec3 vn; varying vec3 vp;
     void main(){ vec4 w = model * vec4(p, 1.0); vp = w.xyz; vn = (model * vec4(n, 0.0)).xyz; gl_Position = mvp * vec4(p, 1.0); }`;
-  const FS = `precision mediump float; varying vec3 vn; varying vec3 vp; uniform float k; uniform vec3 eye;
-    void main(){ vec3 N = normalize(vn); vec3 L = normalize(vec3(-0.45, 0.75, 0.55)); vec3 Vd = normalize(eye - vp);
+  // glass: a casing with parts inside it is drawn as every other cell, so what moves inside shows through.
+  const FS = `precision mediump float; varying vec3 vn; varying vec3 vp; uniform float k; uniform vec3 eye; uniform float glass;
+    void main(){ if (glass > 0.5 && mod(floor(gl_FragCoord.x / 2.0) + floor(gl_FragCoord.y / 2.0), 2.0) < 0.5) discard; vec3 N = normalize(vn); vec3 L = normalize(vec3(-0.45, 0.75, 0.55)); vec3 Vd = normalize(eye - vp);
       float lam = max(dot(N, L), 0.0), rim = pow(1.0 - max(dot(N, Vd), 0.0), 2.2);
       float v = clamp((0.16 + 0.72 * lam + 0.42 * rim) * k, 0.0, 1.0); gl_FragColor = vec4(v, v, v, 1.0); }`;
 
-  /** A model from parts [{shape, at, size, rot (degrees), tone, label}], drawn into a cell grid (3 px cells) w × h px.
+  // How a part moves, each a loop of `secs` seconds: spin turns it in place about a world axis, orbit carries it round a
+  // point (turning with it, like a blade on a hub), slide takes it to `to` and back, pulse swells and shrinks it.
+  const ROT = { x: RX, y: RY, z: RZ }, CYCLE = { spin: 4, orbit: 6, slide: 2, pulse: 1.6 };
+  function moved(it, t) {
+    const mo = it.motion;
+    let at = it.at, size = it.size, turn = null;
+    if (mo) {
+      const ph = (t / Math.max(0.3, Math.min(60, mo.secs ?? CYCLE[mo.do]))) * TAU;
+      if (mo.do === 'spin') turn = ROT[mo.axis ?? 'y'](ph);
+      else if (mo.do === 'orbit') { const c = mo.around ?? [0, 0, 0]; turn = ROT[mo.axis ?? 'y'](ph); at = apply(turn, at.map((v, i) => v - c[i])).slice(0, 3).map((v, i) => v + c[i]); }
+      else if (mo.do === 'slide') { const k = (1 - Math.cos(ph)) / 2, to = mo.to ?? at; at = at.map((v, i) => v + (to[i] - v) * k); }
+      else if (mo.do === 'pulse') size = size.map((v) => v * (1 + 0.14 * Math.sin(ph)));
+    }
+    const own = mul(it.turn, S(size[0], size[1], size[2]));
+    return { at, local: mul(T(at[0], at[1], at[2]), turn ? mul(turn, own) : own) };
+  }
+
+  /** A model from parts [{shape, at, size, rot (degrees), tone, label, motion}], drawn into a cell grid (3 px cells) w × h px.
    *  frame(t) → { gw, gh, lv: levels 0 (empty) … 4, labels: [{x, y, text}] in px within the area }. null without WebGL. */
   function create(parts, w, h) {
     const gw = Math.max(8, Math.floor(w / 3)), gh = Math.max(8, Math.floor(h / 3)), SS = 2;
@@ -71,18 +90,23 @@
     try { gl.attachShader(prog, sh(gl.VERTEX_SHADER, VS)); gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FS)); gl.linkProgram(prog); } catch (e) { console.error('ink3d', e); return null; }
     if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return null;
     gl.useProgram(prog);
-    const loc = { p: gl.getAttribLocation(prog, 'p'), n: gl.getAttribLocation(prog, 'n'), mvp: gl.getUniformLocation(prog, 'mvp'), model: gl.getUniformLocation(prog, 'model'), k: gl.getUniformLocation(prog, 'k'), eye: gl.getUniformLocation(prog, 'eye') };
+    const loc = { p: gl.getAttribLocation(prog, 'p'), n: gl.getAttribLocation(prog, 'n'), mvp: gl.getUniformLocation(prog, 'mvp'), model: gl.getUniformLocation(prog, 'model'), k: gl.getUniformLocation(prog, 'k'), eye: gl.getUniformLocation(prog, 'eye'), glass: gl.getUniformLocation(prog, 'glass') };
     const cache = {};
     const buf = (data) => { const b = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, b); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(data), gl.STATIC_DRAW); return b; };
     const items = parts.slice(0, 40).map((q) => {
       const g = (cache[q.shape] ??= (() => { const [p, n] = SHAPES[q.shape](); return { p: buf(p), n: buf(n), count: p.length / 3 }; })());
       const [x, y, z] = q.at ?? [0, 0, 0], [sx, sy, sz] = q.size ?? [0.5, 0.5, 0.5], [rx, ry, rz] = (q.rot ?? [0, 0, 0]).map((d) => (d * Math.PI) / 180);
-      return { g, local: mul(T(x, y, z), mul(RZ(rz), mul(RY(ry), mul(RX(rx), S(sx, sy, sz))))), k: TONE_K[q.tone] ?? 1, label: q.label, at: [x, y, z], r: Math.max(sx, sy, sz) };
+      return { g, turn: mul(RZ(rz), mul(RY(ry), RX(rx))), size: [sx, sy, sz], motion: q.motion, k: TONE_K[q.tone] ?? 1, label: q.label, at: [x, y, z], r: Math.max(sx, sy, sz) * (q.motion?.do === 'pulse' ? 1.14 : 1) };
     });
-    // Fit the whole model in view: centre it and scale its bounding sphere to about one unit.
-    const c = items.reduce((a, it) => a.map((v, i) => v + it.at[i] / items.length), [0, 0, 0]);
+    // Fit the whole model in view, wherever its parts move to: centre it and scale its bounding sphere to about one unit.
+    const reach = items.map((it) => (it.motion ? Array.from({ length: 8 }, (_, k) => moved(it, (k / 8) * Math.max(0.3, Math.min(60, it.motion.secs ?? CYCLE[it.motion.do]))).at) : [it.at]));
+    // A still part that holds smaller ones inside it, wherever they move (a cylinder round its piston): see-through.
+    const within = (it, q) => { const d = q.map((v, i) => v - it.at[i]), m = it.turn; return [0, 4, 8].every((c, i) => Math.abs((m[c] * d[0] + m[c + 1] * d[1] + m[c + 2] * d[2]) / (it.size[i] || 1e-6)) < 0.5); };
+    for (const it of items) it.glass = !it.motion && items.some((o, n) => o !== it && o.r < it.r && reach[n].every((q) => within(it, q)));
+    // Each part counts once, at the middle of where it goes.
+    const c = reach.reduce((a, qs) => a.map((v, i) => v + qs.reduce((s2, q) => s2 + q[i], 0) / qs.length / items.length), [0, 0, 0]);
     // Unit shapes reach about 0.5 from their centre (a box's corner a little more), times their size.
-    const rad = Math.max(0.3, ...items.map((it) => Math.hypot(...it.at.map((v, i) => v - c[i])) + it.r * 0.6));
+    const rad = Math.max(0.3, ...items.flatMap((it, n) => reach[n].map((q) => Math.hypot(...q.map((v, i) => v - c[i])) + it.r * 0.6)));
     const fit = mul(S(1 / rad, 1 / rad, 1 / rad), T(-c[0], -c[1], -c[2]));
     const px = new Uint8Array(gw * SS * gh * SS * 4), lv = new Uint8Array(gw * gh);
     let lastT = -1, out = { gw, gh, lv, labels: [] };
@@ -95,11 +119,12 @@
         const view = mul(T(0, 0, -3.4), mul(RX(0.38), RY(t * 0.45 + 0.6))), proj = persp(0.62, gw / gh, 0.1, 20), vp = mul(proj, view);
         gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
         gl.uniform3fv(loc.eye, [0, 0, 3.4]);
-        for (const it of items) {
-          const model = mul(view, mul(fit, it.local));
+        const now = items.map((it) => moved(it, t));
+        for (const [n, it] of items.entries()) {
+          const model = mul(view, mul(fit, now[n].local));
           gl.uniformMatrix4fv(loc.model, false, new Float32Array(model));
           gl.uniformMatrix4fv(loc.mvp, false, new Float32Array(mul(proj, model)));
-          gl.uniform1f(loc.k, it.k);
+          gl.uniform1f(loc.k, it.k); gl.uniform1f(loc.glass, it.glass ? 1 : 0);
           gl.bindBuffer(gl.ARRAY_BUFFER, it.g.p); gl.enableVertexAttribArray(loc.p); gl.vertexAttribPointer(loc.p, 3, gl.FLOAT, false, 0, 0);
           gl.bindBuffer(gl.ARRAY_BUFFER, it.g.n); gl.enableVertexAttribArray(loc.n); gl.vertexAttribPointer(loc.n, 3, gl.FLOAT, false, 0, 0);
           gl.drawArrays(gl.TRIANGLES, 0, it.g.count);
@@ -115,9 +140,9 @@
         }
         // Labels follow their part's centre on screen.
         const labels = [];
-        for (const it of items) {
+        for (const [n, it] of items.entries()) {
           if (!it.label) continue;
-          const q = apply(mul(vp, fit), it.at);
+          const q = apply(mul(vp, fit), now[n].at);
           if (q[3] <= 0) continue;
           labels.push({ x: ((q[0] / q[3]) * 0.5 + 0.5) * gw * 3, y: (1 - ((q[1] / q[3]) * 0.5 + 0.5)) * gh * 3, text: it.label });
         }

@@ -84,6 +84,10 @@
         <p class="note" id="fish-note">Spoken replies are billed to your own Fish Audio account.</p>
       </form>
       <p class="error" id="fish-error" role="alert" hidden></p>
+      <ul class="rows" id="talk-rows" hidden>
+        <li class="px row"><div><h2>Auto-listen</h2><p>Mic opens when I ask you something.</p></div><button class="px switch" type="button" role="switch" id="autolisten-switch" aria-label="Auto-listen"></button></li>
+        <li class="px row" id="wake-row"><div><h2>Wake word</h2><p>Say “Hey Roamies” to talk. Mic stays on.</p></div><button class="px switch" type="button" role="switch" id="wake-switch" aria-label="Wake word"></button></li>
+      </ul>
     </section>
 
     <section class="step" id="step-demo" data-name="What I can do" aria-labelledby="h-demo" hidden>
@@ -113,6 +117,10 @@
         </div>
       </div>
       <div class="px keyrow" id="hotkey-row">
+        <div class="kline">
+          <div><h2 id="write-h">Type to me</h2><p>Tap, then type.</p></div>
+          <div class="chords" id="write-chords" role="radiogroup" aria-labelledby="write-h"></div>
+        </div>
         <div class="kline">
           <div><h2>Show or hide me</h2><p>Bring me back any time.</p></div>
           <div class="summon">

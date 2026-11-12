@@ -32,6 +32,7 @@
     if (!window.Roamie?.ptr) return;
     cursor = [x, y];
     Roamie.ink?.ptr(x, y);
+    Roamie.askBar?.ptr(x, y);
     const h = Roamie.ptr(x, y, t);
     setHot(h && !handsBusy);
   };
@@ -48,6 +49,8 @@
       for (const r of Roamie.inkRects?.() ?? []) grown(r);
       const card = Roamie.panelRect?.();
       if (card) grown(card);
+      const bar = Roamie.askBarRect?.();
+      if (bar) grown(bar);
       // Sampled a little past the canvas: hit areas can reach beyond what's drawn.
       const box = Roamie.hitBox();
       if (box) rects.push(...Roamie.hitRects(Roamie.hitTest, [box[0] - 48, box[1] - 48, box[2] + 96, box[3] + 96]));
@@ -62,8 +65,9 @@
   let agent = null;
   const getAgent = () => (agent ??= Roamie.tiles?.find((t) => t.creature?.agent)?.creature.agent ?? null);
 
-  // ---------- typing into an input bubble ----------
-  // A real (invisible) input collects keys, so paste, IME and key repeat all just work.
+  // ---------- typing: an input bubble, or the field beside the cursor ----------
+  // The bubble (API keys, Allow/Decline, the area follow-up): a real (invisible) input collects keys, so paste, IME
+  // and key repeat all just work. Type to ask (m.bar) shows its own field beside the cursor instead (ask-bar.js).
   const field = document.createElement('input');
   Object.assign(field.style, { position: 'fixed', left: '0', top: '0', width: '1px', height: '1px', opacity: '0', pointerEvents: 'none' });
   // Its name is its look's (the sidecar's LOOKS).
@@ -74,7 +78,13 @@
   if (document.body) document.body.appendChild(field);
 
   let ask = null;
-  const focusField = () => { typing(true); setTimeout(() => field.focus(), 30); ask?.h.focus(true); };
+  const bar = Roamie.askBar;
+  const focusField = () => { typing(true); setTimeout(() => (ask?.bar ? bar.focus() : field.focus()), 30); ask?.h.focus(true); };
+  // Enter sends and Esc closes, in the bubble's hidden input and in the field (where Shift+Enter adds a line).
+  const askKey = (e, text, lines = false) => {
+    if (e.key === 'Enter' && !e.isComposing && !(lines && e.shiftKey)) { e.preventDefault(); finishAsk(text); }
+    else if (e.key === 'Escape') { e.preventDefault(); finishAsk(null); }
+  };
   const finishAsk = (text) => {
     if (!ask) return;
     const { id, h, label } = ask;
@@ -89,6 +99,16 @@
     const a = getAgent();
     if (!a) return;
     if (ask) finishAsk(null);
+    if (m.bar && bar && !m.mask && !m.choices) {
+      // What it's saying stays up while you type: only what's sent interrupts it.
+      ask = { id: m.id, bar: true, h: { close: () => bar.close(), focus() {} }, choices: null, sel: -1, label: null };
+      bar.open({
+        placeholder: m.prompt || m.placeholder || '', label: field.getAttribute('aria-label'), cursor,
+        onKey: (e) => askKey(e, bar.value, true), onPress: focusField, onLeft: () => finishAsk(null),
+      });
+      focusField();
+      return;
+    }
     endTalk();
     field.value = '';
     field.type = m.mask ? 'password' : 'text';
@@ -102,12 +122,12 @@
     focusField();
   };
   // The bubble draws the caret where the field has it, so moving back to fix a word shows where typing goes.
-  const syncField = () => !ask?.choices && ask?.h.set(field.value, field.selectionDirection === 'backward' ? field.selectionStart : field.selectionEnd);
+  const syncField = () => ask && !ask.bar && !ask.choices && ask.h.set(field.value, field.selectionDirection === 'backward' ? field.selectionStart : field.selectionEnd);
   field.addEventListener('input', syncField);
   field.addEventListener('select', syncField);
   field.addEventListener('keyup', syncField);
   field.addEventListener('keydown', (e) => {
-    if (!ask) return;
+    if (!ask || ask.bar) return;
     if (ask.choices) {
       if (e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
       e.preventDefault();
@@ -122,8 +142,7 @@
       return;
     }
     setTimeout(syncField, 0); // arrows, Home and End move the caret without an input event
-    if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); finishAsk(field.value); }
-    else if (e.key === 'Escape') { e.preventDefault(); finishAsk(null); }
+    askKey(e, field.value);
   });
   field.addEventListener('blur', () => ask?.h.focus(false));
 
@@ -165,6 +184,19 @@
       send({ type: 'auto_listen', turn: l.turn });
     }, 100);
     autoListen = me;
+  }
+
+  // Wake word: once a reply has been typed out and said, the sidecar may listen for "Hey Roamies" again.
+  let saidWatch = null;
+  function reportSaid(rid) {
+    clearInterval(saidWatch);
+    const t0 = Date.now();
+    saidWatch = setInterval(() => {
+      const done = !getAgent()?.typing() && (Roamie.voiceOut ? Roamie.voiceOut.finished(rid) : true);
+      if (!done && Date.now() - t0 < 90_000) return;
+      clearInterval(saidWatch); saidWatch = null;
+      send({ type: 'reply_said' });
+    }, 200);
   }
 
   async function playTools() {
@@ -309,6 +341,7 @@
         research = waveTurn = false;
         endTalk();
         if (e.listen) waitThenListen(e.listen);
+        reportSaid(e.speech);
         break;
       case 'error':
         dropAutoListen();
@@ -316,6 +349,7 @@
         if (research) panel()?.fail(e.message);
         research = waveTurn = false;
         endTalk();
+        reportSaid(e.speech);
         for (const j of [current, ...jobs]) if (j && j.result === undefined) settle(j.id, true);
         a.say(e.message, { mood: 'concerned' });
         break;
@@ -416,7 +450,7 @@
       else a.hide();
       return;
     }
-    if (m.kind === 'say') { if (!ask) getAgent().say(m.text, { mood: m.mood ?? null }); }
+    if (m.kind === 'say') { if (!ask || ask.bar) getAgent().say(m.text, { mood: m.mood ?? null }); } // the field leaves the bubble free
     else if (m.kind === 'ask') openAsk(m);
     else if (m.kind === 'cancel_ask') { if (ask?.id === m.id) { ask.id = null; finishAsk(null); } }
     else if (m.kind === 'agent') onAgent(m.e);

@@ -14,6 +14,9 @@ assert.equal(describe('plan_steps', {}), null);
 assert.deepEqual(describe('draw', { beats: [{ say: 'Here', marks: [] }] }), ['Drawing on your screen', 'Drew on your screen']);
 assert.deepEqual(describe('draw', { edit: [{ do: 'clear' }] }), ['Changing the drawing', 'Changed the drawing']);
 assert.equal(describe('point_at', {}), null, 'the old pointing tool is gone');
+// Looking at a picture before labelling it: never the search words, only the site for a link.
+assert.deepEqual(describe('see_photo', { query: 'Acoustic guitar' }), ['Looking at a picture', 'Looked at a picture']);
+assert.deepEqual(describe('see_photo', { url: 'https://upload.wikimedia.org/x/guitar.jpg?sig=1' }), ['Looking at a picture on upload.wikimedia.org', 'Looked at a picture on upload.wikimedia.org']);
 {
   const a = createActivity();
   a.handoff('Book the flights to Rome for next Friday morning, window seats, and the hotel');

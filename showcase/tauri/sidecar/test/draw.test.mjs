@@ -147,6 +147,17 @@ console.log('shape radius tests: passed');
   p.remove('p2');
   assert.equal(p.has('p2'), false);
   assert.equal(describeParts([['p9', { desc: 'note “x”' }]]), 'p9 note “x”');
+  // Regression: eight cards in one drawing filled the screen and the last was drawn on top of the first. Only a
+  // few stay up: the oldest are forgotten (screen marks and cards that don't count are left alone).
+  const q = createParts();
+  q.assign([{ marks: [{ kind: 'ring', at: { name: 'Export' } }, ...['a', 'b', 'c', 'd', 'e', 'f'].map((text) => ({ kind: 'note', text }))] }]);
+  assert.deepEqual(q.trimCards(LIMITS.cardsShown, (id) => id === 'p2'), ['p3'], 'the oldest card that counts goes');
+  assert.deepEqual(q.ids, ['p1', 'p2', 'p4', 'p5', 'p6', 'p7']);
+  assert.deepEqual(q.trimCards(LIMITS.cardsShown), ['p2'], 'now p2 counts too');
+  assert.deepEqual(q.trimCards(LIMITS.cardsShown), [], 'four cards: nothing to close');
+  // The overlay closes them by the same number.
+  const { readFileSync } = await import('node:fs');
+  assert.ok(readFileSync(new URL('../../../roamies/ink.js', import.meta.url), 'utf8').includes(`const MAX_CARDS = ${LIMITS.cardsShown};`), 'the overlay and the sidecar agree on how many cards stay up');
   console.log('draw parts tests: passed');
 }
 
@@ -200,6 +211,24 @@ console.log('shape radius tests: passed');
   assert.equal(calls.length, n, 'favicons are cached per site');
   assert.equal(await faviconFor('https://nothing.example.net/', { fetchImpl: fake({}) }), null, 'no favicon: a dot instead');
   assert.equal(await faviconFor('javascript:alert(1)'), null, 'not a web link');
+  // Looked-at pictures: labels are refused until the picture has been seen, and the card then gets that same picture.
+  const { createPhotos } = await import('../draw.mjs');
+  const photos = createPhotos({ fetchImpl: wiki, max: 2 });
+  const labelled = [{ say: 'x', marks: [{ kind: 'note', text: 'n' }, { kind: 'photo', query: 'Jet engine', labels: [{ text: 'fan', x: 0.2, y: 0.5 }] }] }];
+  assert.match(photos.unseen(labelled), /^beat 1 mark 2 \(photo\): labels go on a picture you have looked at[^\n]*First call see_photo with \{"query":"Jet engine"\}/);
+  assert.equal(photos.unseen([{ say: 'x', marks: [{ kind: 'photo', query: 'Jet engine' }] }]), null, 'a photo without labels needs no look');
+  const before = calls.length, shown = await photos.see({ query: 'jet engine' });
+  assert.deepEqual(shown, { title: 'Jet engine', mediaType: 'image/png', data: png.toString('base64') }, 'the picture comes back for the model to look at');
+  assert.equal(photos.unseen(labelled), null, 'seen (whatever the capitals): labels are allowed');
+  const fetched = calls.length;
+  assert.equal((await photos.get({ kind: 'photo', query: 'Jet engine' })).title, 'Jet engine');
+  assert.equal(calls.length, fetched, 'the card shows the picture that was looked at, not a second download');
+  assert.ok(fetched > before);
+  await assert.rejects(photos.see({}), /Give query/);
+  await assert.rejects(photos.see({ url: 'http://192.168.0.2/cam.png' }), /Blocked for safety/, 'looking goes through the URL rules too');
+  const svg = fake({ 'https://example.com/logo.svg': () => res(200, '<svg/>', { 'content-type': 'image/svg+xml' }) });
+  await assert.rejects(createPhotos({ fetchImpl: svg }).see({ url: 'https://example.com/logo.svg' }), /can't be looked at here/, 'a drawing file can be shown on a card but not looked at');
+  assert.match(photos.unseen([{ say: 'x', marks: [{ kind: 'photo', url: 'https://example.com/a.png', labels: [{ text: 'a', x: 0, y: 0 }] }] }]), /see_photo with \{"url":"https:\/\/example.com\/a.png"\}/);
   console.log('photo and favicon tests: passed');
 }
 
@@ -209,4 +238,177 @@ console.log('shape radius tests: passed');
   assert.ok(ok(tl('Aristotle gives strong evidence for a round Earth')), 'a 49-character event');
   assert.ok(!ok(tl('x'.repeat(61))), 'past 60 still fails');
   console.log('timeline schema tests: passed');
+}
+
+// ---- the kinds with a structure of their own: flow, table, bars, map, math, geometry, quiz, photo labels, moving parts
+{
+  const { checkFlow, findCountry, flowLayers, parseTex, resolveRegion, CARDS } = await import('../draw.mjs');
+  const one = (mark) => checkDraw({ beats: [{ say: 'x', marks: [mark] }] });
+  const fine = (mark, why) => { assert.ok(ok({ beats: [{ say: 'x', marks: [mark] }] }), `${why}: fits the schema`); assert.deepEqual(one(mark), [], why); };
+  for (const k of ['flow', 'table', 'bars', 'map', 'math', 'geometry', 'quiz']) assert.ok(CARDS.includes(k), `${k} is a card`);
+
+  // moving parts
+  fine({ kind: 'model', title: 'Piston', parts: [{ shape: 'cylinder', label: 'piston', motion: { do: 'slide', to: [0, 0.6, 0], secs: 2 } }, { shape: 'torus', motion: { do: 'spin', axis: 'z' } }, { shape: 'sphere', motion: { do: 'orbit', around: [0, 0, 0] } }, { shape: 'box', motion: { do: 'pulse' } }] }, 'a model whose parts move');
+  assert.match(one({ kind: 'model', parts: [{ shape: 'box', label: 'rod', motion: { do: 'slide' } }] })[0], /part 1 \(rod\): slide needs to/);
+  assert.match(one({ kind: 'model', parts: [{ shape: 'box', motion: { do: 'spin', secs: 0 } }] })[0], /secs \(one full cycle\) must be between/);
+  assert.ok(!ok({ beats: [{ say: 'x', marks: [{ kind: 'model', parts: [{ shape: 'box', motion: { do: 'explode' } }] }] }] }), 'unknown motion');
+  assert.match(one({ kind: 'model' })[0], /needs parts/);
+  // Regression: a live run gave size: 2 for a cylinder and the whole drawing was refused for it.
+  assert.deepEqual(DrawArgs.parse({ beats: [{ say: 'x', marks: [{ kind: 'model', parts: [{ shape: 'sphere', size: 2 }] }] }] }).beats[0].marks[0].parts[0].size, [2, 2, 2], 'one number for a size is that size every way');
+  assert.ok(!ok({ beats: [{ say: 'x', marks: [{ kind: 'model', parts: [{ shape: 'sphere', size: [1, 2] }] }] }] }), 'a size of two numbers is still wrong');
+
+  // flow
+  const nodes = ['a', 'b', 'c', 'd'].map((id) => ({ id, text: id.toUpperCase() }));
+  fine({ kind: 'flow', dir: 'right', nodes, links: [{ from: 'a', to: 'b', label: 'then', flow: true }, { from: 'b', to: 'c' }] }, 'a flow');
+  assert.match(checkFlow({ nodes: [nodes[0]] })[0], /needs nodes \(at least 2/);
+  assert.match(checkFlow({ nodes, links: [{ from: 'a', to: 'zz' }] })[0], /link 1: no node has the id "zz" \(nodes: "a", "b", "c", "d"\)/, 'an unknown id is named, with the ones there are');
+  assert.match(checkFlow({ nodes: [...nodes, nodes[0]], links: [{ from: 'a', to: 'b' }] })[0], /two nodes share the id "a"/);
+  assert.match(checkFlow({ nodes, links: [{ from: 'a', to: 'a' }] })[0], /goes from "a" to itself/);
+  assert.match(checkFlow({ nodes, links: [] }).join(' '), /needs links/);
+  assert.match(one({ kind: 'flow', dir: 'up', nodes, links: [{ from: 'a', to: 'b' }] })[0], /dir for a flow is down or right/);
+  assert.match(one({ kind: 'scroll', at: { text: 'x' }, dir: 'right' })[0], /dir for scroll is up or down/);
+  // a chain: one node per layer, in order
+  assert.deepEqual(flowLayers(nodes, [{ from: 'a', to: 'b' }, { from: 'b', to: 'c' }, { from: 'c', to: 'd' }]), { layers: [['a'], ['b'], ['c'], ['d']], via: {}, back: [] });
+  // a tree: children share a layer, in the order of their parents
+  assert.deepEqual(flowLayers(nodes, [{ from: 'a', to: 'b' }, { from: 'a', to: 'c' }, { from: 'c', to: 'd' }]).layers, [['a'], ['b', 'c'], ['d']]);
+  // a loop: the link that closes it is turned round (back) and gets a lane past the layer between
+  const loop = flowLayers(nodes.slice(0, 3), [{ from: 'a', to: 'b' }, { from: 'b', to: 'c' }, { from: 'c', to: 'a' }]);
+  assert.deepEqual(loop.back, [2], 'the closing link is the back one');
+  assert.deepEqual(loop.layers.map((l) => l.filter((id) => !id.startsWith('~'))), [['a'], ['b'], ['c']]);
+  assert.deepEqual(loop.via[2], ['~2.1'], 'and it passes beside b, not under it');
+  // nothing but a loop still gets layers, and a late start sits just above what it feeds
+  assert.equal(flowLayers(nodes.slice(0, 2), [{ from: 'a', to: 'b' }, { from: 'b', to: 'a' }]).layers.length, 2);
+  assert.deepEqual(flowLayers(nodes, [{ from: 'a', to: 'b' }, { from: 'b', to: 'c' }, { from: 'd', to: 'c' }]).layers, [['a'], ['b', 'd'], ['c']]);
+  // links cross as little as the order allows: a→d, b→c with c listed first puts d under a
+  assert.deepEqual(flowLayers([{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'd' }], [{ from: 'a', to: 'd' }, { from: 'b', to: 'c' }]).layers, [['a', 'b'], ['d', 'c']]);
+  console.log('flow tests: passed');
+
+  // table and bars
+  fine({ kind: 'table', title: 'Languages', columns: ['', 'Python', 'Rust'], rows: [['Easy to start', 'yes', 'no'], ['Speed', 'slow', 'fast']] }, 'a table');
+  assert.match(one({ kind: 'table', columns: ['a', 'b', 'c'], rows: [['1', '2', '3'], ['1', '2']] })[0], /row 2 has 2 cells but there are 3 columns/);
+  assert.match(one({ kind: 'table', columns: ['a'], rows: [['1']] })[0], /needs columns/);
+  assert.match(one({ kind: 'table', columns: ['a', 'b'] })[0], /needs rows/);
+  assert.ok(!ok({ beats: [{ say: 'x', marks: [{ kind: 'table', columns: Array(LIMITS.columns + 1).fill('c'), rows: [] }] }] }), 'too many columns');
+  assert.ok(!ok({ beats: [{ say: 'x', marks: [{ kind: 'table', columns: ['a', 'b'], rows: Array(LIMITS.rows + 1).fill(['1', '2']) }] }] }), 'too many rows');
+  fine({ kind: 'bars', unit: 'm', bars: [{ label: 'Everest', value: 8849 }, { label: 'K2', value: 8611, tone: 'amber' }] }, 'bars');
+  assert.match(one({ kind: 'bars', bars: [{ label: 'a', value: 1 }] })[0], /needs bars \(at least 2/);
+  assert.match(one({ kind: 'bars', bars: [{ label: 'a', value: 1 }, { label: 'b', value: -2 }] })[0], /bar 2 \("b"\): value must be 0 or more/);
+  assert.match(one({ kind: 'bars', bars: [{ label: 'a', value: 0 }, { label: 'b', value: 0 }] })[0], /every value is 0/);
+
+  // labels on a photo: fractions of the picture
+  fine({ kind: 'photo', query: 'Acoustic guitar', labels: [{ text: 'neck', x: 0.5, y: 0.3 }] }, 'a labelled photo');
+  assert.match(one({ kind: 'photo', query: 'Acoustic guitar', labels: [{ text: 'neck', x: 220, y: 90 }] })[0], /label 1 \("neck"\): x and y are fractions of the picture/);
+  console.log('table, bars and label tests: passed');
+
+  // maps
+  fine({ kind: 'map', region: 'Europe', shade: [{ name: 'Portugal', tone: 'teal' }], pins: [{ name: 'Lisbon', lat: 38.7, lon: -9.1 }, { name: 'Porto', lat: 41.1, lon: -8.6 }], routes: [{ from: 'Lisbon', to: 'Porto' }] }, 'a map');
+  assert.equal(findCountry('usa'), findCountry('United States of America'), 'a country goes by its usual names');
+  assert.equal(findCountry('Côte d’Ivoire'), findCountry('ivory coast'), 'accents and case don’t matter');
+  assert.equal(findCountry('the Netherlands'), findCountry('Holland'));
+  assert.throws(() => findCountry('Portugual'), /no country outline for "Portugual" \(nearest: Portugal\)/, 'a slip gets the nearest names');
+  assert.throws(() => findCountry('Singapore'), /mark a city, a state or a small country with a pin/, 'no outline at this scale: use a pin');
+  assert.throws(() => findCountry('England'), /part of United Kingdom/);
+  assert.deepEqual(resolveRegion({ region: 'europe' }).view, [-25, 34, 45, 72], 'a continent by name');
+  const pt = resolveRegion({ shade: [{ name: 'Portugal', tone: 'teal' }] });
+  assert.equal(pt.shade[0].name, 'Portugal');
+  assert.ok(pt.view[0] < -9.5 && pt.view[2] > -6.4 && pt.view[2] - pt.view[0] >= 7, 'with no region the view fits what is shaded, with its neighbours in view');
+  const fr = resolveRegion({ region: 'France' }).view;
+  assert.ok(fr[0] > -10 && fr[2] < 15, 'France fits France, not French Guiana too');
+  const two = resolveRegion({ region: 'Portugal, Spain' }).view, es = resolveRegion({ region: 'Spain' }).view;
+  assert.ok(two[0] < es[0] + 0.01 && two[2] >= es[2] - 2, 'several countries: all of them fit');
+  assert.ok(resolveRegion({ region: 'Fiji' }).view[2] > 180, 'a country on the date line stays in one piece');
+  assert.deepEqual(resolveRegion({ pins: [{ name: 'Lisbon', lat: 38.7, lon: -9.1 }] }).view, [-12.6, 35.2, -5.6, 42.2], 'a lone pin gets room round it');
+  assert.match(one({ kind: 'map', region: 'Narnia' })[0], /region: no country outline for "narnia"[^\n]*Regions by name: world, africa, europe/);
+  assert.match(one({ kind: 'map', shade: [{ name: 'Atlantis' }] })[0], /no country outline for "Atlantis"/);
+  assert.match(one({ kind: 'map', region: 'world', pins: [{ name: 'X', lat: 120, lon: 0 }] })[0], /pin "X": lat must be between -90 and 90/);
+  assert.match(one({ kind: 'map', region: 'world', pins: [{ name: 'A', lat: 0, lon: 0 }], routes: [{ from: 'A', to: 'B' }] })[0], /route 1: no pin is named "B" \(pins: "A"\)/);
+  assert.match(one({ kind: 'map' })[0], /needs region, shade/);
+  console.log('map tests: passed');
+
+  // maths
+  const flat = (n) => (n.t === 's' ? n.s : n.t === 'row' ? n.c.map(flat).join(' ') : n.t === 'frac' ? `(${flat(n.a)})/(${flat(n.b)})` : n.t === 'sqrt' ? `√${n.n ? `[${flat(n.n)}]` : ''}(${flat(n.a)})` : n.t === 'script' ? `${flat(n.a)}${n.sub ? `_(${flat(n.sub)})` : ''}${n.sup ? `^(${flat(n.sup)})` : ''}` : n.t === 'fence' ? `${n.l}${flat(n.a)}${n.r}` : n.t === 'text' ? `"${n.s}"` : n.t === 'over' ? `${n.m}(${flat(n.a)})` : n.t === 'box' ? `[${flat(n.a)}]` : '␣');
+  const tex = (s) => flat(parseTex(s));
+  assert.equal(tex('3x + 7 = 22'), '3 x + 7 = 22');
+  assert.equal(tex('x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}'), 'x = (− b ± √(b^(2) − 4 a c))/(2 a)', 'the quadratic formula');
+  assert.equal(tex('\\frac12 + x^2_i'), '(1)/(2) + x_(i)^(2)', 'one thing after a command needs no braces; a power and a subscript share a base');
+  assert.equal(tex('x^10'), 'x^(1) 0', 'without braces a power is one digit, as in LaTeX');
+  assert.equal(tex('\\sqrt[3]{27} = 3'), '√[3](27) = 3');
+  assert.equal(tex('\\left(\\frac{a}{b}\\right)^{n}'), '((a)/(b))^(n)', 'sized brackets take a power');
+  assert.equal(tex('\\alpha + \\beta \\le 90^\\circ'), 'α + β ≤ 90 °', 'Greek, symbols, and a raised ring as a degree sign');
+  assert.equal(tex('$E = mc^2$'), 'E = m c^(2)', 'a wrapping $ is dropped');
+  assert.equal(tex('\\(a \\times b\\)'), 'a × b', 'so is \\( \\)');
+  assert.equal(tex('\\text{area} = \\pi r^2'), '"area" = π r^(2)');
+  assert.equal(tex('\\vec{F} = m\\vec{a}'), 'vec(F) = m vec(a)');
+  assert.equal(tex('\\boxed{x = 5}'), '[x = 5]');
+  assert.equal(tex('\\sum_{i=1}^{n} i'), '∑_(i = 1)^(n) i');
+  assert.equal(tex('\\sin\\theta \\, \\mathrm{d}x'), 'sin θ ␣ d x', 'functions, spaces, and styles read past');
+  assert.equal(tex('\\displaystyle \\mathbb{R}'), 'ℝ');
+  assert.equal(parseTex('12.5').k, 'num', 'a whole number is one thing');
+  // Regression: the first live run wrote "3(5) + 7 = 22 \checkmark" and the whole drawing was refused.
+  assert.equal(tex('3(5) + 7 = 22 \\checkmark'), '3 ( 5 ) + 7 = 22 ✓');
+  assert.equal(tex('\\binom{n}{k} \\lt \\textcolor{red}{x} \\cancel{y}'), '((n)/(k)) < x cancel(y)', 'more of what models write: binomials, a colour read past, a struck term');
+  assert.equal(parseTex('\\binom{n}{k}').a.bar, false, 'a binomial has no bar');
+  for (const [bad, why] of [['\\begin{matrix}a\\end{matrix}', /\\begin\{…\} blocks[^\n]*one line per step/], ['a & b', /& \(tables and lined-up equations\) is not supported/], ['a \\\\ b', /a new line\) is not supported: put each line in its own step/],
+    ['\\foo{x}', /\\foo is not supported \(supported: \\frac/], ['\\frac{1}{', /a \{ without its \}/], ['x}', /a \} without its \{/], ['\\left( x', /a \\left without its \\right/], ['x \\right)', /a \\right without its \\left/],
+    ['\\frac', /something is missing at the end/], ['\\sqrt[3{x}', /a \[ without its \]/], ['', /The math is empty/], ['\\left< x \\right>', /need a bracket after them/], ['x'.repeat(0) + '{'.repeat(20) + 'x' + '}'.repeat(20), /nested too deep/]]) assert.throws(() => parseTex(bad), why, `refused: ${bad}`);
+  assert.throws(() => parseTex(Array(LIMITS.tex + 5).fill('x').join('+')), /too long for one step/);
+  fine({ kind: 'math', title: 'Solve', steps: [{ tex: '3x + 7 = 22' }, { tex: '3x = 15', note: 'take 7 from both sides' }, { tex: 'x = 5' }] }, 'worked steps');
+  assert.match(one({ kind: 'math', steps: [{ tex: 'x = 1' }, { tex: '\\begin{cases} 1 \\end{cases}' }] })[0], /\(math\): step 2: Can't read math/, 'the step is named');
+  assert.match(one({ kind: 'math' })[0], /needs steps/);
+  console.log('math tests: passed');
+
+  // geometry and quizzes
+  const tri = [{ id: 'A', x: 0, y: 0 }, { id: 'B', x: 4, y: 0 }, { id: 'C', x: 1, y: 3 }];
+  fine({ kind: 'geometry', vertices: tri, lines: [{ from: 'A', to: 'B', label: 'c' }, { from: 'B', to: 'C' }, { from: 'C', to: 'A', dash: true }], angles: [{ at: 'A', from: 'B', to: 'C', label: 'α' }], circles: [{ at: 'A', r: 1 }] }, 'a figure');
+  assert.match(one({ kind: 'geometry', vertices: tri, lines: [{ from: 'A', to: 'D' }] })[0], /line 1: no vertex has the id "D" \(vertices: "A", "B", "C"\)/);
+  assert.match(one({ kind: 'geometry', vertices: tri, lines: [{ from: 'A', to: 'B' }], angles: [{ at: 'A', from: 'A', to: 'B' }] })[0], /must be three different vertices/);
+  assert.match(one({ kind: 'geometry', vertices: tri, circles: [{ at: 'A', r: 0 }] })[0], /r must be above 0/);
+  assert.match(one({ kind: 'geometry', vertices: tri })[0], /needs lines/);
+  assert.match(one({ kind: 'geometry', vertices: [tri[0]] })[0], /needs vertices \(at least 2/);
+  assert.match(one({ kind: 'geometry', vertices: [tri[0], tri[0]], lines: [{ from: 'A', to: 'A' }] }).join(' '), /two vertices share the id "A"/);
+  const q = { text: 'Which planet is closest to the Sun?', options: ['Venus', 'Mercury', 'Mars'], answer: 'Mercury', explain: 'It orbits at about 58 million km.' };
+  fine({ kind: 'quiz', title: 'Planets', questions: [q] }, 'a quiz');
+  assert.match(one({ kind: 'quiz', questions: [{ ...q, answer: 'Earth' }] })[0], /question 1: answer must be one of its options, word for word \(options: "Venus", "Mercury", "Mars"\)/);
+  assert.match(one({ kind: 'quiz', questions: [{ ...q, options: ['Mars', 'mars '] , answer: 'Mars' }] })[0], /two options are the same/);
+  assert.ok(!ok({ beats: [{ say: 'x', marks: [{ kind: 'quiz', questions: [{ ...q, options: ['only one'] }] }] }] }), 'a question needs two options');
+  assert.match(one({ kind: 'quiz' })[0], /needs questions/);
+  // A quiz answered on screen: the score and what was missed, in words for the model's next request.
+  const { quizNote } = await import('../draw.mjs');
+  const [qb] = await resolveTargets([{ say: 'x', marks: [{ kind: 'quiz', title: 'Planets', questions: [q, { text: 'Biggest planet?', options: ['Jupiter', 'Saturn'], answer: 'Jupiter' }, { text: 'Red planet?', options: ['Mars', 'Venus'], answer: 'Mars' }] }] }], {});
+  assert.equal(quizNote(qb.marks[0], [1, 0, 0]), 'They answered the quiz “Planets” on screen by clicking: 3 of 3 right.');
+  assert.equal(quizNote(qb.marks[0], [1, 1]), 'They answered the quiz “Planets” on screen by clicking: 1 of 3 right. Missed: “Biggest planet?” (they picked “Saturn”; the answer is “Jupiter”); “Red planet?” (they skipped it; the answer is “Mars”).');
+  assert.match(quizNote(qb.marks[0], ['x', 99, -1]), /0 of 3 right/, 'anything that is not one of the options counts as skipped');
+  assert.equal(quizNote(undefined, [0]), null, 'a quiz that is no longer on screen says nothing');
+  console.log('geometry and quiz tests: passed');
+
+  // what reaches the overlay is already worked out
+  const [b] = await resolveTargets([{ say: 'x', marks: [
+    { kind: 'flow', nodes: nodes.slice(0, 2), links: [{ from: 'a', to: 'b' }] },
+    { kind: 'map', shade: [{ name: 'portugal' }] },
+    { kind: 'math', steps: [{ tex: 'x^2' }] },
+    { kind: 'quiz', questions: [{ ...q, answer: ' mercury' }] },
+  ] }], {});
+  assert.deepEqual(b.marks[0].lay.layers, [['a'], ['b']], 'a flow arrives with its layers');
+  assert.equal(b.marks[1].shade[0].name, 'Portugal'); assert.equal(b.marks[1].view.length, 4, 'a map with its view and countries');
+  assert.equal(b.marks[2].steps[0].tree.t, 'script', 'maths as a tree');
+  assert.equal(b.marks[3].questions[0].right, 1, 'a quiz with which option is right');
+  const parts = createParts();
+  parts.assign([{ marks: [{ kind: 'table', columns: ['Name', 'Speed'], rows: [['a', 'b']] }, { kind: 'math', steps: [{ tex: 'x = 5' }] }, { kind: 'map', region: 'Europe' }] }]);
+  assert.equal(parts.describe(), 'p1 table “Name, Speed”, p2 math “x = 5”, p3 map “Europe”', 'new cards are named in the result');
+  console.log('worked-out card tests: passed');
+}
+
+// ---- the outlines the overlay draws are the countries the sidecar checks names against, in the same order
+{
+  const { readFileSync } = await import('node:fs');
+  const { COUNTRIES } = await import('../countries.mjs');
+  const win = { Roamie: {} };
+  new Function('window', readFileSync(new URL('../../../roamies/world.js', import.meta.url), 'utf8'))(win);
+  const world = win.Roamie.world;
+  assert.deepEqual(world.countries.map((c) => c[0]), COUNTRIES.map((c) => c.n), 'world.js and countries.mjs list the same countries in the same order');
+  assert.ok(world.countries.every(([, rings]) => rings.length && rings.every((r) => r.length >= 6 && r.length % 2 === 0)), 'every country has an outline');
+  // Portugal's outline starts inside the box a map of it fits.
+  const pt = COUNTRIES.findIndex((c) => c.n === 'Portugal'), [x, y] = world.countries[pt][1][0], b = COUNTRIES[pt].b;
+  assert.ok(x / world.q >= b[0] - 0.1 && x / world.q <= b[2] + 0.1 && y / world.q >= b[1] - 0.1 && y / world.q <= b[3] + 0.1, 'outlines are in degrees × q');
+  console.log('world outline tests: passed');
 }

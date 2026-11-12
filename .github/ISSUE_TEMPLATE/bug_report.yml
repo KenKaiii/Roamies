@@ -43,6 +43,5 @@ body:
   - type: textarea
     id: logs
     attributes:
-      label: Logs
-      description: Activity logs are in ~/.gg/sidekick/logs (Windows %USERPROFILE%\.gg\sidekick\logs). Please remove anything private before pasting.
-      render: text
+      label: Diagnostics file
+      description: In Roamies, open the panel > About > Save diagnostics (or the tray icon's menu > Save Diagnostics…). It saves a roamies-diagnostics-….log file in Downloads with keys and personal details removed. Drag that file into this box.

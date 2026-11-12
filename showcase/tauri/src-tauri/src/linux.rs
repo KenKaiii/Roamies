@@ -100,28 +100,67 @@ pub(crate) fn set_hit_rects(window: &tauri::WebviewWindow, flat: &[f64]) {
 
 // ---------- the pointer (X11 sessions) ----------
 
+/// One X connection for the pointer and the keys: its root window and the keycodes of the modifier keys. None on
+/// Wayland, where neither can be seen over other apps (the sidecar asks for no click waits and no tap shortcut there).
+struct X {
+    conn: x11rb::rust_connection::RustConnection,
+    root: u32,
+    modifiers: Vec<u8>,
+}
+
+fn x() -> Option<&'static X> {
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::ConnectionExt;
+    static X11: OnceLock<Option<X>> = OnceLock::new();
+    if session() != Session::X11 {
+        return None;
+    }
+    X11.get_or_init(|| {
+        let (conn, screen) = x11rb::connect(None).ok()?;
+        let root = conn.setup().roots.get(screen)?.root;
+        let modifiers = conn.get_modifier_mapping().ok().and_then(|c| c.reply().ok()).map(|r| r.keycodes).unwrap_or_default();
+        Some(X { conn, root, modifiers })
+    })
+    .as_ref()
+}
+
+/// The pointer's button and modifier state, whichever window has the keyboard (0 when it can't be read).
+fn pointer_mask() -> u16 {
+    use x11rb::protocol::xproto::ConnectionExt;
+    x().and_then(|x| x.conn.query_pointer(x.root).ok()?.reply().ok()).map_or(0, |r| u16::from(r.mask))
+}
+
 /// Whether the left mouse button is down right now, anywhere on screen: a drawing waiting for a click polls it.
 /// X11 sessions only. On Wayland the pointer can't be seen over other apps, and the sidecar asks for no such waits.
 pub(crate) fn left_button_down() -> bool {
-    use x11rb::connection::Connection;
-    use x11rb::protocol::xproto::ConnectionExt;
-    use x11rb::rust_connection::RustConnection;
-    static X: OnceLock<Option<(RustConnection, u32)>> = OnceLock::new();
-    if session() != Session::X11 {
-        return false;
-    }
-    let Some((conn, root)) = X
-        .get_or_init(|| {
-            let (conn, screen) = x11rb::connect(None).ok()?;
-            let root = conn.setup().roots.get(screen)?.root;
-            Some((conn, root))
-        })
-        .as_ref()
-    else {
-        return false;
-    };
     // Button1 in the pointer's button and modifier state.
-    conn.query_pointer(*root).ok().and_then(|c| c.reply().ok()).is_some_and(|r| u16::from(r.mask) & 0x100 != 0)
+    pointer_mask() & 0x100 != 0
+}
+
+/// X11's modifier state (Shift 1, Control 4, Mod1 = Alt 8, Mod4 = Super 64) as tap.rs bits. Mod5 (AltGr) is a
+/// modifier no pair uses; Lock and Num Lock (Mod2) are states, not keys held.
+fn mods_from_x11(mask: u16) -> u8 {
+    use crate::tap::{COMMAND, CONTROL, OPTION, OTHER_MOD, SHIFT};
+    [(0x04, CONTROL), (0x08, OPTION), (0x01, SHIFT), (0x40, COMMAND), (0x80, OTHER_MOD)]
+        .iter()
+        .filter(|(bit, _)| mask & bit != 0)
+        .fold(0, |m, (_, b)| m | b)
+}
+
+/// Any key held that isn't a modifier: X11's key bitmap (one bit per keycode), less the keycodes in its modifier map.
+fn other_key(keymap: &[u8], modifiers: &[u8]) -> bool {
+    (8..keymap.len() * 8).any(|k| keymap[k / 8] & (1 << (k % 8)) != 0 && !modifiers.contains(&(k as u8)))
+}
+
+/// For the type-to-ask tap (tap.rs): the modifiers held, and whether a mouse button is down or, when `keys` is
+/// set (one more round trip, so only while a tap is under way), any other key. X11 sessions only.
+pub(crate) fn keys_state(keys: bool) -> (u8, bool) {
+    use x11rb::protocol::xproto::ConnectionExt;
+    let mask = pointer_mask();
+    // Buttons 1 to 5 are bits 8 to 12 of the state.
+    let other = mask & 0x1f00 != 0
+        || (keys && x().is_some_and(|x| x.conn.query_keymap().ok().and_then(|c| c.reply().ok()).is_some_and(|r| other_key(&r.keys, &x.modifiers))));
+    (mods_from_x11(mask), other)
 }
 
 // ---------- screenshots ----------
@@ -421,6 +460,22 @@ pub(crate) fn open_releases_page() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn x11_key_state_maps_to_the_tap_bits() {
+        use crate::tap::{COMMAND, CONTROL, OPTION, OTHER_MOD, SHIFT};
+        assert_eq!(mods_from_x11(0x04 | 0x01), CONTROL | SHIFT);
+        assert_eq!(mods_from_x11(0x08 | 0x40), OPTION | COMMAND);
+        assert_eq!(mods_from_x11(0x04 | 0x80), CONTROL | OTHER_MOD, "AltGr is a modifier no pair uses");
+        // Caps Lock (2), Num Lock (16) and the mouse buttons (0x100 and up) are not modifiers held.
+        assert_eq!(mods_from_x11(0x02 | 0x10 | 0x100), 0);
+        // Keycode 37 (left Control) is in the modifier map; keycode 38 ("a") is not.
+        let mut keymap = [0u8; 32];
+        keymap[37 / 8] |= 1 << (37 % 8);
+        assert!(!other_key(&keymap, &[37, 50]));
+        keymap[38 / 8] |= 1 << (38 % 8);
+        assert!(other_key(&keymap, &[37, 50]));
+    }
 
     #[test]
     fn the_autostart_entry_quotes_the_program() {

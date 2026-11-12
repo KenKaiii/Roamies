@@ -35,6 +35,22 @@ export const seesPointer = (platform, session) => platform !== 'linux' || sessio
  *  user binds keys to `roamies --summon`, `--talk` and the rest in the desktop's keyboard settings. */
 export const hasHotkeys = (platform, session) => platform !== 'linux' || session === 'x11';
 
+/** The pairs offered for the type-to-ask shortcut (a quick tap of two modifier keys), the default first. The setup
+ *  guide's rule for the talk keys: on a PC no Win key (it opens Start) and no Alt+Shift (it switches keyboard layout). */
+export const writeChords = (platform) => (platform === 'darwin'
+  ? [['option', 'command'], ['control', 'command'], ['control', 'option'], ['control', 'shift'], ['option', 'shift']]
+  : [['control', 'shift'], ['control', 'option']]);
+
+/** Two modifier pairs are the same keys, whichever order they're written in. */
+export const samePair = (a, b) => Array.isArray(a) && Array.isArray(b) && a.length === 2 && b.length === 2 && a.every((m) => b.includes(m)) && b.every((m) => a.includes(m));
+
+/** The type-to-ask pair in use: the saved one when it's on offer and isn't the talk pair, else the first on offer that
+ *  isn't. So a config from before this shortcut, or a talk pair already set to its default, still gets one. */
+export function writeChord(platform, talk, saved) {
+  const offered = writeChords(platform);
+  return offered.find((c) => samePair(c, saved) && !samePair(c, talk)) ?? offered.find((c) => !samePair(c, talk)) ?? offered[0];
+}
+
 /** Voice in: Apple's speech on macOS, Parakeet on the PC on Windows and Linux. */
 export const hasVoice = (platform) => platform === 'darwin' || platform === 'win32' || platform === 'linux';
 
@@ -51,3 +67,24 @@ export const canSnap = (platform, hands) => platform === 'darwin' || (platform =
 
 /** Circling something while holding the talk keys: the voice helper draws it, on macOS and Windows. */
 export const canCircle = (platform) => platform === 'darwin' || platform === 'win32';
+
+/** What to say when the voice helper can't use the microphone, from its no_input reason (the Mac helper sends
+ *  none: it only reports a missing mic). */
+export function micTrouble(platform, reason, detail = '') {
+  const win = platform === 'win32';
+  const sound = win ? 'Settings > System > Sound > Input' : 'your sound settings';
+  switch (reason) {
+    case 'busy':
+      return `Another app has the microphone to itself. Close anything that might be recording (calls, streaming, recorders) and try again.${win ? ' Or untick "Allow applications to take exclusive control" in the mic\'s properties.' : ''}`;
+    case 'blocked':
+      return win
+        ? 'Windows won\'t let me use the microphone. In the Privacy settings I just opened, turn on microphone access and "Let desktop apps access your microphone". If they\'re on already, antivirus or work settings may be blocking it.'
+        : 'The system won\'t let me use the microphone. Check your privacy and sound settings, then try again.';
+    case 'lost':
+      return 'The microphone cut out: it was unplugged, the input changed, or a Bluetooth headset switched modes. Try again.';
+    case 'failed':
+      return `I couldn't open the microphone${detail ? ` (${String(detail).slice(0, 120)})` : ''}. Check it is the input picked in ${sound}, then try again.`;
+    default:
+      return `I can't find a microphone. Plug one in and try again.${platform === 'darwin' ? '' : ` If one is plugged in, check it is the input picked in ${sound}.`}`;
+  }
+}
