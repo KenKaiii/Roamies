@@ -593,7 +593,7 @@
   // A drawing that goes by itself (the tour, the setup showcase) keeps all of its cards.
   const MAX_CARDS = 4;
   function roomFor(w, h, part) {
-    const old = () => [...new Set(marks.filter((q) => q.alive && q.card && !q.local && !q.leaving && q.part !== part && !drawnBy.has(q.part)).sort((a, b) => a.born - b.born).map((q) => q.part))];
+    const old = () => [...new Set(marks.filter((q) => q.alive && q.card && !q.local && !q.pinned && !q.leaving && q.part !== part && !drawnBy.has(q.part)).sort((a, b) => a.born - b.born).map((q) => q.part))];
     const shut = (id) => { R.ink.send?.({ type: 'ink_closed', part: id }); fadeOut(partMarks(id), 0.25); };
     if (!drawnBy.has(part)) for (const id of old().slice(0, -(MAX_CARDS - 1))) shut(id);
     for (;;) {
@@ -617,6 +617,9 @@
         if (bar) {
           b.fillStyle = 'rgba(120,255,226,0.06)'; b.fillRect(x + 2, y + 2, w - 4, bar - 2);
           b.fillStyle = DEEP; b.fillRect(x + 2, y + bar, w - 4, 1);
+          // pin: a pixel pushpin right of the dots; lit while pinned (the card stays until its × is clicked)
+          { const px = x + 39, py = y + 8, on = this.pinned, ink = on ? HOT : this.hoverPin ? ACC : rgba(ACC, 0.35);
+            b.fillStyle = ink; b.fillRect(px - 3, py, 7, 2); b.fillRect(px - 2, py + 2, 5, 3); b.fillRect(px - 4, py + 5, 9, 2); b.fillRect(px, py + 7, 1, on ? 4 : 3); }
           [0, 1].forEach((k) => { b.fillStyle = k ? DEEP : ACC; b.fillRect(x + 12 + k * 12, y + 11, 5, 5); });
           if (o.title) typed(b, ellipsize(String(o.title).toLowerCase(), w - 120, `500 10px ${MONO}`), x + w / 2, y + 17, `500 10px ${MONO}`, DIM, (t - this.done) / 0.4, { anchor: 'middle' });
           // full screen: four pixel corners (pointing in once it's full)
@@ -646,7 +649,7 @@
         if (!this.full) out.unshift({ rect: [x + w - 18, y + h - 18, 18, 18], kind: 'resize', part: m.part });
         // Links scrolled out of view can't be clicked.
         const more = (this.more?.() ?? []).filter((q) => q.rect[1] >= y + bar && q.rect[1] + q.rect[3] <= y + h);
-        return [...more, ...out, { rect: [x, y, w, h], kind: 'card', part: m.part }];
+        return [...(bar ? [{ rect: [x + 30, y + 2, 20, 22], kind: 'pin', part: m.part }] : []), ...more, ...out, { rect: [x, y, w, h], kind: 'card', part: m.part }];
       },
     });
     await fly(x, y); sfx('expand');
@@ -1729,7 +1732,7 @@
   // by one). It sits just above where the caption shows.
   let clearAll = null;
   function syncClearAll() {
-    const n = new Set(marks.filter((m) => m.alive && m.card && !m.leaving).map((m) => m.part)).size;
+    const n = new Set(marks.filter((m) => m.alive && m.card && !m.leaving && !m.pinned).map((m) => m.part)).size;
     if (n >= 2) {
       const str = `Clear all · ${n}`, k = 1, w = Math.round(textW(str, CHIP(k)) + 26), h = 26;
       if (clearAll?.alive && clearAll.str === str) return;
@@ -1740,18 +1743,25 @@
     } else if (clearAll) { clearAll.alive = false; clearAll = null; touch(); }
   }
   // The drawing goes and the reminders card stays: what a window coming to the front does, asked for by a click.
+  // Pinned: the card (and its arrow) stays through new drawings, clicks elsewhere, window changes, Esc and Clear all,
+  // until its × is clicked. The sidecar hears it, so the model knows it's still up.
+  function pinPart(part, on) {
+    for (const m of partMarks(part)) m.pinned = on;
+    sfx(on ? 'pip' : 'tick'); touch(0.3); syncClearAll();
+    R.ink.send?.({ type: 'ink_pinned', part, on });
+  }
   function clearDrawing() {
     stop();
     R.ink.send?.({ type: 'ink_cleared' });
     sfx('dematerialize');
-    fadeOut(marks.filter((m) => m.alive && !m.local));
+    fadeOut(marks.filter((m) => m.alive && !m.local && !m.pinned));
   }
   function clearEverything() {
     stop();
-    for (const id of new Set(marks.filter((m) => m.alive && m.part && !m.local).map((m) => m.part))) R.ink.send?.({ type: 'ink_closed', part: id });
+    for (const id of new Set(marks.filter((m) => m.alive && m.part && !m.local && !m.pinned).map((m) => m.part))) R.ink.send?.({ type: 'ink_closed', part: id });
     R.ink.send?.({ type: 'ink_cleared' });
     sfx('dematerialize');
-    fadeOut(marks.filter((m) => m.alive));
+    fadeOut(marks.filter((m) => m.alive && !m.pinned));
   }
 
   // ---------------------------------------------------------------- speech: the caption at the bottom
@@ -2076,6 +2086,7 @@
     const h = hitAt(e.clientX, e.clientY);
     if (!h) return;
     e.stopPropagation(); e.preventDefault();
+    if (h.kind === 'pin') { pinPart(h.part, !h.m.pinned); return; }
     if (h.kind === 'close') { sfx('tick'); if (!h.m.local) R.ink.send?.({ type: 'ink_closed', part: h.part }); fadeOut(partMarks(h.part)); }
     else if (h.kind === 'tick') { sfx(h.done ? 'tick' : 'pip'); REM.until = Math.max(REM.until, now() + 4); R.ink.send?.({ type: 'list_toggle', id: h.id }); }
     else if (h.kind === 'button') { h.m.down = now(); h.m.press?.(); sfx('pip'); touch(0.3); R.ink.send?.({ type: 'ink_action', part: h.part }); }
@@ -2111,6 +2122,14 @@
     const m = hitAt(e.clientX, e.clientY)?.m;
     if (m?.scrollMax > 0) { e.preventDefault(); m.sy = clamp(m.sy + e.deltaY, 0, m.scrollMax); touch(0.3); }
   }, { capture: true, passive: false });
+  // The pin button's hover: lit, with a pointing hand (after the listener above has set the cursor).
+  let pinHover = null;
+  addEventListener('pointermove', (e) => {
+    if (drag) return;
+    const h = hitAt(e.clientX, e.clientY), m = h?.kind === 'pin' ? h.m : null;
+    if (m) document.documentElement.style.cursor = 'pointer';
+    if (m !== pinHover) { if (pinHover) pinHover.hoverPin = false; if (m) m.hoverPin = true; pinHover = m; touch(0.2); }
+  }, true);
 
   // ---------------------------------------------------------------- the host's way in (host.js)
   R.inkHit = (x, y) => !!drag || !!sizing || !!hitAt(x, y);
@@ -2131,19 +2150,20 @@
     // { all: true } (Esc) takes too. stop: also ends what's playing.
     clear(e = {}) {
       if (e.stop || !e.screen) stop();
-      const gone = marks.filter((m) => m.alive && (e.screen ? m.screen : e.all || !m.local));
+      const gone = marks.filter((m) => m.alive && !m.pinned && (e.screen ? m.screen : e.all || !m.local));
       fadeOut(gone);
     },
     // Another window came to the front, or that window moved or closed: the drawing no longer sits on what it was
     // about, so all of it fades (cards too).
-    stale() { stop(); fadeOut(marks.filter((m) => m.alive && !m.local), 0.6); },
+    stale() { stop(); fadeOut(marks.filter((m) => m.alive && !m.local && !m.pinned), 0.6); },
     click(x, y) { G.wait?.click(x, y); },
     ptr(x, y) { G.ptr = [x, y]; G.wait?.ptr(x, y); },
     // The reminders list from the sidecar: { today, later, seconds, flash, toggle }. seconds > 0 opens or extends it;
     // 0 only updates it if it's open; toggle closes it if it's open.
     reminders,
     get reminding() { return remOpen(); },
-    get busy() { return G.playing || marks.length > 0; },
+    // Pinned cards stay put on purpose: they don't count, so Esc still sends the Roamie away with one up.
+    get busy() { return G.playing || marks.some((m) => m.alive && !m.pinned); },
     get playing() { return G.playing; },
     // Marks still on the real screen (frames, loops, arrows, labels): unlike cards they have no close button.
     get loose() { return marks.some((m) => m.alive && m.screen && !m.leaving); },
