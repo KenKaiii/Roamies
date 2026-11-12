@@ -9,6 +9,8 @@
   const typing = (on) => invoke('set_typing', { on }).catch(() => {});
   // Drawings (ink.js) talk to the sidecar (started, waits done, buttons, closed cards) and arm the shell's click watch.
   if (Roamie.ink) { Roamie.ink.send = send; Roamie.ink.invoke = (cmd, args) => invoke(cmd, args).catch(() => {}); }
+  // The agents' corner (agent-home.js): Stop, Allow, file tiles and Open folder go to the sidecar.
+  if (Roamie.agentHome) Roamie.agentHome.send = send;
   window.__roamieClick = (x, y) => Roamie.ink?.click(x, y);
 
   window.__roamieSafe = (s) => Roamie.setSafe?.(s);
@@ -51,6 +53,7 @@
       if (card) grown(card);
       const bar = Roamie.askBarRect?.();
       if (bar) grown(bar);
+      for (const r of Roamie.homeRects?.() ?? []) grown(r);
       // Sampled a little past the canvas: hit areas can reach beyond what's drawn.
       const box = Roamie.hitBox();
       if (box) rects.push(...Roamie.hitRects(Roamie.hitTest, [box[0] - 48, box[1] - 48, box[2] + 96, box[3] + 96]));
@@ -152,6 +155,8 @@
   // shows no thought cloud of its own. research: this turn's answer broke down into points, so it goes on the card.
   let hearing = false; // a voice take is open (the mic is on), so Esc can cancel it
   let waveTurn = false, research = false, heardText = false, spoken = '', fromWeb = false;
+  // agentish: they asked for an agent, so the agents' corner hatches one instead of the thought cloud.
+  let agentish = false;
   // An answer that turns into points (or cites sources) reads better on the card than in a bubble.
   const LISTY = /\n\s*(?:[-*•]|\d+[.)])\s+\S|\n\s*sources?\s*:/i;
   const panel = () => {
@@ -251,10 +256,14 @@
         responding = true;
         heard = null;
         research = false; fromWeb = false; spoken = '';
-        if (!listen?.open && !waveTurn) thought = a.think('', { stream: true });
+        agentish = !!e.agentish;
+        if (agentish) {
+          const p = a.visible ? [a.pos.x, a.pos.y - a.pos.r - 28] : cursor ? [cursor[0] + 30, cursor[1] + 26] : [innerWidth / 2, innerHeight / 3];
+          Roamie.agentHome?.hatch(p);
+        } else if (!listen?.open && !waveTurn) thought = a.think('', { stream: true });
         break;
       case 'thinking':
-        if (speech || listen?.open || waveTurn || research) break;
+        if (speech || listen?.open || waveTurn || research || agentish) break;
         if (!thought) thought = a.think('', { stream: true, quiet: true });
         thought.append(e.text);
         break;
@@ -337,6 +346,7 @@
         break;
       case 'done':
         responding = false;
+        if (agentish) { agentish = false; Roamie.agentHome?.hatchOff(); }
         if (research) panel()?.end(fromWeb ? 'From the web' : 'Answer');
         research = waveTurn = false;
         endTalk();
@@ -346,6 +356,7 @@
       case 'error':
         dropAutoListen();
         responding = false;
+        if (agentish) { agentish = false; Roamie.agentHome?.hatchOff(); }
         if (research) panel()?.fail(e.message);
         research = waveTurn = false;
         endTalk();
@@ -428,6 +439,12 @@
       return;
     }
     if (!getAgent()) return;
+    if (m.kind === 'agents') {
+      // A launch flies out of the visible Roamie (or from the cursor); the hatch, when there is one, wins.
+      const a = getAgent();
+      Roamie.agentHome?.event(m.e, { from: a.visible ? [a.pos.x, a.pos.y] : cursor });
+      return;
+    }
     if (m.kind === 'hands') {
       // on/off: it is acting in another app. In between: where each step lands (global screen points) and when a
       // step takes the real cursor; the Sidekick hops there in its cursor form instead of chasing the cursor.

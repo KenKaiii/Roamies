@@ -143,7 +143,15 @@
     Object.assign(m, { p: m.p ?? 0, alpha: 1, dx: 0, dy: 0, born: now(), alive: true, z: m.z ?? 3, color: m.color ?? ACC });
     marks.push(m); touch(); return m;
   }
-  const markBox = (m) => { const b = typeof m.box === 'function' ? m.box() : m.box ?? (m.pts ? boxOf(m.pts) : null); return b ? [b[0] + m.dx, b[1] + m.dy, b[2], b[3]] : [0, 0, W, H]; };
+  // A rect in a mark's own coordinates → on screen: moved by (dx, dy), and for a card zoomed by k from its top left
+  // (ox, oy), when it has been resized or made full screen.
+  const xf = (m, r) => {
+    const k = m.k ?? 1;
+    if (k === 1) return [r[0] + m.dx, r[1] + m.dy, r[2], r[3]];
+    const ox = m.ox ?? 0, oy = m.oy ?? 0;
+    return [ox + (r[0] - ox) * k + m.dx, oy + (r[1] - oy) * k + m.dy, r[2] * k, r[3] * k];
+  };
+  const markBox = (m) => { const b = typeof m.box === 'function' ? m.box() : m.box ?? (m.pts ? boxOf(m.pts) : null); return b ? xf(m, b) : [0, 0, W, H]; };
   const clampR = (r) => { const x0 = Math.max(0, Math.floor(r[0])), y0 = Math.max(0, Math.floor(r[1])), x1 = Math.min(W, Math.ceil(r[0] + r[2])), y1 = Math.min(H, Math.ceil(r[1] + r[3])); return [x0, y0, Math.max(0, x1 - x0), Math.max(0, y1 - y0)]; };
   // Repaints one area: clears it on both layers, draws the marks that touch it, then the glow (the ink blurred under
   // itself, like the user's pen: 0.75, radius ~6).
@@ -157,7 +165,10 @@
       for (const c of i ? [Lc] : [V, Lc]) { c.setTransform(DPR, 0, 0, DPR, 0, 0); c.clearRect(C[0], C[1], C[2], C[3]); }
       for (const c of [V, Lc]) { c.save(); c.beginPath(); c.rect(C[0], C[1], C[2], C[3]); c.clip(); }
       for (const m of group) {
-        for (const c of [V, Lc]) { c.save(); c.globalAlpha = m.alpha; c.translate(m.dx, m.dy); }
+        for (const c of [V, Lc]) {
+          c.save(); c.globalAlpha = m.alpha; c.translate(m.dx, m.dy);
+          if ((m.k ?? 1) !== 1) { c.translate(m.ox, m.oy); c.scale(m.k, m.k); c.translate(-m.ox, -m.oy); }
+        }
         try { m.draw(V, Lc, t); } catch (e) { console.error('ink', e); m.alive = false; }
         for (const c of [V, Lc]) c.restore();
       }
@@ -179,7 +190,7 @@
     for (let i = marks.length - 1; i >= 0; i--) if (!marks[i].alive) marks.splice(i, 1);
     if (!marks.length) { if (alloc) freeCanvas(); return; }
     if (!alloc) allocate();
-    const full = t < until || !!drag || !lastU, live = full ? [] : marks.filter((m) => m.live?.(t));
+    const full = t < until || !!drag || !!sizing || !lastU, live = full ? [] : marks.filter((m) => m.live?.(t));
     if (full) {
       let U = null;
       for (const m of marks) U = union(U, grow(markBox(m), 28));
@@ -582,7 +593,7 @@
   // A drawing that goes by itself (the tour, the setup showcase) keeps all of its cards.
   const MAX_CARDS = 4;
   function roomFor(w, h, part) {
-    const old = () => [...new Set(marks.filter((q) => q.alive && q.card && !q.local && !q.leaving && q.part !== part && !drawnBy.has(q.part)).sort((a, b) => a.born - b.born).map((q) => q.part))];
+    const old = () => [...new Set(marks.filter((q) => q.alive && q.card && !q.local && !q.pinned && !q.leaving && q.part !== part && !drawnBy.has(q.part)).sort((a, b) => a.born - b.born).map((q) => q.part))];
     const shut = (id) => { R.ink.send?.({ type: 'ink_closed', part: id }); fadeOut(partMarks(id), 0.25); };
     if (!drawnBy.has(part)) for (const id of old().slice(0, -(MAX_CARDS - 1))) shut(id);
     for (;;) {
@@ -598,7 +609,7 @@
     const full = h;
     h = Math.min(full, maxCardH());
     const [x, y] = roomFor(w, h, m.part), bar = o.bar === false ? 0 : 26;
-    const c = add({ z: 2, part: m.part, card: true, kind: m.kind, cw: 0, ch: 0, p: 0, done: 0, w, h, sy: 0, scrollMax: Math.max(0, full - h), color: tone(m.tone), live: o.live, box: () => [x - 4, y - 4, w + 8, h + 14],
+    const c = add({ z: 2, part: m.part, card: true, kind: m.kind, cw: 0, ch: 0, p: 0, done: 0, w, h, ox: x, oy: y, sy: 0, scrollMax: Math.max(0, full - h), color: tone(m.tone), live: o.live, box: () => [x - 4, y - 4, w + 8, h + 14],
       draw(b, l, t) {
         if (this.cw < 4) return;
         chrome(b, x, y, this.cw, this.ch, { edge: o.edge ? colorOf(this, this.color) : ACC });
@@ -606,8 +617,18 @@
         if (bar) {
           b.fillStyle = 'rgba(120,255,226,0.06)'; b.fillRect(x + 2, y + 2, w - 4, bar - 2);
           b.fillStyle = DEEP; b.fillRect(x + 2, y + bar, w - 4, 1);
+          // pin: a pixel pushpin right of the dots; lit while pinned (the card stays until its × is clicked)
+          { const px = x + 39, py = y + 8, on = this.pinned, ink = on ? HOT : this.hoverPin ? ACC : rgba(ACC, 0.35);
+            b.fillStyle = ink; b.fillRect(px - 3, py, 7, 2); b.fillRect(px - 2, py + 2, 5, 3); b.fillRect(px - 4, py + 5, 9, 2); b.fillRect(px, py + 7, 1, on ? 4 : 3); }
           [0, 1].forEach((k) => { b.fillStyle = k ? DEEP : ACC; b.fillRect(x + 12 + k * 12, y + 11, 5, 5); });
-          if (o.title) typed(b, ellipsize(String(o.title).toLowerCase(), w - 90, `500 10px ${MONO}`), x + w / 2, y + 17, `500 10px ${MONO}`, DIM, (t - this.done) / 0.4, { anchor: 'middle' });
+          if (o.title) typed(b, ellipsize(String(o.title).toLowerCase(), w - 120, `500 10px ${MONO}`), x + w / 2, y + 17, `500 10px ${MONO}`, DIM, (t - this.done) / 0.4, { anchor: 'middle' });
+          // full screen: four pixel corners (pointing in once it's full)
+          { const fx = x + w - 44, fy = y + 13, s = 4, f = this.full ? -1 : 1;
+            b.fillStyle = this.hoverFull ? HOT : DIM;
+            for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+              const cx = fx + sx * s, cy = fy + sy * s;
+              b.fillRect(cx - (sx * f < 0 ? 0 : 2), cy - 1, 3, 2); b.fillRect(cx - 1, cy - (sy * f < 0 ? 0 : 2), 2, 3);
+            } }
           // close: a small pixel ×
           const cx = x + w - 18, cy = y + 13, hot = this.hoverClose;
           b.fillStyle = hot ? HOT : DIM; for (let k = -3; k <= 3; k++) { b.fillRect(cx + k - 1, cy + k - 1, 2, 2); b.fillRect(cx + k - 1, cy - k - 1, 2, 2); }
@@ -620,12 +641,15 @@
           b.fillStyle = rgba(ACC, 0.15); b.fillRect(x + w - 7, top, 2, len);
           b.fillStyle = ACC; b.fillRect(x + w - 7, ty, 2, th);
         }
+        // resize grip: three pixel steps in the bottom right corner
+        if (this.p >= 1 && !this.full) { b.fillStyle = this.hoverGrip ? HOT : rgba(ACC, 0.45); for (let k = 0; k < 3; k++) for (let j = 0; j <= k; j++) b.fillRect(x + w - 6 - j * 4, y + h - 14 + k * 4, 2, 2); }
       },
       hits() {
-        const out = bar ? [{ rect: [x + w - 28, y + 2, 26, 22], kind: 'close', part: m.part }, { rect: [x, y, w - 30, bar], kind: 'drag', part: m.part }] : [{ rect: [x, y, w, Math.min(h, 24)], kind: 'drag', part: m.part }];
+        const out = bar ? [{ rect: [x + w - 28, y + 2, 26, 22], kind: 'close', part: m.part }, { rect: [x + w - 54, y + 2, 22, 22], kind: 'full', part: m.part }, { rect: [x, y, w - 56, bar], kind: 'drag', part: m.part }] : [{ rect: [x, y, w, Math.min(h, 24)], kind: 'drag', part: m.part }];
+        if (!this.full) out.unshift({ rect: [x + w - 18, y + h - 18, 18, 18], kind: 'resize', part: m.part });
         // Links scrolled out of view can't be clicked.
         const more = (this.more?.() ?? []).filter((q) => q.rect[1] >= y + bar && q.rect[1] + q.rect[3] <= y + h);
-        return [...more, ...out, { rect: [x, y, w, h], kind: 'card', part: m.part }];
+        return [...(bar ? [{ rect: [x + 30, y + 2, 20, 22], kind: 'pin', part: m.part }] : []), ...more, ...out, { rect: [x, y, w, h], kind: 'card', part: m.part }];
       },
     });
     await fly(x, y); sfx('expand');
@@ -1708,7 +1732,7 @@
   // by one). It sits just above where the caption shows.
   let clearAll = null;
   function syncClearAll() {
-    const n = new Set(marks.filter((m) => m.alive && m.card && !m.leaving).map((m) => m.part)).size;
+    const n = new Set(marks.filter((m) => m.alive && m.card && !m.leaving && !m.pinned).map((m) => m.part)).size;
     if (n >= 2) {
       const str = `Clear all · ${n}`, k = 1, w = Math.round(textW(str, CHIP(k)) + 26), h = 26;
       if (clearAll?.alive && clearAll.str === str) return;
@@ -1719,18 +1743,25 @@
     } else if (clearAll) { clearAll.alive = false; clearAll = null; touch(); }
   }
   // The drawing goes and the reminders card stays: what a window coming to the front does, asked for by a click.
+  // Pinned: the card (and its arrow) stays through new drawings, clicks elsewhere, window changes, Esc and Clear all,
+  // until its × is clicked. The sidecar hears it, so the model knows it's still up.
+  function pinPart(part, on) {
+    for (const m of partMarks(part)) m.pinned = on;
+    sfx(on ? 'pip' : 'tick'); touch(0.3); syncClearAll();
+    R.ink.send?.({ type: 'ink_pinned', part, on });
+  }
   function clearDrawing() {
     stop();
     R.ink.send?.({ type: 'ink_cleared' });
     sfx('dematerialize');
-    fadeOut(marks.filter((m) => m.alive && !m.local));
+    fadeOut(marks.filter((m) => m.alive && !m.local && !m.pinned));
   }
   function clearEverything() {
     stop();
-    for (const id of new Set(marks.filter((m) => m.alive && m.part && !m.local).map((m) => m.part))) R.ink.send?.({ type: 'ink_closed', part: id });
+    for (const id of new Set(marks.filter((m) => m.alive && m.part && !m.local && !m.pinned).map((m) => m.part))) R.ink.send?.({ type: 'ink_closed', part: id });
     R.ink.send?.({ type: 'ink_cleared' });
     sfx('dematerialize');
-    fadeOut(marks.filter((m) => m.alive));
+    fadeOut(marks.filter((m) => m.alive && !m.pinned));
   }
 
   // ---------------------------------------------------------------- speech: the caption at the bottom
@@ -2018,33 +2049,54 @@
   }
 
   // ---------------------------------------------------------------- hit areas: buttons, card close, card drag, links
-  let drag = null, hovered = null;
+  let drag = null, hovered = null, sizing = null;
+  // Zoom limits for a card: never smaller than 60 %, never bigger than the screen.
+  const maxK = (m) => { const S = scr(); return Math.max(1, Math.min((S[2] - S[0] - 16) / (m.w + 8), (S[3] - S[1] - 16) / (m.h + 14))); };
+  // Full screen: the card zooms to fill the screen, centred; again, and it goes back where and how big it was.
+  async function toggleFull(m) {
+    const from = { k: m.k ?? 1, dx: m.dx, dy: m.dy };
+    let to;
+    if (m.full) { to = m.before ?? { k: 1, dx: 0, dy: 0 }; m.full = false; m.before = null; }
+    else {
+      const S = scr(), k = Math.min((S[2] - S[0] - 48) / m.w, (S[3] - S[1] - 48) / m.h);
+      m.before = from; m.full = true;
+      to = { k, dx: S[0] + (S[2] - S[0] - m.w * k) / 2 - m.ox, dy: S[1] + (S[3] - S[1] - m.h * k) / 2 - m.oy };
+    }
+    m.z = m.full ? 4 : 2; // full: above the other cards
+    sfx(m.full ? 'expand' : 'tick');
+    await tween(0.3, (u) => { const e = ease(u); m.k = from.k + (to.k - from.k) * e; m.dx = from.dx + (to.dx - from.dx) * e; m.dy = from.dy + (to.dy - from.dy) * e; });
+  }
   const hitAt = (x, y) => {
     for (const m of [...marks].sort((a, b) => b.z - a.z)) {
       if (!m.alive || !m.hits || m.alpha < 0.5) continue;
-      for (const h of m.hits()) { const r = [h.rect[0] + m.dx, h.rect[1] + m.dy, h.rect[2], h.rect[3]]; if (inside(r, x, y)) return { ...h, m }; }
+      for (const h of m.hits()) { const r = xf(m, h.rect); if (inside(r, x, y)) return { ...h, m }; }
     }
     return null;
   };
   const setHover = (h) => {
     const m = h?.m ?? null;
-    if (hovered && hovered !== m) { hovered.hover = false; hovered.hoverClose = false; hovered.hoverId = null; hovered.setHover?.(false); }
-    if (m) { m.hover = h.kind === 'button' || h.kind === 'link' || h.kind === 'clearall'; m.hoverClose = h.kind === 'close'; m.hoverId = h.kind === 'tick' || h.kind === 'pick' ? h.id : null; m.setHover?.(h.kind === 'button'); }
+    if (hovered && hovered !== m) { hovered.hover = false; hovered.hoverClose = false; hovered.hoverFull = false; hovered.hoverGrip = false; hovered.hoverId = null; hovered.setHover?.(false); }
+    if (m) { m.hover = h.kind === 'button' || h.kind === 'link' || h.kind === 'clearall'; m.hoverClose = h.kind === 'close'; m.hoverFull = h.kind === 'full'; m.hoverGrip = h.kind === 'resize'; m.hoverId = h.kind === 'tick' || h.kind === 'pick' ? h.id : null; m.setHover?.(h.kind === 'button'); }
     if (hovered !== m || m) touch(0.2);
     hovered = m;
-    document.documentElement.style.cursor = h && (h.kind === 'button' || h.kind === 'close' || h.kind === 'link' || h.kind === 'clearall' || h.kind === 'tick' || h.kind === 'pick') ? 'pointer' : h?.kind === 'drag' ? 'grab' : 'default';
+    document.documentElement.style.cursor = h && (h.kind === 'button' || h.kind === 'close' || h.kind === 'full' || h.kind === 'link' || h.kind === 'clearall' || h.kind === 'tick' || h.kind === 'pick') ? 'pointer' : h?.kind === 'drag' ? 'grab' : h?.kind === 'resize' ? 'nwse-resize' : 'default';
   };
-  const ours = (e) => !!hitAt(e.clientX, e.clientY) || !!drag;
+  const ours = (e) => !!hitAt(e.clientX, e.clientY) || !!drag || !!sizing;
   addEventListener('pointerdown', (e) => {
     const h = hitAt(e.clientX, e.clientY);
     if (!h) return;
     e.stopPropagation(); e.preventDefault();
+    if (h.kind === 'pin') { pinPart(h.part, !h.m.pinned); return; }
     if (h.kind === 'close') { sfx('tick'); if (!h.m.local) R.ink.send?.({ type: 'ink_closed', part: h.part }); fadeOut(partMarks(h.part)); }
     else if (h.kind === 'tick') { sfx(h.done ? 'tick' : 'pip'); REM.until = Math.max(REM.until, now() + 4); R.ink.send?.({ type: 'list_toggle', id: h.id }); }
     else if (h.kind === 'button') { h.m.down = now(); h.m.press?.(); sfx('pip'); touch(0.3); R.ink.send?.({ type: 'ink_action', part: h.part }); }
     else if (h.kind === 'link') { sfx('pip'); R.ink.send?.({ type: 'open_link', url: h.url }); }
     else if (h.kind === 'pick') { h.m.pick?.(h.id); touch(1); }
     else if (h.kind === 'clearall') clearEverything();
+    else if (h.kind === 'full') toggleFull(h.m);
+    else if (h.kind === 'resize') { sizing = { m: h.m }; sfx('grab'); touch(); }
+    // A full-screen card stays up when its body is clicked (there's nothing under it to be after).
+    else if (h.kind === 'card' && h.m.full) return;
     // A click on a card's body: they're after what's under it, so the drawing goes, as it does when another window
     // comes to the front (cards move by their top bar). Not a quiz (a click between two options isn't "go away"),
     // and not the reminders card or a drawing that goes by itself, which still move by the body.
@@ -2054,9 +2106,15 @@
   }, true);
   addEventListener('pointermove', (e) => {
     if (drag) { const dx = e.clientX - drag.x, dy = e.clientY - drag.y; drag.ms.forEach((m, i) => { m.dx = drag.start[i][0] + dx; m.dy = drag.start[i][1] + dy; }); touch(0.2); return; }
+    // Resizing: the corner follows the pointer, keeping the card's shape (it zooms from its top left).
+    if (sizing) {
+      const m = sizing.m, left = m.ox + m.dx, top = m.oy + m.dy;
+      m.k = clamp(Math.max((e.clientX - left) / m.w, (e.clientY - top) / m.h), 0.6, maxK(m));
+      touch(0.2); return;
+    }
     setHover(hitAt(e.clientX, e.clientY));
   }, true);
-  addEventListener('pointerup', (e) => { if (drag) { drag = null; e.stopPropagation(); touch(0.2); } }, true);
+  addEventListener('pointerup', (e) => { if (drag || sizing) { drag = null; sizing = null; e.stopPropagation(); touch(0.2); } }, true);
   addEventListener('wheel', (e) => {
     if (!ours(e)) return;
     e.stopPropagation();
@@ -2064,15 +2122,23 @@
     const m = hitAt(e.clientX, e.clientY)?.m;
     if (m?.scrollMax > 0) { e.preventDefault(); m.sy = clamp(m.sy + e.deltaY, 0, m.scrollMax); touch(0.3); }
   }, { capture: true, passive: false });
+  // The pin button's hover: lit, with a pointing hand (after the listener above has set the cursor).
+  let pinHover = null;
+  addEventListener('pointermove', (e) => {
+    if (drag) return;
+    const h = hitAt(e.clientX, e.clientY), m = h?.kind === 'pin' ? h.m : null;
+    if (m) document.documentElement.style.cursor = 'pointer';
+    if (m !== pinHover) { if (pinHover) pinHover.hoverPin = false; if (m) m.hoverPin = true; pinHover = m; touch(0.2); }
+  }, true);
 
   // ---------------------------------------------------------------- the host's way in (host.js)
-  R.inkHit = (x, y) => !!drag || !!hitAt(x, y);
+  R.inkHit = (x, y) => !!drag || !!sizing || !!hitAt(x, y);
   // Every clickable area as [x, y, w, h]: Linux hosts make these part of the window's click shape (host.js).
   R.inkRects = () => {
     const out = [];
     for (const m of marks) {
       if (!m.alive || !m.hits || m.alpha < 0.5) continue;
-      for (const h of m.hits()) out.push([h.rect[0] + m.dx, h.rect[1] + m.dy, h.rect[2], h.rect[3]]);
+      for (const h of m.hits()) out.push(xf(m, h.rect));
     }
     return out;
   };
@@ -2084,19 +2150,20 @@
     // { all: true } (Esc) takes too. stop: also ends what's playing.
     clear(e = {}) {
       if (e.stop || !e.screen) stop();
-      const gone = marks.filter((m) => m.alive && (e.screen ? m.screen : e.all || !m.local));
+      const gone = marks.filter((m) => m.alive && !m.pinned && (e.screen ? m.screen : e.all || !m.local));
       fadeOut(gone);
     },
     // Another window came to the front, or that window moved or closed: the drawing no longer sits on what it was
     // about, so all of it fades (cards too).
-    stale() { stop(); fadeOut(marks.filter((m) => m.alive && !m.local), 0.6); },
+    stale() { stop(); fadeOut(marks.filter((m) => m.alive && !m.local && !m.pinned), 0.6); },
     click(x, y) { G.wait?.click(x, y); },
     ptr(x, y) { G.ptr = [x, y]; G.wait?.ptr(x, y); },
     // The reminders list from the sidecar: { today, later, seconds, flash, toggle }. seconds > 0 opens or extends it;
     // 0 only updates it if it's open; toggle closes it if it's open.
     reminders,
     get reminding() { return remOpen(); },
-    get busy() { return G.playing || marks.length > 0; },
+    // Pinned cards stay put on purpose: they don't count, so Esc still sends the Roamie away with one up.
+    get busy() { return G.playing || marks.some((m) => m.alive && !m.pinned); },
     get playing() { return G.playing; },
     // Marks still on the real screen (frames, loops, arrows, labels): unlike cards they have no close button.
     get loose() { return marks.some((m) => m.alive && m.screen && !m.leaving); },

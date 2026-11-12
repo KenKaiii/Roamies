@@ -363,7 +363,7 @@ export function createParts() {
 export const describeParts = (entries) => entries.map(([id, p]) => `${id} ${p.desc}`).join(', ');
 
 // ---------------------------------------------------------------- photos and favicons
-// Fetched through the same rules as fetch_url (public http(s) only, every redirect checked), size-capped, and handed
+// Fetched through the same rules as web_fetch (public http(s) only, every redirect checked), size-capped, and handed
 // to the overlay as data URLs so it can dither them on its canvas without loading anything itself.
 async function getChecked(url, { fetchImpl = fetch, max, accept }) {
   let at = String(url), res;

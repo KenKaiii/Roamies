@@ -5,10 +5,10 @@ import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { createWebFetchTool, createWebSearchTool, runSideWebSearch, runSideWebSearchViaClaudeCode } from '@kenkaiiii/ggcoder/web';
 import { z } from 'zod';
 import { parseSipsSize, readProblem, rematch, sameBounds, shotFits, shotMap, shotProblem, snapRect, toScreen } from './pointing.mjs';
-import { ASK, BLOCK, checkDrawAction, checkOpen, checkRead, checkUrl, checkWrite, classifyCommand, isPrivateAddress, isRiskyClick, isYes, riskyKind } from './safety.mjs';
-import dns from 'node:dns/promises';
+import { ASK, BLOCK, checkDrawAction, checkFetch, checkOpen, checkRead, checkWrite, classifyCommand, isRiskyClick, isYes, riskyKind } from './safety.mjs';
 import { CARDS, DrawArgs, LIMITS, checkDraw, createParts, createPhotos, describeParts, faviconFor, pickTextMatch, quizNote, resolveTargets } from './draw.mjs';
 import { plain } from './intro.mjs';
 import { linuxSession, seesPointer } from './platform.mjs';
@@ -211,7 +211,21 @@ export const copyText = (text, askShell) => (LINUX ? askShell({ type: 'clipboard
 }));
 
 // askShell: Linux asks the app itself for screenshots and copying ({type:'screenshot'|'clipboard', …} → its answer).
-export function createTools({ allowActions, ui, ask, openUrl, onCommitments, showList, fmtWhen, commitmentsText, userName, onPlan = () => {}, speak = () => false, onHandoff = () => {}, watchClicks = () => {}, onInkGone = () => {}, askShell = async () => ({ ok: false, error: 'Roamies isn\'t running.' }) }) {
+/** GG Coder's side search for the sign-in in use, so a search's result pages never fill the main model's context: Claude
+ *  Code's WebSearch on a Claude sign-in ({ cc, cwd }), Anthropic's server search on an Anthropic key ({ apiKey, baseUrl }),
+ *  else null, and web_search uses its keyless engines (DuckDuckGo, Brave, Bing, Google). */
+export function sideSearchFor(route) {
+  if (route?.cc?.executable) return (req) => runSideWebSearchViaClaudeCode(req, { executable: route.cc.executable, env: route.cc.env ?? {}, cwd: route.cwd ?? HOME });
+  if (route?.apiKey) return (req) => runSideWebSearch(req, { apiKey: route.apiKey, ...(route.baseUrl ? { baseUrl: route.baseUrl } : {}) });
+  return null;
+}
+// Every request and redirect hop of web_fetch goes through safety.mjs, by name and by the addresses it resolves to.
+export const guardFetch = async (url) => { const v = await checkFetch(url); return v.level === BLOCK ? `Blocked for safety: ${v.reason}` : null; };
+
+export function createTools({ allowActions, ui, ask, openUrl, onCommitments, showList, fmtWhen, commitmentsText, userName, onPlan = () => {}, speak = () => false, onHandoff = () => {}, watchClicks = () => {}, onInkGone = () => {}, askShell = async () => ({ ok: false, error: 'Roamies isn\'t running.' }), workdir = HOME, own = null, sideSearch = async () => null }) {
+  // Relative paths (and run_command) start in workdir: the home folder for the chat, its own folder for an agent.
+  const at = (p) => { const s = String(p ?? ''); return /^~(?=$|\/|\\)/.test(s) || path.isAbsolute(s) || /^[a-z]:[\\/]/i.test(s) ? s : path.join(workdir, s); };
+  const where = workdir === HOME ? "the user's home folder" : `its working folder (${workdir})`;
   let axNudged = 0;
   let lastShot = null; // how the latest screenshot's pixels map to screen points (see pointing.mjs)
   let lastRead = null; // { win, controls } from the latest read_window, to catch ids that went stale
@@ -836,13 +850,13 @@ A drawing stays until the user clears it or the window changes; your next drawin
     {
       name: 'read_file', description: 'Read a text file. Paths may start with ~. Files with passwords or keys (.ssh, .env, auth.json, keychains) are off limits.',
       parameters: z.object({ path: z.string() }),
-      execute: async ({ path: p }) => clip(await fs.readFile(allowed(checkRead(p, HOME)), 'utf8'), 60_000),
+      execute: async ({ path: p }) => clip(await fs.readFile(allowed(checkRead(at(p), HOME)), 'utf8'), 60_000),
     },
     {
       name: 'list_files', description: 'List the files and folders in a directory.',
       parameters: z.object({ dir: z.string() }),
       execute: async ({ dir }) => {
-        const ents = await fs.readdir(allowed(checkRead(dir, HOME)), { withFileTypes: true });
+        const ents = await fs.readdir(allowed(checkRead(at(dir), HOME)), { withFileTypes: true });
         return ents.slice(0, 300).map((e) => (e.isDirectory() ? e.name + '/' : e.name)).join('\n') + (ents.length > 300 ? `\n…and ${ents.length - 300} more` : '');
       },
     },
@@ -850,7 +864,7 @@ A drawing stays until the user clears it or the window changes; your next drawin
       name: 'search_files', description: `Search file contents under a specific folder for a text pattern (regex). Not your whole home folder: that trips macOS privacy prompts. To find files by name anywhere, use run_command with ${process.platform === 'darwin' ? 'mdfind' : LINUX ? 'find or locate' : 'dir /s'}.`,
       parameters: z.object({ pattern: z.string(), dir: z.string() }),
       execute: async ({ pattern, dir }) => {
-        const d = allowed(checkRead(dir, HOME, { recursive: true }));
+        const d = allowed(checkRead(at(dir), HOME, { recursive: true }));
         // -e and -- keep a pattern like "--pre=cmd" from being read as an option (rg --pre runs programs).
         let r = await run('rg', ['-n', '--max-count', '5', '--max-columns', '200', '-e', pattern, '--', d]);
         if (r.err?.code === 'ENOENT') r = await run('grep', ['-rnI', '-m', '5', '-E', '-e', pattern, '--', d]);
@@ -862,8 +876,9 @@ A drawing stays until the user clears it or the window changes; your next drawin
       parameters: z.object({ path: z.string(), content: z.string() }), executionMode: 'sequential',
       execute: async ({ path: p, content }, ctx) => {
         if (!allowActions()) throw new Error(actionsOff);
+        p = at(p);
         const exists = await fs.stat(expand(p)).then(() => true, () => false);
-        const v = checkWrite(p, HOME, { exists });
+        const v = checkWrite(p, HOME, { exists, own });
         const f = allowed(v);
         if (v.level === ASK && !(await confirm(v.reason, ctx))) throw new Error(`${userName} said no, so I didn't write ${p}.`);
         await fs.mkdir(path.dirname(f), { recursive: true });
@@ -872,46 +887,28 @@ A drawing stays until the user clears it or the window changes; your next drawin
       },
     },
     {
-      name: 'run_command', description: "Run a shell command in the user's home folder and return its output. Use it for what the other tools can't do (counting, sorting, wc, mdfind, git, moving or copying); to open a file, folder, app or link use the open tool, which needs no yes. Prefer write_file for creating or editing files (several files: one write_file call each, in the same turn); never edit with sed -i or tee, and never make files in a shell loop (for/while), which always needs a yes. A > redirect into a new file is fine; overwriting an existing file, and commands that change things, make the user confirm first, which is slow.",
+      name: 'run_command', description: `Run a shell command in ${where} and return its output. Use it for what the other tools can't do (counting, sorting, wc, mdfind, git, moving or copying); to open a file, folder, app or link use the open tool, which needs no yes. Prefer write_file for creating or editing files (several files: one write_file call each, in the same turn); never edit with sed -i or tee, and never make files in a shell loop (for/while), which always needs a yes. A > redirect into a new file is fine; overwriting an existing file, and commands that change things, make the user confirm first, which is slow.`,
       parameters: z.object({ command: z.string() }), executionMode: 'sequential', timeoutMs: 190_000, // up to 2 min to answer, then the 60 s run
       execute: async ({ command }, ctx) => {
         if (!allowActions()) throw new Error(actionsOff);
-        const v = classifyCommand(command, HOME, { exists: existsSync });
+        const v = classifyCommand(command, HOME, { exists: existsSync, cwd: workdir, own });
         if (v.level === BLOCK) throw new Error(`Blocked for safety: ${v.reason} Don't try to get around this; tell ${userName} what you wanted to do instead.`);
         if (v.level === ASK && !(await confirm(`Run \`${command.length > 70 ? command.slice(0, 67) + '…' : command}\`?${v.reason ? ' ' + v.reason : ''}`, ctx))) {
           throw new Error(`${userName} said no, so the command didn't run.`);
         }
         const shell = process.platform === 'win32' ? ['cmd', ['/c', command]] : [process.env.SHELL || (LINUX ? '/bin/bash' : '/bin/zsh'), ['-lc', command]];
-        const r = await run(shell[0], shell[1], { cwd: HOME, env: { ...process.env, ...GIT_SAFE } });
+        const r = await run(shell[0], shell[1], { cwd: workdir, env: { ...process.env, ...GIT_SAFE } });
         const out = clip((r.stdout + (r.stderr ? `\n[stderr]\n${r.stderr}` : '')).trim() || '(no output)', 12_000);
         if (r.err && r.err.code !== 0) throw new Error(`Exit ${r.err.code ?? r.err.signal}\n${out}`);
         return out;
       },
     },
-    {
-      name: 'fetch_url', description: 'Fetch a web page and return its readable text.',
-      parameters: z.object({ url: z.string() }), // no .url(): OpenAI strict schemas reject format "uri"; checkUrl validates
-      execute: async ({ url }) => {
-        // Redirects are followed by hand so each hop is checked too (a public page can't bounce to localhost), and
-        // each host's addresses too (a public name can point at 127.0.0.1 or the local network).
-        let res, at = url;
-        for (let hop = 0; ; hop++) {
-          allowed(checkUrl(at));
-          const host = new URL(at).hostname.replace(/^\[|\]$/g, '');
-          const addrs = await dns.lookup(host, { all: true }).catch(() => []);
-          if (addrs.some((x) => isPrivateAddress(x.address))) throw new Error(`${host} leads to your own computer or network, so I won't fetch it.`);
-          res = await fetch(at, { headers: { 'user-agent': 'Roamies-Sidekick' }, redirect: 'manual', signal: AbortSignal.timeout(20_000) });
-          const next = res.status >= 300 && res.status < 400 && res.headers.get('location');
-          if (!next) break;
-          if (hop >= 5) throw new Error('Too many redirects.');
-          at = new URL(next, at).href;
-        }
-        url = at;
-        const html = await res.text();
-        const text = html.replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
-        return clip(`${res.status} ${url}\n${text}`, 15_000);
-      },
-    },
+    // GG Coder's own web tools: search with a side search or keyless engines, pages as Markdown with offset to read on.
+    createWebSearchTool(undefined, async (req) => {
+      const side = sideSearchFor(await Promise.resolve().then(sideSearch).catch(() => null));
+      return side ? side(req) : null;
+    }),
+    createWebFetchTool(undefined, { guardUrl: guardFetch }),
     {
       name: 'open', description: 'Open a website, a file or folder, or an app by name (e.g. "Safari", "https://skool.com", "~/Documents"). Links open in the default browser; set app to open one in a particular browser or app (e.g. app "Safari" when the user says "in Safari").',
       parameters: z.object({ target: z.string(), app: z.string().optional() }),

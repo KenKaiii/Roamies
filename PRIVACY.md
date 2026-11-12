@@ -29,8 +29,12 @@ key) receives:
 
 **Wikipedia** is used to fetch photos for photo cards, and websites' `favicon.ico` is fetched for source cards.
 
-**Websites** that you or the agent open or fetch (for example with its `fetch_url` tool) receive the usual
+**Websites** that you or the agent open or fetch (for example with its `web_fetch` tool) receive the usual
 request a browser would send.
+
+**Search engines**: when the agent searches the web (its `web_search` tool) on a model from Anthropic, Anthropic
+runs the search. On other providers, or when that search fails, the search words go to DuckDuckGo and, if it
+doesn't answer, to Brave, Bing or Google.
 
 Each provider's own privacy policy applies to what is sent to it.
 

@@ -10,9 +10,10 @@ assert.deepEqual(cards.filter((c) => c.connected).map((c) => c.id), ['openai']);
 
 // Regression: only the providers in a <select> were offered, and it showed one name until opened.
 const keys = keyCards(AUTH_PROVIDERS, (id) => id === 'deepseek');
-assert.deepEqual(keys.map((k) => k.id), ['anthropic', 'openai', 'gemini', 'xai', 'kimi-code', 'moonshot', 'glm', 'minimax', 'xiaomi', 'xiaomi-credits', 'deepseek', 'sakana', 'openrouter', 'huggingface'],
+assert.deepEqual(keys.map((k) => k.id), ['anthropic', 'openai', 'gemini', 'xai', 'kimi-code', 'moonshot', 'glm', 'minimax', 'xiaomi', 'xiaomi-credits', 'deepseek', 'sakana', 'opencode-go', 'opencode', 'openrouter', 'huggingface'],
   'every kind of API key, Anthropic and OpenAI included; Kimi and Xiaomi have a plan key and a pay-per-token key');
 assert.equal(keys.find((k) => k.id === 'kimi-code').name, 'Kimi Code', 'short names, so each card is one line');
+assert.deepEqual(['opencode-go', 'opencode'].map((id) => keys.find((k) => k.id === id).name), ['OpenCode Go', 'OpenCode'], 'the two OpenCode keys have different names');
 assert.deepEqual(keys.filter((k) => k.connected).map((k) => k.id), ['deepseek']);
 for (const k of keys) {
   assert.ok(k.link, `${k.id} has a "Get a key" link`);

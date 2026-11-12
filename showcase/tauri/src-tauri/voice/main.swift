@@ -468,6 +468,8 @@ final class Voice {
     // When talking ended and what finished the words (the recogniser, its 2.5 s cap): sent with them, for timing.
     private var finishedAt = 0.0, endedVia = ""
     private var blocked = false, prevChord = false, authorizing = false, reportEmpty = false, failed = false
+    // The keys already reading down when the chord went down: they can't be part of its shortcut (isShortcut).
+    private var heldAtArm = Set<CGKeyCode>()
     private var engine: AVAudioEngine?
     // Kept across sessions (same mic, usually), so later takes start at the right boost.
     private let autoGain = AutoGain()
@@ -529,11 +531,16 @@ final class Voice {
 
     // ---------- hotkey ----------
 
-    private func otherKeyDown() -> Bool {
-        for code in CGKeyCode(0) ..< 0x80 where !Self.modifierKeys.contains(code) {
-            if CGEventSource.keyState(.combinedSessionState, key: code) { return true }
-        }
-        return false
+    private func keysDown() -> Set<CGKeyCode> {
+        Set((CGKeyCode(0) ..< 0x80).filter { !Self.modifierKeys.contains($0) && CGEventSource.keyState(.combinedSessionState, key: $0) })
+    }
+
+    /// At the chord's first moment: an extra ⇧ or ⌘, or a key pressed since the chord went down, makes it a shortcut
+    /// (⌃⌥S), not a talk. A key that already read as down then doesn't count: macOS can report a key as held that
+    /// isn't (seen: one key code reading down at almost every press, which a real press of it didn't clear), and that
+    /// turned nearly every talk into a "shortcut".
+    static func isShortcut(extra: Bool, heldAtArm: Set<CGKeyCode>, now: Set<CGKeyCode>) -> Bool {
+        extra || !now.subtracting(heldAtArm).isEmpty
     }
 
     let ink = Ink()
@@ -593,8 +600,8 @@ final class Voice {
             let quiet = now - voiceAt > Self.wakePause / 2 && now - heardAt > Self.wakePause
             if paused || (now - wakeAt > Self.wakeRecycle && quiet) || now - wakeAt > Self.wakeRecycle * 2 { recycleWake(now) }
         case .armed:
-            // Only the first moment decides shortcut vs. talk: ⌃⌥ plus a key, ⇧ or ⌘ is a shortcut.
-            if down && (extra || otherKeyDown()) { log("not a talk: ⌃⌥ was part of a shortcut"); cancel(); blocked = true; return }
+            // Only the first moment decides shortcut vs. talk: ⌃⌥ plus a key pressed since, ⇧ or ⌘ is a shortcut.
+            if down && Self.isShortcut(extra: extra, heldAtArm: heldAtArm, now: keysDown()) { log("not a talk: ⌃⌥ was part of a shortcut"); cancel(); blocked = true; return }
             if released { phase = .handsFree; showListening("handsfree", now); return }
             if down && now - chordAt >= Self.tapLimit { phase = .holding; showListening("hold", now) }
         case .holding:
@@ -620,6 +627,8 @@ final class Voice {
     private func arm(_ now: Double) {
         phase = .armed
         chordAt = now
+        heldAtArm = keysDown()
+        if !heldAtArm.isEmpty { log("chord: keys already down don't count toward a shortcut: \(heldAtArm.sorted())") }
         best = ""
         woke = false
         // The drawing layer first: starting the mic below holds this thread for a moment (longer with Bluetooth),
@@ -1065,6 +1074,20 @@ if args.contains("--test-snap") {
     box += stride(from: CGFloat(120), through: 0, by: -6).map { CGPoint(x: $0, y: 90) }
     box += stride(from: CGFloat(90), through: 0, by: -6).map { CGPoint(x: 2, y: $0) }
     check("a rough box snaps", Loop.closing(box) != nil)
+    exit(bad == 0 ? 0 : 1)
+}
+// --test-chord checks when the talk chord counts as part of a shortcut, with made-up key states; exits 1 on a failure.
+if args.contains("--test-chord") {
+    var bad = 0
+    func check(_ name: String, _ ok: Bool) { print("\(ok ? "ok" : "FAIL") \(name)"); if !ok { bad += 1 } }
+    check("the chord alone is a talk", !Voice.isShortcut(extra: false, heldAtArm: [], now: []))
+    check("a key pressed with it is a shortcut (⌃⌥S)", Voice.isShortcut(extra: false, heldAtArm: [], now: [0x01]))
+    check("an extra ⇧ or ⌘ is a shortcut", Voice.isShortcut(extra: true, heldAtArm: [], now: []))
+    // Regression: key code 0 read as held at almost every press, though no key was, so nearly every talk was rejected.
+    check("a key already down when the chord went down doesn't count", !Voice.isShortcut(extra: false, heldAtArm: [0x00], now: [0x00]))
+    check("a key pressed after it still does", Voice.isShortcut(extra: false, heldAtArm: [0x00], now: [0x00, 0x01]))
+    check("a held key let go isn't a key pressed", !Voice.isShortcut(extra: false, heldAtArm: [0x00], now: []))
+    check("an extra ⇧ or ⌘ still counts with a key held", Voice.isShortcut(extra: true, heldAtArm: [0x00], now: [0x00]))
     exit(bad == 0 ? 0 : 1)
 }
 // --test-clicks: which clicks count as changing the screen, with made-up element roles; exits 1 on a failure.

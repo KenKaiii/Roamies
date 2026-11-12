@@ -278,7 +278,7 @@ console.log('sed print tests: all passed');
   console.log('file loop tests: all passed');
 }
 
-// Drawing: links open like links in a reply, pictures fetch like fetch_url, typing needs actions allowed, buttons only ask, open or copy.
+// Drawing: links open like links in a reply, pictures fetch like web_fetch, typing needs actions allowed, buttons only ask, open or copy.
 {
   const on = { allowActions: true }, off = { allowActions: false };
   const lv = (a, o = off) => checkDrawAction(a, o).level;
@@ -337,6 +337,33 @@ cases('read-only loopholes', cmd, [
     cases('symlinked reads', (p) => checkRead(p, home), [['~/harmless.txt', BLOCK], ['~/proj/keys', BLOCK], ['~/notes.txt', SAFE]]);
     cases('symlinked writes', (p) => checkWrite(p, home), [['~/later.txt', BLOCK], ['~/proj/keys/new', BLOCK], ['~/fresh.txt', SAFE]]);
   }
+  // An agent's own folder: overwriting inside it is fine without a yes; outside it, or through a link that leads out
+  // of it, still asks, and protected files stay blocked.
+  {
+    const own = nodePath.join(home, 'Roamies', 'Agents', 'Dog page');
+    fs.mkdirSync(nodePath.join(own, 'files'), { recursive: true });
+    fs.writeFileSync(nodePath.join(own, 'files', 'index.html'), 'x');
+    fs.writeFileSync(nodePath.join(home, 'notes.txt'), 'x');
+    const w = (p, exists = true) => checkWrite(p, home, { exists, own });
+    assert.equal(w(nodePath.join(own, 'files', 'index.html')).level, SAFE, 'overwriting in its own folder needs no yes');
+    assert.equal(w('~/Roamies/Agents/Dog page/files/index.html').level, SAFE, 'also written from ~');
+    assert.equal(w('~/notes.txt').level, ASK, 'overwriting outside its folder still asks');
+    assert.equal(w(nodePath.join(own, '..', 'other', 'a.txt')).level, ASK, 'a .. out of its folder still asks');
+    assert.equal(checkWrite(nodePath.join(own, 'files', 'index.html'), home, { exists: true }).level, ASK, 'without own it asks as before');
+    if (links) {
+      fs.symlinkSync(nodePath.join(home, 'notes.txt'), nodePath.join(own, 'files', 'out.txt'));
+      fs.symlinkSync(nodePath.join(home, '.zshrc'), nodePath.join(own, 'files', 'rc'));
+      assert.equal(w(nodePath.join(own, 'files', 'out.txt')).level, ASK, 'a link out of its folder is checked where it leads');
+      assert.equal(w(nodePath.join(own, 'files', 'rc')).level, BLOCK, 'a link to a startup file stays blocked');
+    }
+    assert.equal(w(nodePath.join(own, '.env')).level, BLOCK, 'secrets stay blocked in its own folder');
+    const c = (x, o = {}) => classifyCommand(x, home, { exists: fs.existsSync, cwd: nodePath.join(own, 'files'), own, ...o });
+    cases('own folder commands', c, [
+      ['echo hi > index.html', SAFE], ['echo hi > ../work/new.txt', SAFE], ['echo hi > ~/notes.txt', ASK], ['cat index.html', SAFE],
+      ['rm index.html', ASK], ['echo x > ~/.zshrc', BLOCK], ['cat ~/.ssh/id_rsa', BLOCK], ['mkdir sub', SAFE],
+    ]);
+    assert.equal(classifyCommand('echo hi > index.html', home, { exists: fs.existsSync, cwd: nodePath.join(own, 'files') }).level, ASK, 'cwd alone is not own');
+  }
   fs.rmSync(home, { recursive: true, force: true });
 }
 // Addresses off the public internet, however they're written, and links that use them.
@@ -361,4 +388,26 @@ console.log('safety loophole tests: passed');
   assert.equal(riskyKind('DELETE'), riskyKind('Delete post'), 'two labels of one kind share a key');
   assert.notEqual(riskyKind('Delete'), riskyKind('Send'));
   console.log('risky kind tests: passed');
+}
+// web_fetch checks where a name really points before each request and redirect hop.
+{
+  const { checkFetch } = await import('../safety.mjs');
+  const dnsTable = { 'example.com': ['93.184.215.14'], 'sneaky.example': ['127.0.0.1'], 'mixed.example': ['93.184.215.14', '10.0.0.7'], 'v6.example': ['::1'] };
+  const lookup = async (host) => {
+    if (!(host in dnsTable)) throw Object.assign(new Error('not found'), { code: 'ENOTFOUND' });
+    return dnsTable[host].map((address) => ({ address, family: address.includes(':') ? 6 : 4 }));
+  };
+  const want = [
+    ['https://example.com/page', SAFE], ['https://sneaky.example/', BLOCK], ['https://mixed.example/', BLOCK], ['https://v6.example/', BLOCK],
+    ['https://nowhere.example/', SAFE], ['http://localhost/', BLOCK], ['file:///etc/passwd', BLOCK], ['not a url', BLOCK],
+  ];
+  for (const [url, level] of want) {
+    const got = await checkFetch(url, { lookup });
+    assert.equal(got.level, level, `checkFetch ${url} → ${got.level} (${got.reason})`);
+  }
+  assert.match((await checkFetch('https://sneaky.example/', { lookup })).reason, /your own computer or network/);
+  let looked = false;
+  await checkFetch('http://127.0.0.1/', { lookup: async () => { looked = true; return []; } });
+  assert.equal(looked, false, 'a blocked URL is refused before any lookup');
+  console.log('checkFetch tests: passed');
 }

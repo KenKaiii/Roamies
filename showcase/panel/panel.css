@@ -198,6 +198,21 @@ html, body { height: 100%; background: transparent; }
 .item.ask .text { color: var(--ink-2); }
 .item.bad .text, .item .text small.late { color: var(--danger); }
 .mark { width: 8px; height: 8px; justify-self: center; background: #1e3f3d; }
+
+/* ---------- What's new: one change per row, the title and its kind on one line, the date, then a line or two ---------- */
+.item.wn { grid-template-columns: minmax(0, 1fr); align-items: start; gap: 3px; padding: 8px 0; }
+.wn-top { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.wn-title { min-width: 0; font: 700 var(--t-body)/1.3 var(--mono); color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The kind: a solid LED fill and its word (never colour alone), brightest for New. */
+.wn-kind { flex: none; margin-inline-start: auto; padding: 2px 6px; font: 700 var(--t-small)/1.25 var(--mono); font-stretch: 87.5%; letter-spacing: 0.06em; text-transform: uppercase; }
+.wn-kind.k-new { background: var(--accent); color: var(--accent-ink); }
+.wn-kind.k-improved { background: var(--line-hi); color: var(--ink); }
+.wn-kind.k-fixed { background: var(--line); color: var(--ink); }
+.wn-kind.k-removed { background: #12302e; color: var(--ink-2); }
+.wn-date { font-size: var(--t-small); line-height: 1.3; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.wn-text { margin: 0; min-height: 2.8em; font-size: var(--t-small); line-height: 1.4; color: var(--ink-2); } /* two lines kept, so every row is one height */
+/* This update's changes: lit like the current page in the sidebar, the rest as they were. */
+.item.wn.fresh { padding-inline: 10px; background: #0a2a28; color: var(--ink); border-bottom-color: var(--bg); }
 .item.did .mark { background: var(--accent-lo); }
 .item.bad .mark { background: var(--danger); }
 /* A question: two stacked bars, like a quote, instead of a dot. */

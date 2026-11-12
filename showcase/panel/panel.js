@@ -1,5 +1,5 @@
 // The panel that opens from the menu bar or tray icon: a sidebar of pages. Home (what's going on) and Memory,
-// then a page per group of settings: Model, Appearance, Voice, Behavior and About.
+// then a page per group of settings: Model, Appearance, Voice, Behavior and About, and What's new.
 // The sidecar owns every value: it sends the whole state when the panel opens and after each change, and the
 // panel sends back the same actions the menu used ({type:'menu', id}). Opened in a plain browser it shows a
 // labelled preview with sample data instead.
@@ -656,8 +656,44 @@
     ];
   }
 
+  // ---------------------------------------------------------------- What's new
+  // One change per row, from whatsnew.json (written with each commit): this update's first, lit, then the rest.
+  // This update: everything since the version they updated from (whatsNewFrom), else this version's own.
+  let news = null;
+  fetch('whatsnew.json').then((r) => r.json()).then((d) => { news = Array.isArray(d?.updates) ? d.updates : []; })
+    .catch(() => { news = []; }).finally(() => { if (state && tab === 'whatsnew') render(); });
+  const KIND = { new: 'New', improved: 'Improved', fixed: 'Fixed', removed: 'Removed' };
+  const later = (a, b) => {
+    const pa = String(a).split('.').map(Number), pb = String(b).split('.').map(Number);
+    for (let i = 0; i < 3; i++) if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0);
+    return false;
+  };
+  function whatsNewPage() {
+    if (!news) return [];
+    const from = state.whatsNewFrom, now = state.version;
+    const fresh = (u) => u.version == null || (from ? later(u.version, from) && !later(u.version, now) : u.version === now);
+    const all = news.flatMap((u) => (u.items ?? []).map((it) => ({ ...it, version: u.version, date: u.date, fresh: fresh(u) })));
+    all.sort((a, b) => b.fresh - a.fresh);
+    const lit = all.filter((r) => r.fresh).length;
+    const day = (d) => new Date(`${d}T12:00:00`).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+    const { box, nav } = paged('whatsnew', all, (r) => el('li', { className: `item wn${r.fresh ? ' fresh' : ''}` },
+        el('div', { className: 'wn-top' },
+          el('span', { className: 'wn-title', textContent: r.title }),
+          el('span', { className: `wn-kind k-${r.kind}`, textContent: KIND[r.kind] ?? r.kind })),
+        el('span', { className: 'wn-date', textContent: `${day(r.date)} · ${r.version ? `v${r.version}` : 'Not out yet'}` }),
+        el('p', { className: 'wn-text', textContent: r.text }),
+        r.fresh ? el('span', { className: 'sr-only', textContent: 'In this update.' }) : null),
+    { label: "What's new", empty: 'Nothing here yet.' });
+    return [
+      el('div', { className: 'group paged' }, el('div', { className: 'ghead' },
+        el('h2', {}, "What's new", el('span', { className: 'n', textContent: `v${now}` })),
+        el('p', { textContent: lit ? `The lit ${lit === 1 ? 'one is' : `${lit} are`} what's new in this update.` : 'Everything I changed lately, newest first.' })), box),
+      foot(null, nav),
+    ];
+  }
+
   // ---------------------------------------------------------------- render
-  const PANES = { home, memory, model: modelPage, appearance: appearancePage, voice: voicePage, behavior: behaviorPage, about: aboutPage };
+  const PANES = { home, memory, model: modelPage, appearance: appearancePage, voice: voicePage, behavior: behaviorPage, about: aboutPage, whatsnew: whatsNewPage };
   // focusKey: what to focus after (a data-k, or an element id); otherwise whatever had focus keeps it.
   function render(focusKey, animate = false) {
     if (!state) return;
@@ -879,6 +915,9 @@
     };
     if (q.has('studio')) Object.assign(s, { tts: 'voicestudio', studio: STUDIO[q.get('studio')] ?? STUDIO.on });
     if (q.has('uptodate')) s.update.result = { ok: true, at: Date.now() + 60e3 };
+    // ?v=0.1.36&from=0.1.35: What's new as it looks just after updating from one version to the other.
+    if (q.get('v')) s.version = q.get('v');
+    if (q.get('from')) s.whatsNewFrom = q.get('from');
     if (q.get('tab')) setTimeout(() => { if (q.get('mtab')) ui.mtab = q.get('mtab'); show(q.get('tab')); }, 0);
     setTimeout(() => window.__panel({ kind: 'state', state: s }), 0);
     return async (cmd, args) => {
