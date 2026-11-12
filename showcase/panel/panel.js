@@ -122,13 +122,13 @@
     const s = state.status;
     $('led').className = `led${s.state === 'ready' ? ' on' : s.state === 'busy' ? ' busy' : ''}`;
     const now = $('now');
-    now.replaceChildren(el('b', { textContent: s.text }), state.model ? ` · ${state.model.name}` : s.state === 'off' ? ' · Sign in on the Model page' : '');
+    now.replaceChildren(el('b', { textContent: s.text }), state.model ? ` · ${state.model.name}` : s.state === 'off' ? (state.brain === 'ollama' ? ' · See the Model page' : ' · Sign in on the Model page') : '');
     now.title = now.textContent;
     $('ver').textContent = `v${state.version}`;
     updateButton();
     react();
     // The sidebar marks a page that needs you: no account to answer with.
-    mark('model', s.state === 'off' ? 'not signed in' : null);
+    mark('model', s.state === 'off' ? (state.brain === 'ollama' ? 'Ollama not ready' : 'not signed in') : null);
   }
   // One button for updates, updated in place (not rebuilt) so it keeps focus: Check for updates, then Update to x
   // (it downloads, installs and restarts), then Done. "Up to date" shows for a few seconds after a check.
@@ -405,8 +405,38 @@
   const signIn = (p) => link('Sign in', () => act(`login:${p.id}`), { k: `login:${p.id}`, aria: `Sign in to ${p.label}`, disabled: !!state.loggingIn });
   const addKey = (p) => link(ui.key === p.id ? 'Cancel' : 'Add key', () => { ui.key = ui.key === p.id ? null : p.id; render(ui.key ? `key-${p.id}` : `addkey:${p.id}`); }, { k: `addkey:${p.id}`, aria: `Add ${p.label} API key` });
 
+  // Ollama on this computer: running or exactly why not, its models that can use tools, Check again, and warnings
+  // (the picked model is gone, or Ollama gives it too small a context).
+  function ollamaRows() {
+    const o = state.ollama ?? { checking: true };
+    const n = o.models?.length ?? 0;
+    const status = o.checking ? 'Checking Ollama…' : o.ok ? `Running · ${n} model${n === 1 ? '' : 's'} that can use tools` : o.message || "Ollama isn't available.";
+    const ctx = (m) => (m.context ? ` · ${Math.round(m.context / 1024)}K context` : '');
+    const select = o.ok ? el('span', { className: 'px field select' },
+      el('select', { 'aria-label': 'Ollama model', 'data-k': 'ollamamodel', on: { change: (e) => act(`model:local:${e.target.value}`) } },
+        o.model ? null : el('option', { value: '', textContent: 'Pick a model', disabled: true, selected: true }),
+        o.models.map((m) => el('option', { value: m.id, textContent: `${m.name}${ctx(m)}`, selected: m.id === o.model })))) : null;
+    return [
+      el('div', { className: 'setting' },
+        el('span', {}, 'Ollama', el('small', { className: o.ok || o.checking ? '' : 'bad', textContent: status, role: o.ok || o.checking ? null : 'alert' })),
+        el('span', { className: 'row-btns' }, link('Check again', () => act('ollama_check'), { k: 'ollama_check', aria: 'Check Ollama again' }))),
+      select ? el('p', { className: 'sub', textContent: 'Model' }) : null,
+      select,
+      o.gone ? el('p', { className: 'why late wrap', role: 'alert', textContent: o.gone }) : null,
+      o.warn ? el('p', { className: 'why late wrap', role: 'alert', textContent: o.warn }) : null,
+      o.ok && o.noTools?.length ? el('p', { className: 'why wrap', textContent: `Not listed, as they can't use tools: ${o.noTools.join(', ')}` }) : null,
+    ];
+  }
+  const BRAIN_TIPS = {
+    cloud: 'A model from an AI provider you sign in to below, billed by that provider or included in your plan.',
+    ollama: 'A model in the Ollama app on this computer. Free, and nothing leaves your computer. It needs a model that can use tools.',
+  };
+
   // Settings, one page per concern.
   function modelPage() {
+    const local = state.brain === 'ollama';
+    const brain = picks('Brain', [['cloud', 'Cloud'], ['ollama', 'Ollama (local)']], local ? 'ollama' : 'cloud', (x) => act(`brain:${x}`), 'brain', BRAIN_TIPS);
+    if (local) return [group('Model', 'Which AI answers you.', null, brain, ollamaRows())];
     const on = state.providers.filter((p) => p.on);
     const model = state.model ? `${state.model.provider}:${state.model.id}` : '';
     const select = on.length ? el('span', { className: 'px field select' },
@@ -424,8 +454,8 @@
       p.on || !(p.method === 'key' || p.key) ? null : keyForm(p.id, p.label, (key, kind) => send({ type: 'panel_key', provider: p.id, kind, key }), p.kinds)),
     { label: 'Accounts', pin: accounts.findIndex((p) => p.id === ui.key) });
     return [
-      group('Model', 'Which AI answers you.', null,
-        select ?? el('p', { className: 'empty', textContent: 'Sign in to an account below first.' })),
+      group('Model', 'Which AI answers you.', null, brain,
+        select ? [el('p', { className: 'sub', textContent: 'Model' }), select] : el('p', { className: 'empty', textContent: 'Sign in to an account below first.' })),
       el('div', { className: 'group paged' }, el('div', { className: 'ghead' }, el('h2', { textContent: 'Accounts' }), el('p', { textContent: 'Sign in to use their models.' })), box),
       foot(null, nav),
     ];
@@ -776,6 +806,19 @@
       engine: { ok: false, reason: 'engine', message: "VoiceStudio's voice engine isn't ready (CosyVoice): not installed. Pick or install an engine in VoiceStudio, then press Check again." },
     };
     if (q.has('studio')) Object.assign(s, { voiceProvider: 'voicestudio', studio: STUDIO[q.get('studio')] ?? STUDIO.on });
+    // ?ollama: Ollama is the brain (?ollama=off: it isn't running; =notools: no model can use tools; =small: the
+    // picked model's context is too small; =empty: no models at all).
+    const OLLAMA = {
+      on: { ok: true, models: [{ id: 'local/ollama/qwen3:8b', name: 'qwen3:8b', context: 32768 }, { id: 'local/ollama/gpt-oss:20b', name: 'gpt-oss:20b', context: null }], model: 'local/ollama/qwen3:8b', noTools: ['gemma3:4b'] },
+      small: { ok: true, models: [{ id: 'local/ollama/qwen3:8b', name: 'qwen3:8b', context: 4096 }], model: 'local/ollama/qwen3:8b', noTools: [], warn: "Ollama runs qwen3:8b with a 4K context, too small for my instructions and tools, so it will forget them. Set the context length in Ollama's settings to 32K or more, then press Check again." },
+      off: { ok: false, message: "Ollama isn't running. Open Ollama, then press Check again on the Model page.", models: [], noTools: [] },
+      notools: { ok: false, message: "None of your Ollama models can use tools, and I need tools to do things for you. Pull one that can, like qwen3 or gpt-oss, then press Check again.", models: [], noTools: ['gemma3:4b'] },
+      empty: { ok: false, message: 'Ollama has no models yet. Pull one that can use tools, like qwen3 or gpt-oss (ollama pull qwen3), then press Check again.', models: [], noTools: [] },
+    };
+    const ollamaState = (o) => ({ brain: 'ollama', ollama: o, model: o.ok ? { provider: 'local', id: o.model, name: o.model.split('/').pop(), providerLabel: 'Ollama' } : null, status: o.ok ? { state: 'ready', text: 'Ready' } : { state: 'off', text: 'Ollama not ready' } });
+    const cloudModel = s.model;
+    s.brain = 'cloud';
+    if (q.has('ollama')) Object.assign(s, ollamaState(OLLAMA[q.get('ollama')] ?? OLLAMA.on));
     if (q.has('uptodate')) s.update.result = { ok: true, at: Date.now() + 60e3 };
     if (q.get('tab')) setTimeout(() => { if (q.get('mtab')) ui.mtab = q.get('mtab'); show(q.get('tab')); }, 0);
     setTimeout(() => window.__panel({ kind: 'state', state: s }), 0);
@@ -786,6 +829,8 @@
       if (args.msg?.type === 'copy_problem') setTimeout(() => window.__panel({ kind: 'copied', which: 'problem', ok: q.get('copy') !== 'fail' }), 150);
       const id = args.msg?.id ?? '';
       if (id.startsWith('size:')) { s.size = id.slice(5); setTimeout(() => window.__panel({ kind: 'state', state: s }), 120); }
+      if (id.startsWith('brain:')) { Object.assign(s, id === 'brain:ollama' ? ollamaState(OLLAMA[q.get('ollama')] ?? OLLAMA.on) : { brain: 'cloud', ollama: null, model: cloudModel, status: { state: 'ready', text: 'Ready' } }); setTimeout(() => window.__panel({ kind: 'state', state: s }), 120); }
+      if (id.startsWith('model:local:') && s.ollama) { s.ollama.model = id.slice(12); s.model = { ...s.model, id: s.ollama.model, name: s.ollama.model.split('/').pop() }; setTimeout(() => window.__panel({ kind: 'state', state: s }), 120); }
       if (id.startsWith('voiceprovider:')) { s.voiceProvider = id.slice(14); s.studio = s.voiceProvider === 'voicestudio' ? STUDIO[q.get('studio')] ?? STUDIO.on : null; setTimeout(() => window.__panel({ kind: 'state', state: s }), 120); }
       if (id.startsWith('studiovoice:') && s.studio) { s.studio.voice = id.slice(12) === 'default' ? null : id.slice(12); setTimeout(() => window.__panel({ kind: 'state', state: s }), 120); }
       if (id.startsWith('look:')) { s.look = id.slice(5); s.name = s.looks.find(([v]) => v === s.look)?.[1] ?? s.name; setTimeout(() => window.__panel({ kind: 'state', state: s }), 120); }

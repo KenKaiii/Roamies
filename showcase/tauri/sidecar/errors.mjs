@@ -38,6 +38,8 @@ const AREAS = {
     code: 'E20',
     unknown: () => 'Something went wrong (E20). Ask me again.',
     known: [
+      // Ollama runs on this computer: when it can't be reached, it's closed, not the internet.
+      ['E29', (e, s, c) => !!c.local && NET.test(s), () => "Can't reach Ollama. Is it open?", false, 'model'],
       ['E21', /Claude Code isn't installed/i, () => 'Claude Code is missing. Sign in with Claude again.', false, 'model'],
       ['E22', /not logged in|NotLoggedIn|\b401\b|unauthori[sz]ed|invalid_grant|token refresh failed|authentication_error|(?:invalid|incorrect).{0,6}api.?key/i, (c) => `My ${c.who} login stopped working. Sign in again.`, false, 'model'],
       ['E23', /insufficient_quota|credit balance|billing|payment required|\b402\b/i, () => 'This account is out of credit. Top up or switch model.', false, 'model'],
@@ -128,7 +130,8 @@ function describe(err) {
 }
 
 /**
- * The line to show for an error. area: one of AREA_NAMES. ctx: { who: the provider's name, store: where keys are kept }.
+ * The line to show for an error. area: one of AREA_NAMES. ctx: { who: the provider's name, store: where keys are kept,
+ * local: the model runs in Ollama on this computer }.
  * Returns { code, text, known, copy, where, raw }: text is one line of at most MAX_LINE characters (fewer where the
  * setup guide shows it) built only from the table above; copy says whether to offer Copy details; raw is the full error, for the log and Copy details.
  */
@@ -137,7 +140,7 @@ export function explain(area, err, ctx = {}) {
   const { summary, raw } = describe(err);
   const fit = fitter(ctx);
   for (const [code, spot, line, copy = false, where = null] of a.known) {
-    if (typeof spot === 'function' ? spot(err, summary) : spot.test(summary)) return { code, text: fit(line, limit(a, copy)), known: true, copy, where, raw };
+    if (typeof spot === 'function' ? spot(err, summary, ctx) : spot.test(summary)) return { code, text: fit(line, limit(a, copy)), known: true, copy, where, raw };
   }
   return { code: a.code, text: fit(a.unknown, limit(a, true)), known: false, copy: true, where: null, raw };
 }

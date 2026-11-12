@@ -37,6 +37,7 @@ import { createSecrets, retryLoad } from './secrets.mjs';
 import { createActivity } from './activity.mjs';
 import { canCircle, canSnap, hasHands, hasHotkeys, hasVoice, linuxSession, micTrouble, needsVoiceModel, platformLine, samePair, seesPointer, writeChord, writeChords } from './platform.mjs';
 import { keyCards, keyKinds, signInCards } from './providers.mjs';
+import { OLLAMA, createOllama, normalBrain, switchBrain } from './ollama.mjs';
 import { activityLogs, buildReport, redact, reportDir, reportName, reveal, run, scrubConfig, tail } from './diagnostics.mjs';
 import { detailsText, explain } from './errors.mjs';
 
@@ -72,7 +73,8 @@ const OAUTH = {
   // The current sign-in's ID token skips OpenAI's account picker.
   openai: async (cb, signal) => { const previous = await auth.getCredentials(OPENAI_CHATGPT_KEY).catch(() => null); return loginChatGPT(cb, { ...(previous ? { previous } : {}), signal }); },
 };
-const PROVIDER_LABELS = Object.fromEntries(AUTH_PROVIDERS.map((p) => [p.value, p.label]));
+// local: gg-core's provider for models served on this computer, which Roamies offers as Ollama (ollama.mjs).
+const PROVIDER_LABELS = { ...Object.fromEntries(AUTH_PROVIDERS.map((p) => [p.value, p.label])), local: 'Ollama' };
 // What a sign-in is called (the product), where the provider's label is the company.
 const SIGNIN_NAMES = { anthropic: 'Claude', openai: 'ChatGPT' };
 const MENU_PROVIDERS = ['anthropic', 'openai', ...AUTH_PROVIDERS.map((p) => p.value)].filter((v, i, a) => a.indexOf(v) === i);
@@ -90,6 +92,11 @@ const DEFAULTS = {
   fishModel: FISH_CHOICES[0].id, // Drama 3 (most expressive) or S2.1 Pro (natural pace, cheaper)
   voiceProvider: 'fish', // 'fish' (Fish Audio, the user's key) or 'voicestudio' (the VoiceStudio app on this computer)
   studioVoice: null, // the VoiceStudio voice (a saved profile id; null: the selected engine's default voice)
+  // What answers: 'cloud' (provider and model above, from a signed-in account) or 'ollama' (a model in Ollama on this
+  // computer; provider is then 'local'). Separate from the voice provider. Each side's pick is kept while the other is used.
+  brain: 'cloud',
+  cloud: null, // the cloud pick ({ provider, model }) while Ollama answers
+  ollamaModel: null, // the Ollama pick (gg-core's id, local/ollama/<name>) while a cloud model answers
 };
 const LINUX = process.platform === 'linux';
 // Linux: "x11" or "wayland" (the app says which). Wayland keeps apps from seeing the pointer over other apps and
@@ -130,6 +137,11 @@ let shellInfo = null; // resolves the shell's reply to it: screens, tray, panel,
   if (saved && typeof saved === 'object' && !Array.isArray(saved)) config = { ...DEFAULTS, ...saved };
 }
 const saveConfig = () => writeJson(CONFIG_PATH, config, { backup: true });
+// The brain: Ollama, once picked, is the only one used until the user picks Cloud again (see ensureModel).
+// ROAMIES_OLLAMA_URL (testing, or an Ollama on another port): its OpenAI-style address, http://127.0.0.1:11555/v1.
+const ollama = createOllama(/^https?:\/\/[^\s]+\/v1\/?$/.test(process.env.ROAMIES_OLLAMA_URL ?? '') ? { endpoint: { ...OLLAMA, baseUrl: process.env.ROAMIES_OLLAMA_URL.replace(/\/$/, '') } } : {});
+const onOllama = () => config.brain === 'ollama';
+Object.assign(config, normalBrain(config));
 
 // ---------- spoken replies (Fish Audio) ----------
 // The key is the user's own: in the Keychain (macOS), DPAPI-encrypted (Windows) or the desktop's keyring (Linux),
@@ -233,6 +245,13 @@ async function refreshAuth() {
 const canRun = (p, id) => !!signedIn.get(p) && getAuthStorageKeys(p, id).some((k) => k === p || storedKeys.has(k));
 const runnable = (p) => getModelsForProvider(p).filter((m) => canRun(p, m.id));
 function ensureModel() {
+  // Ollama: its own pick, or its first model when none was picked. Never a cloud model: those can cost money, so
+  // switching to one is the user's call (the Model page), not something done when Ollama isn't there.
+  if (onOllama()) {
+    const id = ollama.pick(config.model);
+    if (id && id !== config.model) { config.model = config.ollamaModel = id; saveConfig(); }
+    return !!id && !ollama.problem(id);
+  }
   if (config.provider && getModel(config.model) && canRun(config.provider, config.model)) return true;
   const p = ['anthropic', 'openai', 'gemini', ...MENU_PROVIDERS].find((x) => runnable(x).length);
   if (!p) return false;
@@ -242,7 +261,8 @@ function ensureModel() {
   return true;
 }
 // Which of the provider's stored credentials this model uses (gemini-api, kimi-code, the ChatGPT plan before an OpenAI key…).
-const credsFor = (provider = config.provider, model = config.model) => auth.resolveCredentials(provider, { storageKeys: getAuthStorageKeys(provider, model) });
+// Ollama takes no key: just where it is.
+const credsFor = async (provider = config.provider, model = config.model) => (provider === 'local' ? ollama.creds() : auth.resolveCredentials(provider, { storageKeys: getAuthStorageKeys(provider, model) }));
 
 const userName = (() => {
   try {
@@ -358,7 +378,7 @@ Your voice carries feeling: start a sentence with a cue in square brackets when 
 Before anything slow (searching the web, fetching or reading a page or file, looking at the screen, acting in an app, running a command), first say one short beat of 2 to 6 words that shows you heard them ("On it, checking Paris."), then call the tool in the same reply, so they're never left in silence. No beat when you answer straight away; never describe your steps; don't repeat the beat after the tool, go straight to the answer. In longer work, one short line before each new stage, not before every call.
 `;
 const stablePrompt = () => `You are ${lookName()}, ${LOOK_BODY[config.look] ?? LOOK_BODY.classic} who lives on ${userName}'s screen as a desktop companion. You live in Roamies, a desktop app by Ken Kai (Mac, Windows and Linux) that puts little companions on your screen; this is Roamies ${VERSION}. Your look (the Appearance page) is also your name and your voice: Roamie, JARVIS, Anime Girl, Sarah or Adrian. If they switch, you're the new one; never call yourself Sidekick.
-About Roamies, for when ${userName} asks about you or the app: ${MAC ? 'it lives in the menu bar at the top of the screen (no Dock icon)' : LINUX ? 'it lives in the system tray (no window of its own); GNOME shows tray icons only with the AppIndicator extension, and opening Roamies again from the app list opens the panel, tray or not' : 'it lives in the system tray at the bottom right of the taskbar (no taskbar button); Windows may tuck the icon behind the ^ arrow next to the clock, and dragging it onto the taskbar keeps it in view'}. ${LINUX ? 'Clicking the tray icon shows a short menu (Open Panel,' : `Clicking the ${MAC ? 'menu bar' : 'tray'} icon opens the Roamies panel; right-clicking it shows a short menu (Open Panel,`} Show ${lookName()}, Ask ${lookName()}…, ${SNAP_OK ? 'Ask About an Area…, ' : ''}Stop, Quit Roamies). The panel has a header (your name, the Roamies version with one update button beside it: Check for Updates, which becomes Update to <version> when one is out and installs it and restarts in one go; By Ken Kai under the name; and Quit at the top right, which asks to confirm) and a sidebar of pages; long lists show a page at a time, with arrows in the page's footer. Home: a list of what you did recently (questions, files read, searches, reminders), today's usage, and buttons for Ask, Show List (reminders and commitments on screen: Today and Later; tick them off there; finished ones clear at midnight)${SNAP_OK ? ', Ask About an Area' : ''}, Stop and New Conversation. Memory: two tabs, What I Remember (everything you remember about them, each with Forget, a search once there's more than a page, and Forget Everything in the footer) and Commitments (their open commitments, Done or Drop), with Get to Know Me at the end of the tab row (a four-question chat so you learn who they are and what they're going for). Then the settings pages: Model (pick the AI provider and model, and sign in to providers), Appearance (Look: ${LOOKS.map(([, label]) => label).join(', ').replace(/, ([^,]*)$/, ' or $1')}, each with its own voice; Size: Default, Small${POINTER_OK ? ' or Cursor, a little arrow pointer' : ''}), Voice (Replies: Text Only, or Voice and Text, which speaks replies out loud; Voice Provider: Fish Audio, a paid cloud voice that needs their own Fish Audio API key, added right there, or VoiceStudio, the free VoiceStudio app running on their own computer (it has to be open), with a Voice picker of the voices they saved in VoiceStudio; with Fish Audio, Voice Model: Drama 3, the most expressive (acts out feelings, slower, pricier) or S2.1 Pro (a natural, quicker pace with less emotion, cheaper), billed to their own Fish Audio account${VOICE_OK ? `; Voice Control, ${HOTKEYS_OK ? 'hold the talk keys to talk' : 'press the talk shortcut to talk'}` : ''}), Behavior (Sound Effects, Allow File Edits & Commands, ${VOICE_OK ? 'Auto-listen (open the mic when you end on a question), ' : ''}${VOICE_OK && MAC ? 'Wake word (say "Hey Roamies" to start talking hands-free; keeps the mic on), ' : ''}Open at Login), and About (who made Roamies with links, Setup Guide, Show Logs, Save Diagnostics). Updates are signature-checked${LINUX ? '; they install by themselves when Roamies runs as an AppImage; installed from a .deb or .rpm, the update button opens the download page instead' : ''}. When something isn't working (the microphone, voice, the panel, a crash, an error), tell them to use Save Diagnostics (in About, or the tray icon's menu): it saves one .log file in Downloads with the logs, system and microphone details, keys and personal details removed, for them to attach to a GitHub issue at github.com/KenKaiii/Roamies/issues or send to Ken. Sign-in is shared with GG Coder. Downloads and source: github.com/KenKaiii/Roamies. Don't invent features or settings that aren't listed here.
+About Roamies, for when ${userName} asks about you or the app: ${MAC ? 'it lives in the menu bar at the top of the screen (no Dock icon)' : LINUX ? 'it lives in the system tray (no window of its own); GNOME shows tray icons only with the AppIndicator extension, and opening Roamies again from the app list opens the panel, tray or not' : 'it lives in the system tray at the bottom right of the taskbar (no taskbar button); Windows may tuck the icon behind the ^ arrow next to the clock, and dragging it onto the taskbar keeps it in view'}. ${LINUX ? 'Clicking the tray icon shows a short menu (Open Panel,' : `Clicking the ${MAC ? 'menu bar' : 'tray'} icon opens the Roamies panel; right-clicking it shows a short menu (Open Panel,`} Show ${lookName()}, Ask ${lookName()}…, ${SNAP_OK ? 'Ask About an Area…, ' : ''}Stop, Quit Roamies). The panel has a header (your name, the Roamies version with one update button beside it: Check for Updates, which becomes Update to <version> when one is out and installs it and restarts in one go; By Ken Kai under the name; and Quit at the top right, which asks to confirm) and a sidebar of pages; long lists show a page at a time, with arrows in the page's footer. Home: a list of what you did recently (questions, files read, searches, reminders), today's usage, and buttons for Ask, Show List (reminders and commitments on screen: Today and Later; tick them off there; finished ones clear at midnight)${SNAP_OK ? ', Ask About an Area' : ''}, Stop and New Conversation. Memory: two tabs, What I Remember (everything you remember about them, each with Forget, a search once there's more than a page, and Forget Everything in the footer) and Commitments (their open commitments, Done or Drop), with Get to Know Me at the end of the tab row (a four-question chat so you learn who they are and what they're going for). Then the settings pages: Model (Brain: Cloud, a model from an AI provider they sign in to, or Ollama, a model running in the free Ollama app on their own computer (it has to be open, and only models that can use tools are listed); then pick the model), Appearance (Look: ${LOOKS.map(([, label]) => label).join(', ').replace(/, ([^,]*)$/, ' or $1')}, each with its own voice; Size: Default, Small${POINTER_OK ? ' or Cursor, a little arrow pointer' : ''}), Voice (Replies: Text Only, or Voice and Text, which speaks replies out loud; Voice Provider: Fish Audio, a paid cloud voice that needs their own Fish Audio API key, added right there, or VoiceStudio, the free VoiceStudio app running on their own computer (it has to be open), with a Voice picker of the voices they saved in VoiceStudio; with Fish Audio, Voice Model: Drama 3, the most expressive (acts out feelings, slower, pricier) or S2.1 Pro (a natural, quicker pace with less emotion, cheaper), billed to their own Fish Audio account${VOICE_OK ? `; Voice Control, ${HOTKEYS_OK ? 'hold the talk keys to talk' : 'press the talk shortcut to talk'}` : ''}), Behavior (Sound Effects, Allow File Edits & Commands, ${VOICE_OK ? 'Auto-listen (open the mic when you end on a question), ' : ''}${VOICE_OK && MAC ? 'Wake word (say "Hey Roamies" to start talking hands-free; keeps the mic on), ' : ''}Open at Login), and About (who made Roamies with links, Setup Guide, Show Logs, Save Diagnostics). Updates are signature-checked${LINUX ? '; they install by themselves when Roamies runs as an AppImage; installed from a .deb or .rpm, the update button opens the download page instead' : ''}. When something isn't working (the microphone, voice, the panel, a crash, an error), tell them to use Save Diagnostics (in About, or the tray icon's menu): it saves one .log file in Downloads with the logs, system and microphone details, keys and personal details removed, for them to attach to a GitHub issue at github.com/KenKaiii/Roamies/issues or send to Ken. Sign-in is shared with GG Coder. Downloads and source: github.com/KenKaiii/Roamies. Don't invent features or settings that aren't listed here.
 ${replyStyle()}Your body does the acting: to act out a feeling, start your reply with one tag, which is never shown: ${EMOTES.map((e) => `[${e}]`).join(' ')}. hype celebrates a win, upset is for when they're dodging work, remind nudges about something they said they'd do, motivate is a push to start, wave is hello or goodbye. Most replies need no tag.
 Lead with the answer: the fact, number, pick or result they asked for, then only the context that makes it useful, then stop. A count or total gathered over several pages, files or results: note each one's count in a few words as you go ("Page 1: two."), add those up, and check the total you lead with against the items you then name. No opener about checking, looking or searching ("Let me see…", "I found…")${VOICE_ON() ? ', apart from the one short beat before something slow' : ''}.
 After using a tool, never repeat what you already said; only add what's new.
@@ -518,6 +538,8 @@ function makeAgent(cc) {
     cacheRetention: 'long',
     promptCacheKey: session?.id ? `roamies-${session.id}` : undefined,
     webSearch: ['anthropic', 'openai', 'gemini'].includes(config.provider),
+    // A local model without vision gets a line in place of a screenshot instead of an error from Ollama.
+    ...(config.provider === 'local' ? { supportsImages: !!m?.supportsImages } : {}),
     resolveCredentials: async () => {
       const c = await credsFor();
       return { apiKey: c.accessToken, ...(c.accountId !== undefined ? { accountId: c.accountId } : {}) };
@@ -772,8 +794,7 @@ let lastReply = '', lastFailed = false;
 async function readyAgent() {
   await resumed;
   await fishKeyLoaded;
-  await refreshAuth();
-  if (!ensureModel()) return `Sign in to an AI provider first: the Model page in ${PANEL}. Then ask me again!`;
+  if (!(await brainReady())) return onOllama() ? ollama.problem(config.model) : `Sign in to an AI provider first: the Model page in ${PANEL}. Then ask me again!`;
   if (!session) { session = newSession(config.provider, config.model); liveBlocks.clear(); agent = null; pruneSessions(); }
   if (agentStale && agent) { agent = null; }
   agentStale = false;
@@ -785,6 +806,29 @@ async function readyAgent() {
     makeAgent(cc);
   }
   return null;
+}
+// The brain can answer: accounts re-read, and Ollama asked what it serves (cached 30 s). On Ollama, the model's real
+// context is measured once (that loads it, which the reply would do anyway) so the history is fitted to it.
+async function brainReady() {
+  await refreshAuth();
+  if (!onOllama()) return ensureModel();
+  await ollama.check();
+  if (!ensureModel()) return false;
+  if (!ollama.find(config.model)?.contextKnown) await measureOllama(config.model);
+  else warnContext(config.model);
+  return true;
+}
+// Too small a context is said once per model per run (the Model page shows it until it's fixed).
+const ollamaWarned = new Set();
+function warnContext(id) {
+  const warn = ollama.contextNote(id);
+  if (warn && !ollamaWarned.has(id)) { ollamaWarned.add(id); say(warn, 'concerned'); }
+}
+async function measureOllama(id) {
+  const ctx = await ollama.measure(id);
+  logLine('ollama_context', { model: id, ctx });
+  warnContext(id);
+  panel();
 }
 // About to be asked (talk keys down, the ask bubble open): Claude Code starts now instead of after the words
 // arrive. Queued like a request, so it never swaps the agent under one that's running.
@@ -932,7 +976,8 @@ async function prompt(text, image = null, note = '', byVoice = false) {
     if (controller.signal.aborted) voice?.abort(); else { spoken?.flush(); voice?.end(); }
     if (controller.signal.aborted && quiet) ui({ kind: 'agent', e: { type: 'done' } });
     else {
-      const msg = stalled ? stallMessage() : controller.signal.aborted ? 'Okay, stopping.' : aloud(problem('reply', err, { who: PROVIDER_LABELS[config.provider] }));
+      const msg = stalled ? stallMessage() : controller.signal.aborted ? 'Okay, stopping.' : aloud(problem('reply', err, { who: PROVIDER_LABELS[config.provider], local: config.provider === 'local' }));
+      if (config.provider === 'local') ollama.check({ force: true }).then(() => menu());
       console.error('prompt failed', err);
       ui({ kind: 'agent', e: { type: 'error', message: msg, speech: voice?.id ?? null } });
     }
@@ -1011,7 +1056,7 @@ async function oauthLogin(provider, id = `l${++loginSeq}`) {
     // Claude Code keeps Claude's token itself (signInWithClaudeCode saved the marker).
     if (provider !== 'anthropic') await auth.setCredentials(dualAuthProvider(provider)?.oauthKey ?? provider, creds);
     await refreshAuth();
-    if (!config.provider || !signedIn.get(config.provider)) { config.provider = null; ensureModel(); }
+    if (!onOllama() && (!config.provider || !signedIn.get(config.provider))) { config.provider = null; ensureModel(); }
     agent = null;
     if (onboarding) { tell({ phase: 'done' }); obState(); }
     else {
@@ -1281,7 +1326,7 @@ async function saveDiagnostics() {
       locale: Intl.DateTimeFormat().resolvedOptions().locale, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     };
     const app = {
-      version: VERSION, provider: config.provider, model: config.model, signedIn: [...signedIn].filter(([, on]) => on).map(([p]) => p),
+      version: VERSION, brain: config.brain, provider: config.provider, model: config.model, signedIn: [...signedIn].filter(([, on]) => on).map(([p]) => p),
       busy, sidecarUpMinutes: Math.round(process.uptime() / 6) / 10,
       voice: { on: VOICE_OK && config.voice !== false, needsModel: NEEDS_MODEL, model: { status: voiceModel.status, error: voiceModel.error ?? undefined }, hotkeys: HOTKEYS_OK, keys: keys() },
       replies: config.replies, fishKey: speech.fishOn, voiceProvider: speech.provider, voicestudio: speech.provider === 'voicestudio' ? { ok: speech.local?.ok ?? null, reason: speech.local?.reason ?? null, engine: speech.local?.engine ?? null } : undefined, hands: hasHands(process.platform, process.env.ROAMIES_HANDS), handsPath: process.env.ROAMIES_HANDS ? 'set' : 'none',
@@ -1351,11 +1396,15 @@ function panelState() {
     version: VERSION, os: MAC ? 'mac' : process.platform === 'win32' ? 'win' : LINUX ? 'linux' : 'other', snap: SNAP_OK,
     // Wayland: shortcuts are commands bound in the desktop's settings (bind), and there's no Cursor size.
     wayland: WAYLAND, bind: HOTKEYS_OK ? null : BIND,
-    status: busy ? { state: 'busy', text: doing ?? 'Thinking' } : loggingIn ? { state: 'busy', text: loginStatus || `Signing in to ${PROVIDER_LABELS[loggingIn]}` } : current ? { state: 'ready', text: 'Ready' } : { state: 'off', text: 'Not signed in' },
+    status: busy ? { state: 'busy', text: doing ?? 'Thinking' } : loggingIn ? { state: 'busy', text: loginStatus || `Signing in to ${PROVIDER_LABELS[loggingIn]}` }
+      : onOllama() ? (ollama.state.checked && !ollama.problem(config.model) ? { state: 'ready', text: 'Ready' } : { state: 'off', text: ollama.state.checked ? 'Ollama not ready' : 'Checking Ollama' })
+      : current ? { state: 'ready', text: 'Ready' } : { state: 'off', text: 'Not signed in' },
     busy, canNew: !busy && !!session?.messages.length,
     // The type-to-ask shortcut, for the Ask button's tooltip (none on Wayland).
     askKeys: HOTKEYS_OK ? writeSymbols() : null,
-    model: current ? { provider: config.provider, id: config.model, name: current.name, providerLabel: PROVIDER_LABELS[config.provider] ?? config.provider } : null,
+    model: current && (!onOllama() || ollama.has(config.model)) ? { provider: config.provider, id: config.model, name: current.name, providerLabel: PROVIDER_LABELS[config.provider] ?? config.provider } : null,
+    brain: onOllama() ? 'ollama' : 'cloud',
+    ollama: onOllama() ? ollamaPanel() : null,
     providers: MENU_PROVIDERS.map((p) => {
       const meta = AUTH_PROVIDERS.find((x) => x.value === p);
       const on = !!signedIn.get(p);
@@ -1392,6 +1441,37 @@ function panelState() {
   };
 }
 
+
+// Ollama for the Model page: checked yet, running or why not, the models that can run Roamies (tool calling), the
+// ones left out because they can't, and a warning when the picked one's context is too small.
+const ollamaPanel = () => {
+  const st = ollama.state;
+  if (!st.checked) return { checking: true };
+  return {
+    ok: st.ok, message: st.ok ? null : ollama.problem(null).replace(' on the Model page', ''), // this is the Model page
+    models: st.models.slice(0, 100).map((m) => ({ id: m.id, name: m.name, context: m.contextKnown ? m.context : null })),
+    model: ollama.has(config.model) ? config.model : null,
+    gone: config.model && !ollama.has(config.model) ? ollama.problem(config.model) : null,
+    noTools: st.noTools.slice(0, 20),
+    warn: ollama.contextNote(config.model),
+  };
+};
+
+// The brain: Cloud (a signed-in account's model) or Ollama. Each keeps its own pick, so switching back restores it.
+async function setBrain(b) {
+  const change = switchBrain(config, b);
+  if (!change.brain) return;
+  Object.assign(config, change);
+  agent = null; saveConfig(); menu();
+  if (b === 'cloud') {
+    const ok = await brainReady(); menu();
+    return say(ok ? `Back to ${getModel(config.model)?.name ?? config.model}.` : `Sign in to an AI provider on the Model page in ${PANEL}.`, ok ? 'happy' : 'concerned');
+  }
+  await ollama.check({ force: true });
+  const ok = ensureModel(); menu();
+  say(ok ? `${getModel(config.model)?.name ?? 'Your model'} on Ollama answers you now, right here on your computer.` : ollama.problem(config.model), ok ? 'happy' : 'concerned');
+  if (ok && !ollama.find(config.model)?.contextKnown) measureOllama(config.model);
+}
 
 // VoiceStudio for the Voice page: checked yet, ready or why not, its engine, and the voices saved there.
 const studioPanel = () => {
@@ -1543,8 +1623,17 @@ async function onMenu(id) {
   }
   else if (id.startsWith('model:')) {
     const [, p, ...rest] = id.split(':');
-    config.provider = p; config.model = rest.join(':'); agent = null; saveConfig(); menu();
-    say(`Switched to ${getModel(config.model)?.name ?? config.model}.`, 'happy');
+    const m = rest.join(':');
+    if ((p === 'local') !== onOllama() || (p === 'local' && !ollama.has(m))) return; // a pick for the other brain, or gone
+    config.provider = p; config.model = m; if (p === 'local') config.ollamaModel = m;
+    agent = null; saveConfig(); menu();
+    say(`Switched to ${getModel(config.model)?.name ?? config.model}${p === 'local' ? ' on Ollama' : ''}.`, 'happy');
+    if (p === 'local' && !ollama.find(m)?.contextKnown) measureOllama(m);
+  }
+  else if (id.startsWith('brain:')) await setBrain(id.slice(6));
+  else if (id === 'ollama_check') {
+    await ollama.check({ force: true }); ensureModel(); menu();
+    if (onOllama() && ollama.has(config.model) && !ollama.find(config.model).contextKnown) measureOllama(config.model);
   } else if (id.startsWith('login:')) oauthLogin(id.slice(6));
   else if (id.startsWith('key:')) apiKeyLogin(id.slice(4));
   else if (id.startsWith('size:') && SIZES.some(([s]) => s === id.slice(5))) { config.size = id.slice(5); saveConfig(); ui({ kind: 'size', size: config.size }); menu(); }
@@ -1644,8 +1733,7 @@ let beforeIntro = null; // the conversation the chat interrupted: it carries on 
 const introFacts = () => listFacts().filter((f) => !introKnown.has(f.id)).map((f) => ({ id: f.id, text: f.text }));
 async function startIntro() {
   if (intro) return ob({ kind: 'chat_state', status: 'busy' });
-  await refreshAuth();
-  if (!ensureModel()) return ob({ kind: 'chat_state', status: 'no_model' });
+  if (!(await brainReady())) return ob({ kind: 'chat_state', status: 'no_model' });
   intro = { n: 0 };
   introKnown = new Set(listFacts().map((f) => f.id));
   beforeIntro = session?.messages.length ? session : null;
@@ -1707,7 +1795,7 @@ function obState() {
     step: config.onboardStep ?? 0,
     oauth: signInCards(Object.keys(OAUTH), (id) => oauthOn.get(id), PROVIDER_LABELS),
     apikey: keyCards(AUTH_PROVIDERS, (id) => keyOn.get(id)),
-    connected: current && signedIn.get(config.provider) ? { provider: PROVIDER_LABELS[config.provider] ?? config.provider, model: current.name } : null,
+    connected: current && (onOllama() ? ollama.has(config.model) : signedIn.get(config.provider)) ? { provider: PROVIDER_LABELS[config.provider] ?? config.provider, model: current.name } : null,
     keys: keys(),
     actions: config.allowActions,
     login: login.supported ? login.on : null,
@@ -1874,6 +1962,7 @@ let retired = (async () => {
 await retired;
 await refreshAuth();
 ensureModel();
+if (onOllama()) ollama.check().then(() => { ensureModel(); menu(); });
 // The first request after launch gets a warm Claude Code too.
 if (config.onboarded) warmUp();
 // Due commitments turn into a nudge, but only when Sidekick isn't mid-conversation.
