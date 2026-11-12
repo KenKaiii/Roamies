@@ -63,7 +63,7 @@ assert.deepEqual(toolsFor('hacker', all), [], 'an unknown type gets nothing');
 
 // finish: short words, real files inside its own folder.
 {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'roamies-agents-')));
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'roamies-agents-')));
   const dir = path.join(root, 'job'), out = path.join(root, 'Desktop');
   fs.mkdirSync(path.join(dir, 'files'), { recursive: true }); fs.mkdirSync(out);
   fs.writeFileSync(path.join(dir, 'files', 'index.html'), '<h1>hi</h1>');
@@ -227,7 +227,7 @@ assert.match(agentSystem('maker', { dir: '/x', returns: 'answer' }), /report is 
 }
 // The manager, with a fake fork: folders, states, limits, yes/no, finishing, stopping.
 {
-  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'roamies-agentmgr-')));
+  const home = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'roamies-agentmgr-')));
   const root = path.join(home, 'Roamies');
   let T = new Date(2026, 10, 13, 14, 5).getTime();
   const children = [], events = [], opened = [], revealed = [];

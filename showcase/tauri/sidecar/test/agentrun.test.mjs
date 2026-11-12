@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'roamies-agentrun-')));
+const tmp = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'roamies-agentrun-')));
 // The worker's home is the temp folder too, so nothing it does can reach the real one.
 process.env.HOME = process.env.USERPROFILE = tmp;
 process.env.ROAMIES_DATA_DIR = path.join(tmp, 'data');
