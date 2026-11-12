@@ -143,7 +143,15 @@
     Object.assign(m, { p: m.p ?? 0, alpha: 1, dx: 0, dy: 0, born: now(), alive: true, z: m.z ?? 3, color: m.color ?? ACC });
     marks.push(m); touch(); return m;
   }
-  const markBox = (m) => { const b = typeof m.box === 'function' ? m.box() : m.box ?? (m.pts ? boxOf(m.pts) : null); return b ? [b[0] + m.dx, b[1] + m.dy, b[2], b[3]] : [0, 0, W, H]; };
+  // A rect in a mark's own coordinates → on screen: moved by (dx, dy), and for a card zoomed by k from its top left
+  // (ox, oy), when it has been resized or made full screen.
+  const xf = (m, r) => {
+    const k = m.k ?? 1;
+    if (k === 1) return [r[0] + m.dx, r[1] + m.dy, r[2], r[3]];
+    const ox = m.ox ?? 0, oy = m.oy ?? 0;
+    return [ox + (r[0] - ox) * k + m.dx, oy + (r[1] - oy) * k + m.dy, r[2] * k, r[3] * k];
+  };
+  const markBox = (m) => { const b = typeof m.box === 'function' ? m.box() : m.box ?? (m.pts ? boxOf(m.pts) : null); return b ? xf(m, b) : [0, 0, W, H]; };
   const clampR = (r) => { const x0 = Math.max(0, Math.floor(r[0])), y0 = Math.max(0, Math.floor(r[1])), x1 = Math.min(W, Math.ceil(r[0] + r[2])), y1 = Math.min(H, Math.ceil(r[1] + r[3])); return [x0, y0, Math.max(0, x1 - x0), Math.max(0, y1 - y0)]; };
   // Repaints one area: clears it on both layers, draws the marks that touch it, then the glow (the ink blurred under
   // itself, like the user's pen: 0.75, radius ~6).
@@ -157,7 +165,10 @@
       for (const c of i ? [Lc] : [V, Lc]) { c.setTransform(DPR, 0, 0, DPR, 0, 0); c.clearRect(C[0], C[1], C[2], C[3]); }
       for (const c of [V, Lc]) { c.save(); c.beginPath(); c.rect(C[0], C[1], C[2], C[3]); c.clip(); }
       for (const m of group) {
-        for (const c of [V, Lc]) { c.save(); c.globalAlpha = m.alpha; c.translate(m.dx, m.dy); }
+        for (const c of [V, Lc]) {
+          c.save(); c.globalAlpha = m.alpha; c.translate(m.dx, m.dy);
+          if ((m.k ?? 1) !== 1) { c.translate(m.ox, m.oy); c.scale(m.k, m.k); c.translate(-m.ox, -m.oy); }
+        }
         try { m.draw(V, Lc, t); } catch (e) { console.error('ink', e); m.alive = false; }
         for (const c of [V, Lc]) c.restore();
       }
@@ -179,7 +190,7 @@
     for (let i = marks.length - 1; i >= 0; i--) if (!marks[i].alive) marks.splice(i, 1);
     if (!marks.length) { if (alloc) freeCanvas(); return; }
     if (!alloc) allocate();
-    const full = t < until || !!drag || !lastU, live = full ? [] : marks.filter((m) => m.live?.(t));
+    const full = t < until || !!drag || !!sizing || !lastU, live = full ? [] : marks.filter((m) => m.live?.(t));
     if (full) {
       let U = null;
       for (const m of marks) U = union(U, grow(markBox(m), 28));
@@ -598,7 +609,7 @@
     const full = h;
     h = Math.min(full, maxCardH());
     const [x, y] = roomFor(w, h, m.part), bar = o.bar === false ? 0 : 26;
-    const c = add({ z: 2, part: m.part, card: true, kind: m.kind, cw: 0, ch: 0, p: 0, done: 0, w, h, sy: 0, scrollMax: Math.max(0, full - h), color: tone(m.tone), live: o.live, box: () => [x - 4, y - 4, w + 8, h + 14],
+    const c = add({ z: 2, part: m.part, card: true, kind: m.kind, cw: 0, ch: 0, p: 0, done: 0, w, h, ox: x, oy: y, sy: 0, scrollMax: Math.max(0, full - h), color: tone(m.tone), live: o.live, box: () => [x - 4, y - 4, w + 8, h + 14],
       draw(b, l, t) {
         if (this.cw < 4) return;
         chrome(b, x, y, this.cw, this.ch, { edge: o.edge ? colorOf(this, this.color) : ACC });
@@ -607,7 +618,14 @@
           b.fillStyle = 'rgba(120,255,226,0.06)'; b.fillRect(x + 2, y + 2, w - 4, bar - 2);
           b.fillStyle = DEEP; b.fillRect(x + 2, y + bar, w - 4, 1);
           [0, 1].forEach((k) => { b.fillStyle = k ? DEEP : ACC; b.fillRect(x + 12 + k * 12, y + 11, 5, 5); });
-          if (o.title) typed(b, ellipsize(String(o.title).toLowerCase(), w - 90, `500 10px ${MONO}`), x + w / 2, y + 17, `500 10px ${MONO}`, DIM, (t - this.done) / 0.4, { anchor: 'middle' });
+          if (o.title) typed(b, ellipsize(String(o.title).toLowerCase(), w - 120, `500 10px ${MONO}`), x + w / 2, y + 17, `500 10px ${MONO}`, DIM, (t - this.done) / 0.4, { anchor: 'middle' });
+          // full screen: four pixel corners (pointing in once it's full)
+          { const fx = x + w - 44, fy = y + 13, s = 4, f = this.full ? -1 : 1;
+            b.fillStyle = this.hoverFull ? HOT : DIM;
+            for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+              const cx = fx + sx * s, cy = fy + sy * s;
+              b.fillRect(cx - (sx * f < 0 ? 0 : 2), cy - 1, 3, 2); b.fillRect(cx - 1, cy - (sy * f < 0 ? 0 : 2), 2, 3);
+            } }
           // close: a small pixel ×
           const cx = x + w - 18, cy = y + 13, hot = this.hoverClose;
           b.fillStyle = hot ? HOT : DIM; for (let k = -3; k <= 3; k++) { b.fillRect(cx + k - 1, cy + k - 1, 2, 2); b.fillRect(cx + k - 1, cy - k - 1, 2, 2); }
@@ -620,9 +638,12 @@
           b.fillStyle = rgba(ACC, 0.15); b.fillRect(x + w - 7, top, 2, len);
           b.fillStyle = ACC; b.fillRect(x + w - 7, ty, 2, th);
         }
+        // resize grip: three pixel steps in the bottom right corner
+        if (this.p >= 1 && !this.full) { b.fillStyle = this.hoverGrip ? HOT : rgba(ACC, 0.45); for (let k = 0; k < 3; k++) for (let j = 0; j <= k; j++) b.fillRect(x + w - 6 - j * 4, y + h - 14 + k * 4, 2, 2); }
       },
       hits() {
-        const out = bar ? [{ rect: [x + w - 28, y + 2, 26, 22], kind: 'close', part: m.part }, { rect: [x, y, w - 30, bar], kind: 'drag', part: m.part }] : [{ rect: [x, y, w, Math.min(h, 24)], kind: 'drag', part: m.part }];
+        const out = bar ? [{ rect: [x + w - 28, y + 2, 26, 22], kind: 'close', part: m.part }, { rect: [x + w - 54, y + 2, 22, 22], kind: 'full', part: m.part }, { rect: [x, y, w - 56, bar], kind: 'drag', part: m.part }] : [{ rect: [x, y, w, Math.min(h, 24)], kind: 'drag', part: m.part }];
+        if (!this.full) out.unshift({ rect: [x + w - 18, y + h - 18, 18, 18], kind: 'resize', part: m.part });
         // Links scrolled out of view can't be clicked.
         const more = (this.more?.() ?? []).filter((q) => q.rect[1] >= y + bar && q.rect[1] + q.rect[3] <= y + h);
         return [...more, ...out, { rect: [x, y, w, h], kind: 'card', part: m.part }];
@@ -2018,23 +2039,39 @@
   }
 
   // ---------------------------------------------------------------- hit areas: buttons, card close, card drag, links
-  let drag = null, hovered = null;
+  let drag = null, hovered = null, sizing = null;
+  // Zoom limits for a card: never smaller than 60 %, never bigger than the screen.
+  const maxK = (m) => { const S = scr(); return Math.max(1, Math.min((S[2] - S[0] - 16) / (m.w + 8), (S[3] - S[1] - 16) / (m.h + 14))); };
+  // Full screen: the card zooms to fill the screen, centred; again, and it goes back where and how big it was.
+  async function toggleFull(m) {
+    const from = { k: m.k ?? 1, dx: m.dx, dy: m.dy };
+    let to;
+    if (m.full) { to = m.before ?? { k: 1, dx: 0, dy: 0 }; m.full = false; m.before = null; }
+    else {
+      const S = scr(), k = Math.min((S[2] - S[0] - 48) / m.w, (S[3] - S[1] - 48) / m.h);
+      m.before = from; m.full = true;
+      to = { k, dx: S[0] + (S[2] - S[0] - m.w * k) / 2 - m.ox, dy: S[1] + (S[3] - S[1] - m.h * k) / 2 - m.oy };
+    }
+    m.z = m.full ? 4 : 2; // full: above the other cards
+    sfx(m.full ? 'expand' : 'tick');
+    await tween(0.3, (u) => { const e = ease(u); m.k = from.k + (to.k - from.k) * e; m.dx = from.dx + (to.dx - from.dx) * e; m.dy = from.dy + (to.dy - from.dy) * e; });
+  }
   const hitAt = (x, y) => {
     for (const m of [...marks].sort((a, b) => b.z - a.z)) {
       if (!m.alive || !m.hits || m.alpha < 0.5) continue;
-      for (const h of m.hits()) { const r = [h.rect[0] + m.dx, h.rect[1] + m.dy, h.rect[2], h.rect[3]]; if (inside(r, x, y)) return { ...h, m }; }
+      for (const h of m.hits()) { const r = xf(m, h.rect); if (inside(r, x, y)) return { ...h, m }; }
     }
     return null;
   };
   const setHover = (h) => {
     const m = h?.m ?? null;
-    if (hovered && hovered !== m) { hovered.hover = false; hovered.hoverClose = false; hovered.hoverId = null; hovered.setHover?.(false); }
-    if (m) { m.hover = h.kind === 'button' || h.kind === 'link' || h.kind === 'clearall'; m.hoverClose = h.kind === 'close'; m.hoverId = h.kind === 'tick' || h.kind === 'pick' ? h.id : null; m.setHover?.(h.kind === 'button'); }
+    if (hovered && hovered !== m) { hovered.hover = false; hovered.hoverClose = false; hovered.hoverFull = false; hovered.hoverGrip = false; hovered.hoverId = null; hovered.setHover?.(false); }
+    if (m) { m.hover = h.kind === 'button' || h.kind === 'link' || h.kind === 'clearall'; m.hoverClose = h.kind === 'close'; m.hoverFull = h.kind === 'full'; m.hoverGrip = h.kind === 'resize'; m.hoverId = h.kind === 'tick' || h.kind === 'pick' ? h.id : null; m.setHover?.(h.kind === 'button'); }
     if (hovered !== m || m) touch(0.2);
     hovered = m;
-    document.documentElement.style.cursor = h && (h.kind === 'button' || h.kind === 'close' || h.kind === 'link' || h.kind === 'clearall' || h.kind === 'tick' || h.kind === 'pick') ? 'pointer' : h?.kind === 'drag' ? 'grab' : 'default';
+    document.documentElement.style.cursor = h && (h.kind === 'button' || h.kind === 'close' || h.kind === 'full' || h.kind === 'link' || h.kind === 'clearall' || h.kind === 'tick' || h.kind === 'pick') ? 'pointer' : h?.kind === 'drag' ? 'grab' : h?.kind === 'resize' ? 'nwse-resize' : 'default';
   };
-  const ours = (e) => !!hitAt(e.clientX, e.clientY) || !!drag;
+  const ours = (e) => !!hitAt(e.clientX, e.clientY) || !!drag || !!sizing;
   addEventListener('pointerdown', (e) => {
     const h = hitAt(e.clientX, e.clientY);
     if (!h) return;
@@ -2045,6 +2082,10 @@
     else if (h.kind === 'link') { sfx('pip'); R.ink.send?.({ type: 'open_link', url: h.url }); }
     else if (h.kind === 'pick') { h.m.pick?.(h.id); touch(1); }
     else if (h.kind === 'clearall') clearEverything();
+    else if (h.kind === 'full') toggleFull(h.m);
+    else if (h.kind === 'resize') { sizing = { m: h.m }; sfx('grab'); touch(); }
+    // A full-screen card stays up when its body is clicked (there's nothing under it to be after).
+    else if (h.kind === 'card' && h.m.full) return;
     // A click on a card's body: they're after what's under it, so the drawing goes, as it does when another window
     // comes to the front (cards move by their top bar). Not a quiz (a click between two options isn't "go away"),
     // and not the reminders card or a drawing that goes by itself, which still move by the body.
@@ -2054,9 +2095,15 @@
   }, true);
   addEventListener('pointermove', (e) => {
     if (drag) { const dx = e.clientX - drag.x, dy = e.clientY - drag.y; drag.ms.forEach((m, i) => { m.dx = drag.start[i][0] + dx; m.dy = drag.start[i][1] + dy; }); touch(0.2); return; }
+    // Resizing: the corner follows the pointer, keeping the card's shape (it zooms from its top left).
+    if (sizing) {
+      const m = sizing.m, left = m.ox + m.dx, top = m.oy + m.dy;
+      m.k = clamp(Math.max((e.clientX - left) / m.w, (e.clientY - top) / m.h), 0.6, maxK(m));
+      touch(0.2); return;
+    }
     setHover(hitAt(e.clientX, e.clientY));
   }, true);
-  addEventListener('pointerup', (e) => { if (drag) { drag = null; e.stopPropagation(); touch(0.2); } }, true);
+  addEventListener('pointerup', (e) => { if (drag || sizing) { drag = null; sizing = null; e.stopPropagation(); touch(0.2); } }, true);
   addEventListener('wheel', (e) => {
     if (!ours(e)) return;
     e.stopPropagation();
@@ -2066,13 +2113,13 @@
   }, { capture: true, passive: false });
 
   // ---------------------------------------------------------------- the host's way in (host.js)
-  R.inkHit = (x, y) => !!drag || !!hitAt(x, y);
+  R.inkHit = (x, y) => !!drag || !!sizing || !!hitAt(x, y);
   // Every clickable area as [x, y, w, h]: Linux hosts make these part of the window's click shape (host.js).
   R.inkRects = () => {
     const out = [];
     for (const m of marks) {
       if (!m.alive || !m.hits || m.alpha < 0.5) continue;
-      for (const h of m.hits()) out.push([h.rect[0] + m.dx, h.rect[1] + m.dy, h.rect[2], h.rect[3]]);
+      for (const h of m.hits()) out.push(xf(m, h.rect));
     }
     return out;
   };
