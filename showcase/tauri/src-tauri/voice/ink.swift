@@ -260,6 +260,7 @@ final class InkPanel: NSPanel {
 
 final class Ink {
     private var panels: [InkPanel] = []
+    private var builtScreens: [ScreenKey] = [] // the displays the panels were built for (screens.swift)
     private var armed = false
     // Following the cursor while armed: where it was, when it last moved, and the panel the stroke is on.
     private var last: CGPoint?, lastMoved = 0.0, onPanel: InkPanel?
@@ -308,8 +309,9 @@ final class Ink {
     }
 
     private func syncScreens() {
-        let frames = NSScreen.screens.map(\.frame)
-        if panels.map(\.frame) == frames { return }
+        let now = currentScreenKeys()
+        if !screensChanged(built: builtScreens, now: now) { return }
+        builtScreens = now
         // Screens changed: strokes on the old panels go with them.
         for p in panels { p.orderOut(nil) }
         panels = NSScreen.screens.map { InkPanel(screen: $0) }
