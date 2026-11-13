@@ -49,6 +49,12 @@ Each provider's own privacy policy applies to what is sent to it.
   "Hey Roamies", and macOS shows its microphone dot the whole time. That audio is turned into text only on your Mac
   (it never starts on a Mac that would need Apple's servers). Nothing is kept or sent anywhere until you say the phrase;
   the log notes only when it heard speech and how close that came to the phrase, never what was said.
+- **Memory sync (off by default):** if you choose a sync folder, Roamies writes your reminders, commitments and
+  remembered facts to `Roamies Sync/<random id>.json` in it, so your other computer can read them. Everything in that
+  folder is encrypted (AES-256-GCM) with a key made from a passphrase you type on each computer; the key is kept in
+  your Keychain (macOS), with DPAPI (Windows) or in your keyring (Linux), and the passphrase itself isn't stored. Your
+  sync service sees only encrypted files and random file names. Conversations, sign-ins and keys are never written
+  there. Stop syncing in the panel to remove the key from this computer; the folder copy stays until you delete it.
 - The screen is captured only when Roamies answers something about your screen, or when you mark an area. On Linux
   with Wayland it's taken through your desktop's screenshot portal; the copy the portal saves is deleted right away.
 
