@@ -33,7 +33,8 @@ final class Buddy: NSObject {
         panel.ignoresMouseEvents = true
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
-        panel.level = .statusBar
+        // Above games' own fullscreen windows, which sit at the status bar level.
+        panel.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         panel.setAccessibilityLabel("Roamies sidekick")
         let view = NSView(frame: NSRect(origin: .zero, size: panel.frame.size))

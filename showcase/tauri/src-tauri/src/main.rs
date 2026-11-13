@@ -3,6 +3,8 @@
 // No Dock icon (LSUIElement + Accessory policy) and no taskbar entries on Windows/Linux.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+#[cfg(target_os = "macos")]
+mod fullscreen;
 #[cfg(target_os = "linux")]
 mod linux;
 mod sidecar;
@@ -254,6 +256,9 @@ fn set_hot(window: WebviewWindow, hot: bool) {
     if cfg!(target_os = "linux") {
         return;
     }
+    // A fullscreen game in front gets every click (fullscreen.rs).
+    #[cfg(target_os = "macos")]
+    let hot = hot && !fullscreen::GAME.load(Ordering::Relaxed);
     OVERLAY_HOT.store(hot, Ordering::Relaxed);
     let _ = window.set_ignore_cursor_events(!hot);
 }
@@ -745,6 +750,8 @@ fn show_panel(app: &AppHandle, rect: Option<tauri::Rect>, toggle: bool) {
                 .visible(false);
             match b.build() {
                 Ok(w) => {
+                    #[cfg(target_os = "macos")]
+                    over_fullscreen(&w);
                     let app2 = app.clone();
                     w.on_window_event(move |e| {
                         if let tauri::WindowEvent::Focused(false) = e {
@@ -1089,10 +1096,31 @@ fn build_overlays(app: &AppHandle) -> tauri::Result<()> {
         w.set_ignore_cursor_events(true)?;
         #[cfg(target_os = "macos")]
         full_frame_rate(&w);
+        #[cfg(target_os = "macos")]
+        over_fullscreen(&w);
         #[cfg(target_os = "windows")]
         exclude_from_capture(&w);
     }
     Ok(())
+}
+
+/// Tauri's always-on-top is the floating level, under games' own fullscreen windows (GLFW, e.g. Minecraft, puts
+/// them at the status bar level), and only fullScreenAuxiliary windows may join another app's fullscreen Space.
+/// So: one level above the status bar, allowed over fullscreen apps, like the voice helper's sidekick.
+#[cfg(target_os = "macos")]
+fn over_fullscreen(w: &WebviewWindow) {
+    let Ok(p) = w.ns_window() else { return };
+    let p = p as usize;
+    let _ = w.run_on_main_thread(move || unsafe {
+        use objc2::msg_send;
+        use objc2::runtime::AnyObject;
+        const FULL_SCREEN_AUXILIARY: usize = 1 << 8;
+        const STATUS_BAR_LEVEL: isize = 25;
+        let win = p as *mut AnyObject;
+        let behavior: usize = msg_send![win, collectionBehavior];
+        let _: () = msg_send![win, setCollectionBehavior: behavior | FULL_SCREEN_AUXILIARY];
+        let _: () = msg_send![win, setLevel: STATUS_BAR_LEVEL + 1];
+    });
 }
 
 /// WebKit caps page animation frames near 60 fps; on a 120 Hz screen that makes following the cursor
@@ -1691,6 +1719,8 @@ fn main() {
             watch_screens(app.handle().clone());
             #[cfg(target_os = "macos")]
             snapshot::watch_screenshots(app.handle().clone());
+            #[cfg(target_os = "macos")]
+            fullscreen::watch(app.handle().clone());
             spawn_sidecar(app.handle());
             Ok(())
         })

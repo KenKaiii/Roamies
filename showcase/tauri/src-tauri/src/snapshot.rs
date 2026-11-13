@@ -70,7 +70,7 @@ fn screenshot_on_screen() -> bool {
     })
 }
 
-unsafe fn ns_string(s: &std::ffi::CStr) -> *mut AnyObject {
+pub(crate) unsafe fn ns_string(s: &std::ffi::CStr) -> *mut AnyObject {
     msg_send![class!(NSString), stringWithUTF8String: s.as_ptr()]
 }
 

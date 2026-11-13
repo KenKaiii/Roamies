@@ -1,6 +1,14 @@
 {
   "updates": [
     {
+      "version": null,
+      "date": "2026-11-13",
+      "items": [
+        { "kind": "improved", "title": "Works over fullscreen apps", "text": "On a Mac, your Roamie now shows up over fullscreen apps and games instead of hiding." },
+        { "kind": "new", "title": "Stays out of your games", "text": "In a fullscreen game, I move your Roamie aside and every click goes to the game." }
+      ]
+    },
+    {
       "version": "0.1.38",
       "date": "2026-11-13",
       "items": [
