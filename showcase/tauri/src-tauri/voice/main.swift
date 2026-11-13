@@ -117,6 +117,29 @@ struct RecognizerCallbacks {
     let onError: (Error) -> Void
 }
 
+// Locale.current is limited to the bundle's localizations (none ship), so it is always English:
+// follow the user's own language list instead, which also honours a per-app language in System Settings.
+func speechLocaleCandidates() -> [Locale] {
+    Locale.preferredLanguages.map { Locale(identifier: $0) } + [Locale.current, Locale(identifier: "en-US")]
+}
+
+// The older recogniser wants an exact supported locale: take the first of the user's languages it has,
+// in that language's main region when the user's region isn't offered (en-BR → en-US).
+func legacySpeechLocale() -> Locale? {
+    let supported = SFSpeechRecognizer.supportedLocales().sorted { $0.identifier < $1.identifier }
+    func key(_ id: String) -> String { id.replacingOccurrences(of: "-", with: "_").lowercased() }
+    for want in speechLocaleCandidates() {
+        if let hit = supported.first(where: { key($0.identifier) == key(want.identifier) }) { return hit }
+        let lang = key(want.identifier).split(separator: "_").first.map(String.init) ?? ""
+        let same = supported.filter { key($0.identifier).split(separator: "_").first.map(String.init) == lang }
+        if same.isEmpty { continue }
+        if #available(macOS 13, *), let region = Locale.Language(identifier: lang).maximalIdentifier.split(separator: "-").last,
+           let main = same.first(where: { key($0.identifier) == "\(lang)_\(region.lowercased())" }) { return main }
+        return same.first
+    }
+    return nil
+}
+
 // macOS 26+: SpeechAnalyzer + SpeechTranscriber. Model assets are shared system-wide and
 // downloaded on first use; the locale and audio format are resolved once and reused.
 @available(macOS 26, *)
@@ -125,9 +148,10 @@ final class AnalyzerRecognizer: Recognizer {
     static func prepare() -> Task<(Locale, AVAudioFormat?), Error> {
         if let p = prepared { return p }
         let t = Task { () throws -> (Locale, AVAudioFormat?) in
-            let want = Locale.current
-            var locale = await SpeechTranscriber.supportedLocale(equivalentTo: want)
-            if locale == nil { locale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale(identifier: "en-US")) }
+            var locale: Locale?
+            for want in speechLocaleCandidates() where locale == nil {
+                locale = await SpeechTranscriber.supportedLocale(equivalentTo: want)
+            }
             let resolved = locale ?? Locale(identifier: "en-US")
             let probe = SpeechTranscriber(locale: resolved, preset: .progressiveTranscription)
             if let req = try await AssetInventory.assetInstallationRequest(supporting: [probe]) {
@@ -238,7 +262,7 @@ final class LegacyRecognizer: Recognizer {
 
     /// onDeviceOnly: nil rather than sending audio to Apple's servers (wake listening, which hears everything).
     init?(_ cb: RecognizerCallbacks, onDeviceOnly: Bool = false) {
-        guard let rec = SFSpeechRecognizer() ?? SFSpeechRecognizer(locale: Locale(identifier: "en-US")), rec.isAvailable else { return nil }
+        guard let rec = legacySpeechLocale().flatMap({ SFSpeechRecognizer(locale: $0) }) ?? SFSpeechRecognizer(locale: Locale(identifier: "en-US")), rec.isAvailable else { return nil }
         if onDeviceOnly && !rec.supportsOnDeviceRecognition { return nil }
         req.shouldReportPartialResults = true
         if rec.supportsOnDeviceRecognition { req.requiresOnDeviceRecognition = true }
