@@ -358,7 +358,7 @@ const userName = (() => {
 // ---------- tools ----------
 // The open request's voice, if replies are spoken: draw's beat lines are said on it, in order with the reply.
 let turnVoice = null;
-const { tools, hands, whereNow, ink, nextTurn } = createTools({
+const { tools, hands, whereNow, frontBounds, ink, nextTurn } = createTools({
   allowActions: () => config.allowActions, ui, ask, openUrl, userName,
   speak: (line) => { if (!turnVoice) return false; turnVoice.say(line); return true; },
   onHandoff: (task) => { activity.handoff(task); panel(); },
@@ -1475,6 +1475,22 @@ function onUpdateStatus(m) {
   }
 }
 
+// ---------- game mode (roamies/sidebar.js) ----------
+// While a game fills the screen, the Roamie and its cards move to a panel at the screen's edge. macOS already knows when
+// a fullscreen game is in front (fullscreen.rs), so the overlay only needs the setting from here. On Windows, the front
+// window's bounds go to the overlay every few seconds (from the hands helper; nothing kept or logged). Not on Linux.
+let gameTicking = false;
+const WIN = process.platform === 'win32';
+async function gameModeTick() {
+  if (gameTicking) return;
+  gameTicking = true;
+  try {
+    const enabled = HANDS_OK && config.gameSidebar !== false;
+    ui({ kind: 'front_window', rect: enabled && WIN ? await frontBounds() : null, enabled });
+  } finally { gameTicking = false; }
+}
+if (HANDS_OK) setInterval(() => gameModeTick().catch(() => {}), WIN ? 3000 : 30_000);
+
 // ---------- the list on screen ----------
 // Today / Later, drawn by the overlay next to Sidekick. seconds: how long it stays up (0 = just update it if it's open).
 // flash: the item that just changed, so the overlay can animate it.
@@ -1642,7 +1658,7 @@ function panelState() {
       on: !!config.voice, keys: HOTKEYS_OK ? talkSymbols() : null, ready: voiceReady(), mac: MAC, mute: config.muteWhileTalking !== false, autoListen: !!config.autoListen, wakeWord: !!config.wakeWord,
       download: NEEDS_MODEL && config.voice && !voiceReady() ? { status: voiceModel.status, pct: voiceModel.total ? Math.floor((voiceModel.done / voiceModel.total) * 100) : 0, size: sizeLabel() } : null,
     } : null,
-    sound: !!config.sound, actions: !!config.allowActions,
+    sound: !!config.sound, actions: !!config.allowActions, gameMode: HANDS_OK ? config.gameSidebar !== false : null,
     login: login.supported ? { on: login.on } : null,
     update: { available: update.available, installing: update.installing, checking: update.checking, result: update.result, page: update.page, done: update.done },
     intro: !!intro,
@@ -1822,6 +1838,7 @@ async function onMenu(id, via) {
   else if (id.startsWith('geminimodel:') && GEMINI_CHOICES.some((c) => c.id === id.slice(12))) {
     config.geminiModel = id.slice(12); saveConfig(); if (tts().id === 'gemini') speech.setModel(config.geminiModel); menu();
   }
+  else if (id === 'gamemode' && HANDS_OK) { config.gameSidebar = config.gameSidebar === false; saveConfig(); menu(); gameModeTick().catch(() => {}); }
   else if (id === 'sound') { config.sound = !config.sound; saveConfig(); ui({ kind: 'sound', on: config.sound }); voiceConfig(); menu(); }
   else if (id === 'actions') {
     config.allowActions = !config.allowActions; agents.setAllow(config.allowActions); saveConfig(); menu(); // live section picks this up
