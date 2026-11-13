@@ -12,16 +12,29 @@ final class Wave {
     private static let speed: [Double] = [7.1, 9.3, 6.2, 8.4, 10.1, 7.7, 6.8]
     private static let phase: [Double] = [0, 1.7, 0.6, 2.9, 1.1, 2.2, 0.3]
 
-    private let panel: NSPanel
-    private let bars: [CALayer]
+    private var panel: NSPanel
+    private var bars: [CALayer]
     private var level: CGFloat = 0, target: CGFloat = 0
     private var shown = false, thinking = false, hidden = false
     private var waitID = 0
     private var lastOrigin = NSPoint(x: -1, y: -1)
+    // The displays the panel was built for, and the observer that notices when they change.
+    private var builtScreens: [ScreenKey] = []
+    private var screenObserver: NSObjectProtocol?
 
     init() {
+        (panel, bars) = Self.build()
+        builtScreens = currentScreenKeys()
+        screenObserver = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.rebuildIfScreensChanged()
+        }
+    }
+
+    deinit { if let o = screenObserver { NotificationCenter.default.removeObserver(o) } }
+
+    private static func build() -> (NSPanel, [CALayer]) {
         let size = NSSize(width: Self.w, height: Self.h)
-        panel = NSPanel(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        let panel = NSPanel(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
@@ -50,13 +63,32 @@ final class Wave {
         host.shadowRadius = 3
         host.shadowOffset = .zero
         root.addSublayer(host)
-        bars = (0 ..< Self.shape.count).map { _ in
+        let bars: [CALayer] = (0 ..< Self.shape.count).map { _ in
             let b = CALayer()
             b.backgroundColor = CGColor(srgbRed: 0x78 / 255, green: 1, blue: 0xe2 / 255, alpha: 1)
             host.addSublayer(b)
             return b
         }
         panel.contentView = view
+        return (panel, bars)
+    }
+
+    /// A panel made for another set of displays can sit at alpha 1 and never be on screen, so when the displays change
+    /// it is built again (never with no display attached). If the pill was showing, the new one takes its place at once.
+    private func rebuildIfScreensChanged() {
+        let now = currentScreenKeys()
+        guard screensChanged(built: builtScreens, now: now) else { return }
+        let old = panel
+        old.orderOut(nil)
+        old.contentView = nil
+        (panel, bars) = Self.build()
+        builtScreens = now
+        lastOrigin = NSPoint(x: -1, y: -1)
+        if shown {
+            tick() // places it and gives the new bars their frames, so no frame shows a blank pill
+            panel.orderFrontRegardless()
+            panel.alphaValue = hidden ? 0 : 1
+        }
     }
 
     /// The Roamies pixel frame: corners cut in two 2-pt steps (same as the setup guide's .px boxes).
@@ -76,6 +108,7 @@ final class Wave {
 
     func show() {
         thinking = false; level = 0; target = 0
+        rebuildIfScreensChanged()
         if !shown {
             shown = true
             lastOrigin = NSPoint(x: -1, y: -1)
