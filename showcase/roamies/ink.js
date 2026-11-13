@@ -615,8 +615,19 @@
   async function card(m, w, h, inner, o = {}) {
     const full = h;
     h = Math.min(full, maxCardH());
-    const [x, y] = roomFor(w, h, m.part), bar = o.bar === false ? 0 : 26;
-    const c = add({ z: 2, part: m.part, card: true, kind: m.kind, cw: 0, ch: 0, p: 0, done: 0, w, h, ox: x, oy: y, sy: 0, scrollMax: Math.max(0, full - h), color: tone(m.tone), live: o.live, box: () => [x - 4, y - 4, w + 8, h + 14],
+    // Deep explain: one big card at a time, zoomed to cover most of the screen and centred above the caption; the
+    // card before it goes as it comes.
+    const deep = deepParts.has(m.part);
+    let k = 1, x, y;
+    if (deep) {
+      const before = [...new Set(marks.filter((q) => q.alive && q.card && !q.local && !q.leaving && q.part !== m.part).map((q) => q.part))];
+      for (const id of before) { R.ink.send?.({ type: 'ink_closed', part: id }); fadeOut(partMarks(id), 0.35); }
+      const S = scr(), SW = S[2] - S[0], SH = S[3] - S[1] - 80;
+      k = Math.max(1, Math.min((SW * 0.86) / w, (SH * 0.94) / h, 2.6));
+      x = S[0] + (SW - w * k) / 2; y = S[1] + Math.max(8, (SH - h * k) / 2);
+    } else [x, y] = roomFor(w, h, m.part);
+    const bar = o.bar === false ? 0 : 26;
+    const c = add({ z: 2, part: m.part, card: true, kind: m.kind, cw: 0, ch: 0, p: 0, done: 0, w, h, ox: x, oy: y, k, deep, sy: 0, scrollMax: Math.max(0, full - h), color: tone(m.tone), live: o.live, box: () => [x - 4, y - 4, w + 8, h + 14],
       draw(b, l, t) {
         if (this.cw < 4) return;
         chrome(b, x, y, this.cw, this.ch, { edge: o.edge ? colorOf(this, this.color) : ACC });
@@ -660,7 +671,7 @@
       },
     });
     await fly(x, y); sfx('expand');
-    await tween(0.45, (u) => { const e = ease(u); c.cw = w * e; c.ch = h * e; penApi()?.set?.(x + c.cw, y + c.ch); });
+    await tween(0.45, (u) => { const e = ease(u); c.cw = w * e; c.ch = h * e; penApi()?.set?.(x + c.cw * k, y + c.ch * k); });
     c.p = 1; c.done = now(); touch(1.5); syncClearAll();
     if (m.tie?.rect) { const T = locRect(m.tie.rect), C = [x, y, w, h], tc = [T[0] + T[2] / 2, T[1] + T[3] / 2]; await arrow(m.part, edgeToward(T, [x + w / 2, y + h / 2], 6), edgeToward(C, tc, 6), { bend: -0.2, screen: false }); }
     return c;
@@ -1862,6 +1873,7 @@
   async function runSeg(e, gen) {
     R.ink.send?.({ type: 'draw_started', id: e.id, seg: e.seg });
     if (e.fade) for (const b of e.beats ?? []) for (const m of b.marks) if (m.part) drawnBy.set(m.part, e.id);
+    if (e.deep) for (const b of e.beats ?? []) for (const m of b.marks) if (m.part) deepParts.add(m.part);
     if (e.win) winRect = locRect(e.win);
     if (e.busy?.length) busyRects = e.busy.map(locRect);
     for (const ed of e.edits ?? []) { if (gen !== G.gen) return; if (ed.do !== 'clear') { await take(); G.held = true; } await edit(ed); }
@@ -1895,6 +1907,7 @@
   // A drawing that goes by itself (the welcome tour): faded `sec` after it finishes, waiting while the pointer rests
   // on one of its pieces (they may be about to click a button).
   const drawnBy = new Map(); // part → drawing id, for drawings that fade by themselves
+  const deepParts = new Set(); // parts of a deep explanation: big cards, one at a time
   function fadeLater(id, sec) {
     const mine = () => marks.filter((m) => m.alive && drawnBy.get(m.part) === id);
     const tick = () => {
