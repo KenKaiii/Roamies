@@ -1,0 +1,23 @@
+{
+  "version": "0.1.37",
+  "notes": "Roamies 0.1.37",
+  "pub_date": "2026-11-13T00:30:37.296Z",
+  "platforms": {
+    "darwin-aarch64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSZnoxWVBMMFVMMUdkM1N0dEdMenFqZHgyelNtOG5Qa1JjdmVEdHduTkhTbnpLR2VIVjFpYTMzUzduR0NUcUF2aksvQktBZmJDdDgyR0gyQThWUXU3WE1YdmNYOUpPcGdzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NTI5NzM3CWZpbGU6Um9hbWllcy5hcHAudGFyLmd6CXZlcnNpb246MC4xLjM3CnVCczlUZ2NWc0w0U20vc1pxNFQwTGJCemROMTd3RGFtcElvc1JpZitQa2RaUFYwOXhwcUdERlllZHNzODRBaXFnd0tuQzZBNlBhNHBOSTB4bXJmS0RRPT0K",
+      "url": "https://api.github.com/repos/KenKaiii/Roamies/releases/assets/741646048"
+    },
+    "darwin-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSZnoxWVBMMFVMMURCWk1HNlp1aWF3MkFRQzgvcjhybUYzM1pycUw2czUrOUtCbU9DTjRLMGFoOTlQb0kxb3Z0VDdLc0Q4T3NYWXprR05wV3N6RFdFRStQTW5rUlhTNUFzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NTI5NTIxCWZpbGU6Um9hbWllcy5hcHAudGFyLmd6CXZlcnNpb246MC4xLjM3CjBvWlYxTmhDRVB4WjgzSG0wU0Z0bm9VeDBaaFRvUENsVGowTFozM2tXcDlmWDUwbUVxd0kxM3UvRi9JOFNOUFBORXIvcWE3M0JZQlV6S05tVHUvckJRPT0K",
+      "url": "https://api.github.com/repos/KenKaiii/Roamies/releases/assets/741637449"
+    },
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSZnoxWVBMMFVMMUtGemZkdFhIZjk2WGxiK05HcEVNQVp3OXBjSUxaazE1OXpwWnJnd1Y1eTRzNmFZeUx3WC9DQlBFZzA2TUl1cE1zZUNNNk9aK0hQK2YrRUorOGgzcXd3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NTI5NzU4CWZpbGU6Um9hbWllc18wLjEuMzdfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuMS4zNwo4WDA3Y0tlaGxKc0xCRlVNcEg0N09WMG9VNDF2NHVSVkNGa1k4RjNzcWpuOGhLODBXYmN6dHNvNnVhUWJpb1p3NE41L2dWczM0dStFQlB0MitpVlpCQT09Cg==",
+      "url": "https://api.github.com/repos/KenKaiii/Roamies/releases/assets/741643991"
+    },
+    "linux-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSZnoxWVBMMFVMMUZ6MnVPRUkwU0w3RnFYUnh0K0Q3S3piNitpM2NaQmxEVlMraWFoZUxqekIxc296QytNWTR2MzJKandCaXV6MWVxTU1iWHNjWk8vWkhDTHJvQzhaRUFVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NTI5NTM2CWZpbGU6Um9hbWllc18wLjEuMzdfYW1kNjQuQXBwSW1hZ2UJdmVyc2lvbjowLjEuMzcKVmFVYnlEWkxDMnl2ckh1SXVkYmg5MGZWV2pKVndQU2hIVmk1eXF4NDc1UG9OK2JaL2VhWVQ4bFdyYUN5WXI4MUhFT1YyRjZHbmViSjUvcDd6NjhkRGc9PQo=",
+      "url": "https://api.github.com/repos/KenKaiii/Roamies/releases/assets/741634870"
+    }
+  }
+}
