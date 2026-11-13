@@ -36,6 +36,7 @@ const Mark = z.object({
   label: z.string().min(1).max(40).optional(), text: z.string().min(1).max(600).optional(),
   r: num.optional(), n: z.number().int().optional(), dir: z.enum(['up', 'down', 'right']).optional(), tone: z.enum(TONES).optional(),
   size: num.optional(), points: z.array(pair).max(LIMITS.points).optional(),
+  card_size: z.enum(['small', 'normal', 'large', 'full']).optional(),
   name: z.string().max(20).optional(), url: z.string().max(2000).optional(), query: z.string().min(1).max(100).optional(),
   title: z.string().min(1).max(60).optional(), heading: z.string().min(1).max(80).optional(),
   items: z.array(z.string().min(1).max(120)).max(12).optional(),
