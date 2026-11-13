@@ -605,6 +605,13 @@
   // A card opening: the cursor drags its corner out. Returns the card mark; draw(b, l, t, x, y) paints its insides.
   // Taller than the screen allows: it opens at the tallest it may be and its insides scroll (wheel or trackpad), so
   // nothing in it is ever cut off.
+  // The pin button in a card's title bar, centred on (px, py): drawn like the full-screen and close buttons; pinned, it
+  // sits on a lit tile (the filled-button look), so the state shows by shape as well as colour.
+  function pinIcon(b, px, py, m) {
+    if (m.pinned) { b.fillStyle = m.hoverPin ? HOT : ACC; b.fillRect(px - 10, py - 9, 20, 18); }
+    b.fillStyle = m.pinned ? INKDARK : m.hoverPin ? HOT : DIM;
+    b.fillRect(px - 4, py - 6, 8, 2); b.fillRect(px - 2, py - 4, 4, 4); b.fillRect(px - 5, py, 10, 2); b.fillRect(px - 1, py + 2, 2, 4);
+  }
   async function card(m, w, h, inner, o = {}) {
     const full = h;
     h = Math.min(full, maxCardH());
@@ -617,11 +624,11 @@
         if (bar) {
           b.fillStyle = 'rgba(120,255,226,0.06)'; b.fillRect(x + 2, y + 2, w - 4, bar - 2);
           b.fillStyle = DEEP; b.fillRect(x + 2, y + bar, w - 4, 1);
-          // pin: a pixel pushpin right of the dots; lit while pinned (the card stays until its × is clicked)
-          { const px = x + 39, py = y + 8, on = this.pinned, ink = on ? HOT : this.hoverPin ? ACC : rgba(ACC, 0.35);
-            b.fillStyle = ink; b.fillRect(px - 3, py, 7, 2); b.fillRect(px - 2, py + 2, 5, 3); b.fillRect(px - 4, py + 5, 9, 2); b.fillRect(px, py + 7, 1, on ? 4 : 3); }
           [0, 1].forEach((k) => { b.fillStyle = k ? DEEP : ACC; b.fillRect(x + 12 + k * 12, y + 11, 5, 5); });
-          if (o.title) typed(b, ellipsize(String(o.title).toLowerCase(), w - 120, `500 10px ${MONO}`), x + w / 2, y + 17, `500 10px ${MONO}`, DIM, (t - this.done) / 0.4, { anchor: 'middle' });
+          if (o.title) typed(b, ellipsize(String(o.title).toLowerCase(), w - 176, `500 10px ${MONO}`), x + w / 2, y + 17, `500 10px ${MONO}`, DIM, (t - this.done) / 0.4, { anchor: 'middle' });
+          // pin: a pixel pushpin with the full-screen and close buttons, drawn like them; pinned, it sits on a lit tile
+          // (the filled-button look), so the state shows by shape as well as colour. The card stays until its ×.
+          pinIcon(b, x + w - 70, y + 13, this);
           // full screen: four pixel corners (pointing in once it's full)
           { const fx = x + w - 44, fy = y + 13, s = 4, f = this.full ? -1 : 1;
             b.fillStyle = this.hoverFull ? HOT : DIM;
@@ -645,11 +652,11 @@
         if (this.p >= 1 && !this.full) { b.fillStyle = this.hoverGrip ? HOT : rgba(ACC, 0.45); for (let k = 0; k < 3; k++) for (let j = 0; j <= k; j++) b.fillRect(x + w - 6 - j * 4, y + h - 14 + k * 4, 2, 2); }
       },
       hits() {
-        const out = bar ? [{ rect: [x + w - 28, y + 2, 26, 22], kind: 'close', part: m.part }, { rect: [x + w - 54, y + 2, 22, 22], kind: 'full', part: m.part }, { rect: [x, y, w - 56, bar], kind: 'drag', part: m.part }] : [{ rect: [x, y, w, Math.min(h, 24)], kind: 'drag', part: m.part }];
+        const out = bar ? [{ rect: [x + w - 28, y + 2, 26, 22], kind: 'close', part: m.part }, { rect: [x + w - 54, y + 2, 22, 22], kind: 'full', part: m.part }, { rect: [x + w - 82, y + 2, 24, 22], kind: 'pin', part: m.part }, { rect: [x, y, w - 84, bar], kind: 'drag', part: m.part }] : [{ rect: [x, y, w, Math.min(h, 24)], kind: 'drag', part: m.part }];
         if (!this.full) out.unshift({ rect: [x + w - 18, y + h - 18, 18, 18], kind: 'resize', part: m.part });
         // Links scrolled out of view can't be clicked.
         const more = (this.more?.() ?? []).filter((q) => q.rect[1] >= y + bar && q.rect[1] + q.rect[3] <= y + h);
-        return [...(bar ? [{ rect: [x + 30, y + 2, 20, 22], kind: 'pin', part: m.part }] : []), ...more, ...out, { rect: [x, y, w, h], kind: 'card', part: m.part }];
+        return [...more, ...out, { rect: [x, y, w, h], kind: 'card', part: m.part }];
       },
     });
     await fly(x, y); sfx('expand');
@@ -1953,6 +1960,7 @@
     b.fillStyle = DEEP; b.fillRect(x + 2, y + 26, w - 4, 1);
     [0, 1].forEach((k) => { b.fillStyle = k ? DEEP : ACC; b.fillRect(x + 12 + k * 12, y + 11, 5, 5); });
     typed(b, 'reminders', x + w / 2, y + 17, `500 10px ${MONO}`, DIM, (t - this.opened) / 0.4, { anchor: 'middle' });
+    pinIcon(b, x + w - 44, y + 13, this);
     const cx = x + w - 18, cyy = y + 13;
     b.fillStyle = this.hoverClose ? HOT : DIM; for (let k = -3; k <= 3; k++) { b.fillRect(cx + k - 1, cyy + k - 1, 2, 2); b.fillRect(cx + k - 1, cyy - k - 1, 2, 2); }
     for (const c of [b, l]) { c.save(); c.beginPath(); c.rect(x + 2, y + 27, w - 4, h - 29); c.clip(); }
@@ -2006,7 +2014,7 @@
       hits() {
         const { x: cx, y: cy } = this;
         return [...this.rows.filter((r) => r.i).map((r) => ({ rect: [cx, cy + r.y, REM_W, r.h], kind: 'tick', id: r.i.id, done: r.i.done, part: REM_PART })),
-          { rect: [cx + REM_W - 28, cy + 2, 26, 22], kind: 'close', part: REM_PART }, { rect: [cx, cy, REM_W - 30, 26], kind: 'drag', part: REM_PART }, { rect: [cx, cy, REM_W, this.h], kind: 'card', part: REM_PART }];
+          { rect: [cx + REM_W - 28, cy + 2, 26, 22], kind: 'close', part: REM_PART }, { rect: [cx + REM_W - 56, cy + 2, 24, 22], kind: 'pin', part: REM_PART }, { rect: [cx, cy, REM_W - 58, 26], kind: 'drag', part: REM_PART }, { rect: [cx, cy, REM_W, this.h], kind: 'card', part: REM_PART }];
       },
     });
     Object.assign(c, remLayout(x, y));
@@ -2016,7 +2024,7 @@
     REM.timer = setInterval(() => {
       if (!remOpen()) { clearInterval(REM.timer); return; }
       if (drag?.part === REM_PART || (G.ptr && inside(markBox(c), G.ptr[0], G.ptr[1]))) REM.until = Math.max(REM.until, now() + 2.5);
-      if (now() > REM.until) remClose();
+      if (now() > REM.until && !c.pinned) remClose(); // pinned: it stays until its ×
     }, 250);
     await tween(0.35, (u) => { const e = ease(u); c.cw = REM_W * e; c.ch = c.h * e; });
     c.ready = true; c.opened = now();
@@ -2075,11 +2083,11 @@
   };
   const setHover = (h) => {
     const m = h?.m ?? null;
-    if (hovered && hovered !== m) { hovered.hover = false; hovered.hoverClose = false; hovered.hoverFull = false; hovered.hoverGrip = false; hovered.hoverId = null; hovered.setHover?.(false); }
-    if (m) { m.hover = h.kind === 'button' || h.kind === 'link' || h.kind === 'clearall'; m.hoverClose = h.kind === 'close'; m.hoverFull = h.kind === 'full'; m.hoverGrip = h.kind === 'resize'; m.hoverId = h.kind === 'tick' || h.kind === 'pick' ? h.id : null; m.setHover?.(h.kind === 'button'); }
+    if (hovered && hovered !== m) { hovered.hover = false; hovered.hoverClose = false; hovered.hoverFull = false; hovered.hoverPin = false; hovered.hoverGrip = false; hovered.hoverId = null; hovered.setHover?.(false); }
+    if (m) { m.hover = h.kind === 'button' || h.kind === 'link' || h.kind === 'clearall'; m.hoverClose = h.kind === 'close'; m.hoverFull = h.kind === 'full'; m.hoverPin = h.kind === 'pin'; m.hoverGrip = h.kind === 'resize'; m.hoverId = h.kind === 'tick' || h.kind === 'pick' ? h.id : null; m.setHover?.(h.kind === 'button'); }
     if (hovered !== m || m) touch(0.2);
     hovered = m;
-    document.documentElement.style.cursor = h && (h.kind === 'button' || h.kind === 'close' || h.kind === 'full' || h.kind === 'link' || h.kind === 'clearall' || h.kind === 'tick' || h.kind === 'pick') ? 'pointer' : h?.kind === 'drag' ? 'grab' : h?.kind === 'resize' ? 'nwse-resize' : 'default';
+    document.documentElement.style.cursor = h && (h.kind === 'button' || h.kind === 'close' || h.kind === 'full' || h.kind === 'pin' || h.kind === 'link' || h.kind === 'clearall' || h.kind === 'tick' || h.kind === 'pick') ? 'pointer' : h?.kind === 'drag' ? 'grab' : h?.kind === 'resize' ? 'nwse-resize' : 'default';
   };
   const ours = (e) => !!hitAt(e.clientX, e.clientY) || !!drag || !!sizing;
   addEventListener('pointerdown', (e) => {
@@ -2122,14 +2130,6 @@
     const m = hitAt(e.clientX, e.clientY)?.m;
     if (m?.scrollMax > 0) { e.preventDefault(); m.sy = clamp(m.sy + e.deltaY, 0, m.scrollMax); touch(0.3); }
   }, { capture: true, passive: false });
-  // The pin button's hover: lit, with a pointing hand (after the listener above has set the cursor).
-  let pinHover = null;
-  addEventListener('pointermove', (e) => {
-    if (drag) return;
-    const h = hitAt(e.clientX, e.clientY), m = h?.kind === 'pin' ? h.m : null;
-    if (m) document.documentElement.style.cursor = 'pointer';
-    if (m !== pinHover) { if (pinHover) pinHover.hoverPin = false; if (m) m.hoverPin = true; pinHover = m; touch(0.2); }
-  }, true);
 
   // ---------------------------------------------------------------- the host's way in (host.js)
   R.inkHit = (x, y) => !!drag || !!sizing || !!hitAt(x, y);
