@@ -610,6 +610,10 @@
     return [
       group('Behavior', 'What I may do, and when I start.', null,
         toggle('Sound effects', null, state.sound, () => act('sound'), 'sound'),
+        state.focus ? el('div', { className: 'setting' },
+          el('span', {}, state.focus.until ? 'Focus block running' : 'Focus distractions',
+            el('small', { textContent: state.focus.until ? `Until ${new Date(state.focus.until).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}${state.focus.task ? ` · ${state.focus.task}` : ''}` : `Say “focus for 30 minutes”. I watch for: ${state.focus.list.slice(0, 4).join(', ')}${state.focus.list.length > 4 ? '…' : ''}` })),
+          state.focus.until ? link('Stop', () => act('focusstop'), { k: 'focusstop', aria: 'Stop the focus block' }) : link('Edit', () => act('distractions'), { k: 'distractions', aria: 'Edit the distraction list' })) : null,
         toggle('Allow file edits and commands', 'Change files and run commands', state.actions, () => act('actions'), 'actions'),
         state.voice ? toggle('Auto-listen', state.voice.on ? 'Mic opens when I ask you something.' : 'Needs Voice control on', state.voice.autoListen, () => act('autolisten'), 'autolisten') : null,
         state.voice?.mac ? toggle('Wake word', state.voice.on ? 'Say “Hey Roamies” to talk. Mic stays on.' : 'Needs Voice control on', state.voice.wakeWord, () => act('wakeword'), 'wakeword') : null,
