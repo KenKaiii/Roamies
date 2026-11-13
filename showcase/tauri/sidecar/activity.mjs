@@ -26,6 +26,8 @@ export function describe(name, args = {}) {
     case 'remember_commitment': return ['Adding a reminder', 'Added a reminder'];
     case 'update_commitment': return ['Updating a reminder', 'Updated a reminder'];
     case 'forget_fact': return ['Forgetting it', 'Forgot it'];
+    case 'arrange_dashboard': return ['Arranging your dashboard', 'Arranged your dashboard'];
+    case 'update_widget': return ['Updating your dashboard', 'Updated your dashboard'];
     case 'open': {
       const t = String(args.target ?? '');
       const what = /^https?:\/\//i.test(t) ? host(t) : short(base(t));

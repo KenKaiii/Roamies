@@ -4,7 +4,9 @@ import { resolveToolSchema } from '@kenkaiiii/gg-ai';
 import { createTools, shellFor } from '../tools.mjs';
 
 const noop = async () => {};
-const { tools } = createTools({ allowActions: false, ui: () => {}, ask: async () => false, openUrl: noop, onCommitments: noop, showList: noop, fmtWhen: String, commitmentsText: () => '', userName: 'Test' });
+const { tools } = createTools({ allowActions: false, ui: () => {}, ask: async () => false, openUrl: noop, onCommitments: noop, showList: noop, fmtWhen: String, commitmentsText: () => '', userName: 'Test', dashboard: { arrange: () => 'ok', update: () => 'ok' } });
+// The dashboard's tools are there when it is (given), and checked below with the rest.
+assert.ok(tools.some((t) => t.name === 'arrange_dashboard') && tools.some((t) => t.name === 'update_widget'), 'dashboard tools');
 
 // Regression: the old fetch_url's url had format "uri", which OpenAI strict schemas reject, failing every OpenAI request.
 const formats = [];
