@@ -98,6 +98,53 @@ pub(crate) fn set_hit_rects(window: &tauri::WebviewWindow, flat: &[f64]) {
     });
 }
 
+// ---------- keyboard focus ----------
+
+/// _NET_ACTIVE_WINDOW's data for a request from a pager or taskbar (source 2), with no timestamp. GTK sends one
+/// from the app (source 1), which KWin's focus-stealing prevention turns down once another app has had a keypress,
+/// such as the shortcut that ran `roamies --ask`: the field shows but its keys go to the other app.
+fn activation_request() -> [u32; 5] {
+    [2, 0, 0, 0, 0]
+}
+
+/// Ask the window manager to give the overlay the keyboard, as a taskbar click would. Wayland sessions too: the
+/// window is XWayland's.
+pub(crate) fn activate(window: &tauri::WebviewWindow) {
+    use gtk::glib::prelude::ObjectExt;
+    use gtk::glib::translate::ToGlibPtr;
+    use gtk::prelude::WidgetExt;
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::{ClientMessageEvent, ConnectionExt, EventMask};
+    extern "C" {
+        fn gdk_x11_window_get_xid(window: *mut gtk::gdk::ffi::GdkWindow) -> std::os::raw::c_ulong;
+    }
+    static CONN: OnceLock<Option<(x11rb::rust_connection::RustConnection, u32, u32)>> = OnceLock::new();
+    let Some(win) = window.gtk_window().ok().and_then(|g| g.window()) else { return };
+    if win.display().type_().name() != "GdkX11Display" {
+        return;
+    }
+    // SAFETY: an X11 GdkWindow (checked above), alive for the call.
+    let xid = unsafe { gdk_x11_window_get_xid(win.to_glib_none().0) };
+    let Some((conn, root, atom)) = CONN
+        .get_or_init(|| {
+            let (conn, screen) = x11rb::connect(None).ok()?;
+            let root = conn.setup().roots.get(screen)?.root;
+            let atom = conn.intern_atom(false, b"_NET_ACTIVE_WINDOW").ok()?.reply().ok()?.atom;
+            Some((conn, root, atom))
+        })
+        .as_ref()
+    else {
+        return;
+    };
+    // GTK's connection must have told the server the window now takes focus before ours asks for it.
+    if let Some(d) = gtk::gdk::Display::default() {
+        d.sync();
+    }
+    let ev = ClientMessageEvent::new(32, xid as u32, *atom, activation_request());
+    let _ = conn.send_event(false, *root, EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY, ev);
+    let _ = conn.flush();
+}
+
 // ---------- the pointer (X11 sessions) ----------
 
 /// One X connection for the pointer and the keys: its root window and the keycodes of the modifier keys. None on
@@ -552,6 +599,12 @@ mod tests {
         assert_eq!(hit_rects(&[1.0, 2.0, 0.0, 4.0, f64::NAN, 0.0, 5.0, 5.0, 0.0, 0.0, f64::INFINITY, 5.0, 0.0, 0.0, 1e9, 5.0]), vec![]);
         assert_eq!(hit_rects(&[-8.0, -8.0, 40.0, 40.0]), vec![(-8, -8, 40, 40)], "a pad can reach past the edge");
         assert_eq!(hit_rects(&[1.0; 4 * 1000]).len(), 600);
+    }
+
+    #[test]
+    fn focus_is_asked_for_as_a_taskbar_would() {
+        assert_eq!(activation_request()[0], 2, "source 2 (pager), which focus-stealing prevention lets through");
+        assert_eq!(activation_request()[1], 0, "no timestamp");
     }
 
     #[test]

@@ -4,7 +4,8 @@
       "version": null,
       "date": "2026-11-13",
       "items": [
-        { "kind": "fixed", "title": "Talk in your language", "text": "On a Mac, voice input was stuck in English. Now it listens in the language you use." }
+        { "kind": "fixed", "title": "Talk in your language", "text": "On a Mac, voice input was stuck in English. Now it listens in the language you use." },
+        { "kind": "fixed", "title": "Typing works on Linux", "text": "On KDE, the ask box often ignored your typing after you used another app. Fixed that." }
       ]
     },
     {

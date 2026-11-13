@@ -328,6 +328,8 @@ fn set_typing(app: AppHandle, window: WebviewWindow, on: bool) {
     let _ = window.set_focusable(on);
     if on {
         let _ = window.set_focus();
+        #[cfg(target_os = "linux")]
+        linux::activate(&window);
         // Opened from a hotkey (e.g. after an area snap), Roamies isn't the active app and macOS 14+
         // ignores plain focus requests, so make the overlay key directly, then ask to activate.
         #[cfg(target_os = "macos")]
