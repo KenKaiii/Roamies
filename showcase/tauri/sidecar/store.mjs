@@ -229,14 +229,17 @@ function newId(prefix) {
 
 let memory = null;
 let memoryReadOnly = false; // written by a newer app: leave the file alone rather than downgrade it
+let memoryTrusted = true; // false when memory was there but couldn't be read: sync mustn't take that as everything deleted
 const loadMemory = () => {
   if (memory) return memory;
+  const had = existsSync(MEMORY) || existsSync(`${MEMORY}.bak`);
   const m = readJson(MEMORY, { backup: true });
   if (typeof m?.version === 'number' && m.version > 1) {
     memoryReadOnly = true;
     console.error(`[store] memory.json is version ${m.version}, newer than this app; not saving memory this run`);
   }
   memory = m?.version === 1 && Array.isArray(m.commitments) ? m : { version: 1, commitments: [] };
+  memoryTrusted = memory === m || !had;
   if (!Array.isArray(memory.facts)) memory.facts = []; // added later: older files have no facts yet
   return memory;
 };
@@ -453,6 +456,24 @@ export async function updateCommitment(id, { status, dueMs, repeat, keepSeries =
   if (status && !advanced) { c.status = status; if (status !== 'open') c.doneAt = now; else delete c.doneAt; }
   await saveMemory();
   return { ...c, advanced };
+}
+
+// ---------- sync (sync.mjs) ----------
+
+/** Commitments and facts as stored (a deep copy), plus the text the copy was made from, for applySynced. */
+export function syncSnapshot() {
+  const m = loadMemory(), basis = JSON.stringify({ commitments: m.commitments, facts: m.facts });
+  return { ...JSON.parse(basis), basis, trusted: memoryTrusted, readOnly: memoryReadOnly };
+}
+
+/** Replaces commitments and facts with a merged copy, unless memory changed since the snapshot (then false: the next
+ *  pass merges again) or this file belongs to a newer app. */
+export async function applySynced({ commitments, facts }, basis) {
+  const m = loadMemory();
+  if (memoryReadOnly || JSON.stringify({ commitments: m.commitments, facts: m.facts }) !== basis) return false;
+  m.commitments = commitments; m.facts = facts;
+  await saveMemory();
+  return true;
 }
 
 // ---------- facts (long-term memory about the user) ----------

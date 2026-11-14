@@ -23,7 +23,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createInterface } from 'node:readline';
 import {
-  addFact, repeatLabel, startOfDay, applyFold, approxTokens, archiveFolded, clearFacts, clearFinished, compactTrigger, fitContext, flushWrites, forgetFact, isSummary, listItems, listFacts, nextDue, pickFacts, planFold,
+  addFact, applySynced, syncSnapshot, DIR as STORE_DIR, repeatLabel, startOfDay, applyFold, approxTokens, archiveFolded, clearFacts, clearFinished, compactTrigger, fitContext, flushWrites, forgetFact, isSummary, listItems, listFacts, nextDue, pickFacts, planFold,
   touchFacts, forDisk, forProvider, loadLatestSession, newSession, openCommitments, pruneSessions, readJson, saveSession, takeDueReminders, updateCommitment, writeJson,
 } from './store.mjs';
 import { foldInput, foldPrompt, memoryInput, memoryPrompt, oneShot, parseBrain, transcript } from './brain.mjs';
@@ -31,6 +31,7 @@ import { briefNote } from './brief.mjs';
 import { CHECK_MS, DEFAULT_DISTRACTIONS, check as focusCheck, parseDistractions, startBlock } from './focus.mjs';
 import { saveCardImage } from './cardimage.mjs';
 import { cleanWakeName, wakeName } from './wakename.mjs';
+import { KEY_NAME as SYNC_KEY, MIN_PASSPHRASE, checkFolder, folderReady, merge as syncMerge, newDevice, prepareFolder, readRemotes, suggestFolders, tooMuchGone, writeOwn } from './sync.mjs';
 import { EMOTES, EchoFilter, ReplyStream } from './reply.mjs';
 import { downloadModel, isReady, modelDir, sizeLabel, totalBytes } from './voicemodel.mjs';
 import { copyText, createTools, expand, fitImage, imageBlock, winOpen } from './tools.mjs';
@@ -59,6 +60,7 @@ const send = (o) => process.stdout.write(JSON.stringify(o) + '\n');
 let onboarding = false;
 let focusBlock = null, focusTimer = null; // focus mode (below)
 let firedReminders = []; // [{ id, at }]: what went off lately, so "snooze" alone knows which (snooze.mjs)
+let syncInfo = { at: null, error: null }, syncing = null, syncSoonTimer = null, syncKey = null, syncAllowOnce = false; // memory sync (below)
 let intro = null; // the get-to-know-you chat, while it's on
 // The get-to-know-you chat runs in the guide window: its replies and voice go there, not to the desktop.
 // A reply's voice keeps going where it started, even after the chat ends mid-sentence; "stop" goes to both.
@@ -371,7 +373,7 @@ const { tools, hands, whereNow, frontNow: frontData, ink, nextTurn } = createToo
   speak: (line) => { if (!turnVoice) return false; turnVoice.say(line); return true; },
   onHandoff: (task) => { activity.handoff(task); panel(); },
   commitmentsText: () => [commitmentsText(), doneTodayText() && `Done today:\n${doneTodayText()}`].filter(Boolean).join('\n'),
-  onCommitments: (c) => { menu(); scheduleReminders(); showList({ flash: c?.id, seconds: 6 }); },
+  onCommitments: (c) => { menu(); scheduleReminders(); showList({ flash: c?.id, seconds: 6 }); syncSoon(); },
   showList: () => showList({ seconds: 20 }),
   fmtWhen: (ms) => fmtWhen(ms),
   onPlan: (args) => trail.plan(args),
@@ -1537,6 +1539,52 @@ async function focusTick() {
     enqueue(`(System, not ${userName}: they're in a focus block${b.task ? ` on ${b.task}` : ''} with ${left} min left, but have been on ${r.nudge} for a bit. Nudge them back playfully in one short sentence, in character: teasing, never scolding. Start with the [remind] tag.)`);
   } else if (r.nudge) b.nudgedAt = 0;
 }
+// ---------- memory sync (sync.mjs) ----------
+// With a sync folder set: a pass every minute, and a few seconds after a change here. A pass merges the other
+// computers' files into memory (only if nothing changed here meanwhile) and writes this computer's file.
+const SYNC_STATE = path.join(STORE_DIR, 'sync-state.json');
+function syncSoon() { if (!config.syncDir) return; clearTimeout(syncSoonTimer); syncSoonTimer = setTimeout(() => syncPass().catch(() => {}), 4000); }
+async function syncPass() {
+  if (!config.syncDir || syncing) return syncing;
+  syncing = (async () => {
+    const dir = config.syncDir;
+    if (!folderReady(dir)) { syncInfo = { at: syncInfo.at, error: 'the sync folder isn\'t there right now' }; return; }
+    if (!config.syncDevice) { config.syncDevice = newDevice(); saveConfig(); }
+    const snap = syncSnapshot();
+    // Memory written by a newer Roamies isn't loaded here, so it would read as everything deleted.
+    if (snap.readOnly) { syncInfo = { at: syncInfo.at, error: 'memory here is from a newer Roamies: update Roamies on this computer' }; return; }
+    // Memory here couldn't be read: forget what the last pass saw, so nothing counts as deleted here and the other
+    // computers' copy comes back.
+    if (!snap.trusted) logLine('sync', { recovering: true });
+    const state = snap.trusted ? readJson(SYNC_STATE) ?? undefined : undefined;
+    // The folder key, from this computer's secret store (put there at setup; never the passphrase itself).
+    if (!syncKey) { const k = config.syncKeySaved ? await secrets.get(SYNC_KEY).catch(() => null) : null; syncKey = k ? Buffer.from(k, 'base64') : null; }
+    if (!syncKey) { syncInfo = { at: syncInfo.at, error: 'no passphrase on this computer: set up sync again' }; return; }
+    const remotes = await readRemotes(dir, config.syncDevice, syncKey);
+    const r = syncMerge({ local: snap, state, remotes, device: config.syncDevice, name: os.hostname() });
+    if (tooMuchGone(r) && !syncAllowOnce) {
+      syncInfo = { at: syncInfo.at, paused: true, error: `paused, as it would remove ${r.removed} of ${r.known} reminders and memories on every computer` };
+      logLine('sync', { paused: r.removed, of: r.known });
+      return;
+    }
+    if (r.changed) {
+      // Before every change from elsewhere, a copy of memory as it was, to go back to if ever needed.
+      await fs.copyFile(path.join(STORE_DIR, 'memory.json'), path.join(STORE_DIR, 'memory.before-sync.json')).catch(() => {});
+      if (!(await applySynced(r, snap.basis))) { syncSoon(); return; } // changed here meanwhile: merge again shortly
+      logLine('sync', { applied: true, commitments: r.commitments.length, facts: r.facts.length });
+      menu(); scheduleReminders();
+    }
+    await writeJson(SYNC_STATE, r.state);
+    await writeOwn(dir, config.syncDevice, r.out, syncKey);
+    syncAllowOnce = false;
+    // Another computer's file that this key can't open: set up there with a different passphrase.
+    syncInfo = { at: Date.now(), error: remotes.unreadable ? `${remotes.unreadable} other computer${remotes.unreadable === 1 ? ' uses' : 's use'} a different passphrase` : null };
+  })().catch((e) => { syncInfo = { at: syncInfo.at, error: String(e?.code ?? e?.message ?? e).slice(0, 80) }; logLine('sync', { error: syncInfo.error }); })
+    .finally(() => { syncing = null; panel(); });
+  return syncing;
+}
+setInterval(() => syncPass(), 60_000);
+if (config.syncDir) setTimeout(() => syncPass(), 5000);
 
 // ---------- the list on screen ----------
 // Today / Later, drawn by the overlay next to Sidekick. seconds: how long it stays up (0 = just update it if it's open).
@@ -1705,7 +1753,7 @@ function panelState() {
       on: !!config.voice, keys: HOTKEYS_OK ? talkSymbols() : null, ready: voiceReady(), mac: MAC, mute: config.muteWhileTalking !== false, autoListen: !!config.autoListen, snoozeListen: !!config.snoozeListen, wakeWord: !!config.wakeWord, wakeName: wakeName(config),
       download: NEEDS_MODEL && config.voice && !voiceReady() ? { status: voiceModel.status, pct: voiceModel.total ? Math.floor((voiceModel.done / voiceModel.total) * 100) : 0, size: sizeLabel() } : null,
     } : null,
-    sound: !!config.sound, actions: !!config.allowActions, brief: { on: !!config.morningBrief, todoist: !!config.briefTodoist, canTodoist: HANDS_OK }, focus: HANDS_OK ? { until: focusBlock?.until ?? null, task: focusBlock?.task ?? '', list: distractionList(), custom: !!config.distractions } : null,
+    sound: !!config.sound, actions: !!config.allowActions, brief: { on: !!config.morningBrief, todoist: !!config.briefTodoist, canTodoist: HANDS_OK }, focus: HANDS_OK ? { until: focusBlock?.until ?? null, task: focusBlock?.task ?? '', list: distractionList(), custom: !!config.distractions } : null, sync: { dir: config.syncDir || '', at: syncInfo.at, error: syncInfo.error, paused: !!syncInfo.paused },
     login: login.supported ? { on: login.on } : null,
     update: { available: update.available, installing: update.installing, checking: update.checking, result: update.result, page: update.page, done: update.done },
     intro: !!intro,
@@ -1895,6 +1943,28 @@ async function onMenu(id, via) {
     config.distractions = list.length ? list : null; saveConfig(); menu();
     say(list.length ? `Got it: ${list.length} thing${list.length === 1 ? '' : 's'} I'll keep you away from.` : 'Back to my usual list.', 'happy');
   }
+  else if (id === 'syncsetup') {
+    const hint = suggestFolders()[0] ?? '';
+    const typed = await ask({ prompt: `Sync memory with your other computer: the path of a folder both computers sync (iCloud Drive, OneDrive, Dropbox, Google Drive)${hint ? `. Found: ${hint}` : ''}`, placeholder: hint || 'Folder path' });
+    if (typed == null) return;
+    const r = checkFolder(typed.trim() || hint);
+    if (!r.ok) { say(r.why === 'empty' ? 'I need a folder path for that.' : r.why, 'concerned'); return; }
+    // A passphrase, the same on every computer: the folder only ever holds encrypted copies (sync.mjs).
+    const pass = await ask({ prompt: `A passphrase for this sync folder (at least ${MIN_PASSPHRASE} characters). Use the same one on your other computer: everything in the folder is encrypted with it.`, placeholder: 'Sync passphrase', mask: true });
+    if (pass == null) return;
+    const prep = await prepareFolder(r.dir, pass).catch((e) => ({ error: `I couldn't write to that folder (${String(e?.code ?? e?.message ?? e).slice(0, 40)}).` }));
+    if (prep.error) { say(prep.error, 'concerned'); return; }
+    try { await secrets.set(SYNC_KEY, prep.key.toString('base64')); config.syncKeySaved = true; } catch {
+      say(`I couldn't save the sync key${MAC ? ' in your Keychain' : LINUX ? ' in your keyring' : ''}, so I won't sync. Try again in a moment.`, 'concerned'); return;
+    }
+    syncKey = prep.key;
+    if (!config.syncDevice) config.syncDevice = newDevice();
+    config.syncDir = r.dir; saveConfig(); syncInfo = { at: null, error: null }; menu();
+    await syncPass().catch(() => {});
+    say(syncInfo.error ? `I couldn't sync there: ${syncInfo.error}` : 'Syncing. Set up the same folder on your other computer and your reminders and memory follow you.', syncInfo.error ? 'concerned' : 'happy');
+  }
+  else if (id === 'syncallow') { syncAllowOnce = true; await syncPass().catch(() => {}); }
+  else if (id === 'syncstop') { config.syncDir = ''; syncKey = null; syncAllowOnce = false; if (config.syncKeySaved) { await secrets.delete(SYNC_KEY).catch(() => {}); config.syncKeySaved = false; } saveConfig(); syncInfo = { at: null, error: null }; menu(); say('Stopped syncing. Everything stays on this computer, and the folder copy is left as it was.', 'happy'); }
   else if (id === 'sound') { config.sound = !config.sound; saveConfig(); ui({ kind: 'sound', on: config.sound }); voiceConfig(); menu(); }
   else if (id === 'actions') {
     config.allowActions = !config.allowActions; agents.setAllow(config.allowActions); saveConfig(); menu(); // live section picks this up
