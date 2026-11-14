@@ -12,7 +12,7 @@ export const TONES = ['accent', 'teal', 'amber', 'coral', 'lilac', 'sky', 'lime'
 // Marks on the real screen (they need a place on it), actions in apps, and cards drawn on calm space.
 export const SCREEN = ['point', 'target', 'hover', 'ring', 'frame', 'underline', 'strike', 'check', 'cross', 'connect', 'trace', 'num', 'label', 'write', 'scroll', 'spotlight', 'highlight', 'line', 'curve', 'arrow', 'circle', 'rect'];
 export const ACTIONS = ['emote', 'sfx', 'type', 'copy', 'open', 'handoff', 'button'];
-export const CARDS = ['card', 'note', 'list', 'clip', 'sources', 'photo', 'graph', 'legend', 'timeline', 'molecule', 'model', 'flow', 'table', 'bars', 'map', 'math', 'geometry', 'quiz', 'ticket', 'medal'];
+export const CARDS = ['card', 'note', 'list', 'mindmap', 'clip', 'sources', 'photo', 'graph', 'legend', 'timeline', 'molecule', 'model', 'flow', 'table', 'bars', 'map', 'math', 'geometry', 'quiz', 'ticket', 'medal'];
 export const KINDS = [...SCREEN, ...ACTIONS, ...CARDS];
 // Drawn from a list of points (screenshot pixels) instead of one place.
 const PATHS = new Set(['trace', 'line', 'curve', 'arrow']);
@@ -36,9 +36,11 @@ const Mark = z.object({
   label: z.string().min(1).max(40).optional(), text: z.string().min(1).max(600).optional(),
   r: num.optional(), n: z.number().int().optional(), dir: z.enum(['up', 'down', 'right']).optional(), tone: z.enum(TONES).optional(),
   size: num.optional(), points: z.array(pair).max(LIMITS.points).optional(),
+  card_size: z.enum(['small', 'normal', 'large', 'full']).optional(),
   name: z.string().max(20).optional(), url: z.string().max(2000).optional(), query: z.string().min(1).max(100).optional(),
   title: z.string().min(1).max(60).optional(), heading: z.string().min(1).max(80).optional(),
   items: z.array(z.string().min(1).max(120)).max(12).optional(),
+  branches: z.array(z.object({ text: z.string().min(1).max(60), items: z.array(z.string().min(1).max(60)).max(6).optional(), tone: z.enum(TONES).optional() })).max(8).optional(),
   sources: z.array(z.object({ name: z.string().min(1).max(40), url: z.string().max(2000) })).max(8).optional(),
   x_range: pair.optional(), y_range: pair.optional(),
   plots: z.array(z.object({ points: z.array(pair).min(2).max(LIMITS.points), tone: z.enum(TONES).optional(), label: z.string().max(30).optional() })).max(4).optional(),
@@ -54,6 +56,7 @@ const Mark = z.object({
   })).max(LIMITS.parts3d).optional(),
   nodes: z.array(z.object({ id: z.string().min(1).max(16), text: z.string().min(1).max(60), shape: z.enum(NODE_SHAPES).optional(), tone: z.enum(TONES).optional() })).max(LIMITS.nodes).optional(),
   links: z.array(z.object({ from: z.string().min(1).max(16), to: z.string().min(1).max(16), label: z.string().max(30).optional(), flow: z.boolean().optional() })).max(LIMITS.links).optional(),
+  flow: z.boolean().optional(), animate: z.boolean().optional(),
   columns: z.array(z.string().max(30)).max(LIMITS.columns).optional(),
   rows: z.array(z.array(z.string().max(80)).max(LIMITS.columns)).max(LIMITS.rows).optional(),
   bars: z.array(z.object({ label: z.string().min(1).max(30), value: num, tone: z.enum(TONES).optional() })).max(LIMITS.bars).optional(),
@@ -109,6 +112,7 @@ export function checkDraw(args) {
       const more = CHECKS[m.kind] ?? (m.kind === 'photo' && m.labels ? CHECKS.labels : null);
       if (more) out.push(...more(m).map((s) => `${where}: ${s}`));
       if (m.kind === 'graph') need(m.plots?.length || m.dots?.length, 'plots or dots');
+      if (m.kind === 'mindmap') need(m.branches?.length >= 2, 'branches (at least 2, each {text, items})');
       if (m.kind === 'legend') need(m.keys?.length, 'keys');
       if (m.kind === 'timeline') need(m.events?.length >= 2, 'events (at least 2)');
       if (m.kind === 'molecule') { need(m.smiles, 'smiles'); if (m.smiles) { try { parseSmiles(m.smiles); } catch (e) { out.push(`${where}: ${e.message}`); } } }

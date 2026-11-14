@@ -28,6 +28,7 @@ export function describe(name, args = {}) {
     case 'forget_fact': return ['Forgetting it', 'Forgot it'];
     case 'start_focus': return ['Starting a focus block', 'Started a focus block'];
     case 'stop_focus': return ['Ending the focus block', 'Ended the focus block'];
+    case 'snooze_reminder': return ['Snoozing a reminder', 'Snoozed a reminder'];
     case 'open': {
       const t = String(args.target ?? '');
       const what = /^https?:\/\//i.test(t) ? host(t) : short(base(t));
