@@ -27,6 +27,10 @@ import {
   touchFacts, forDisk, forProvider, loadLatestSession, newSession, openCommitments, pruneSessions, readJson, saveSession, takeDueReminders, updateCommitment, writeJson,
 } from './store.mjs';
 import { foldInput, foldPrompt, memoryInput, memoryPrompt, oneShot, parseBrain, transcript } from './brain.mjs';
+import { briefNote } from './brief.mjs';
+import { CHECK_MS, DEFAULT_DISTRACTIONS, check as focusCheck, parseDistractions, startBlock } from './focus.mjs';
+import { saveCardImage } from './cardimage.mjs';
+import { cleanWakeName, wakeName } from './wakename.mjs';
 import { KEY_NAME as SYNC_KEY, MIN_PASSPHRASE, checkFolder, folderReady, merge as syncMerge, newDevice, prepareFolder, readRemotes, suggestFolders, writeOwn } from './sync.mjs';
 import { EMOTES, EchoFilter, ReplyStream } from './reply.mjs';
 import { downloadModel, isReady, modelDir, sizeLabel, totalBytes } from './voicemodel.mjs';
@@ -54,6 +58,8 @@ console.log = console.info = (...a) => console.error(...a);
 const send = (o) => process.stdout.write(JSON.stringify(o) + '\n');
 // While the setup guide is open, Sidekick talks through it instead of the desktop overlay.
 let onboarding = false;
+let focusBlock = null, focusTimer = null; // focus mode (below)
+let firedReminders = []; // [{ id, at }]: what went off lately, so "snooze" alone knows which (snooze.mjs)
 let syncInfo = { at: null, error: null }, syncing = null, syncSoonTimer = null, syncKey = null; // memory sync (below)
 let intro = null; // the get-to-know-you chat, while it's on
 // The get-to-know-you chat runs in the guide window: its replies and voice go there, not to the desktop.
@@ -360,7 +366,9 @@ const userName = (() => {
 // ---------- tools ----------
 // The open request's voice, if replies are spoken: draw's beat lines are said on it, in order with the reply.
 let turnVoice = null;
-const { tools, hands, whereNow, ink, nextTurn } = createTools({
+const { tools, hands, whereNow, frontNow: frontData, ink, nextTurn } = createTools({
+  focus: HANDS_OK ? { start: (m, t) => startFocus(m, t), stop: () => stopFocus() } : null,
+  firedReminders: () => firedReminders,
   allowActions: () => config.allowActions, ui, ask, openUrl, userName,
   speak: (line) => { if (!turnVoice) return false; turnVoice.say(line); return true; },
   onHandoff: (task) => { activity.handoff(task); panel(); },
@@ -461,6 +469,9 @@ function anim(name, args = {}) {
     case 'web_search': return { tool: 'web', variant: 'search', label: 'searching', detail: 'the web' };
     case 'remember_commitment': return { tool: 'write', variant: 'create', label: 'saving', detail: 'a reminder' };
     case 'forget_fact': return { tool: 'write', variant: 'crumble', label: 'forgetting', detail: 'that' };
+    case 'start_focus': return { tool: 'run', variant: 'progress', label: 'focusing', detail: `${args.minutes ?? 25} min` };
+    case 'stop_focus': return { tool: 'run', variant: 'ok', label: 'ending', detail: 'focus' };
+    case 'snooze_reminder': return { tool: 'write', variant: 'edit', label: 'snoozing', detail: String(args.until ?? '10 min').slice(0, 20) };
     case 'update_commitment': return { tool: 'write', variant: 'edit', label: 'updating', detail: 'a reminder' };
     case 'open': {
       const t = String(args.target ?? '');
@@ -523,8 +534,8 @@ const livePrompt = (context = '') => {
   lastFactIds = facts.map((f) => f.id);
   const open = commitmentsText(), done = doneTodayText(), working = agents.liveText();
   const turn = `Live state (current as of this moment):
-${frontNow ? `${frontNow}\n` : ''}- Editing files, running commands and controlling other apps: ${config.allowActions ? 'ALLOWED' : `switched OFF (tell the user to turn on "Allow File Edits & Commands" on the Behavior page in ${PANEL} if they want it)`}.
-${VOICE_OK ? `- Voice: ${!config.voice ? 'off' : voiceReady() ? `on; ${HOTKEYS_OK ? `${userName} holds ${talkWords()} to talk` : `${userName} presses the key they bound to ${BIND.talk} to start talking and again to send (a pause sends too)`}${config.autoListen ? '. Auto-listen is on: when your reply to a spoken question ends with a question, the mic opens by itself for their answer' : ''}${MAC && config.wakeWord ? `. Wake word is on: ${userName} can also say "Hey Roamies" to start talking hands-free, and what they say right after it is the request` : ''}` : `on, but the speech model isn't downloaded yet (${voiceModel.status === 'downloading' ? 'downloading now' : `the Voice page in ${PANEL}`})`}.` : ''}
+${frontNow ? `${frontNow}\n` : ''}${focusLine()}- Editing files, running commands and controlling other apps: ${config.allowActions ? 'ALLOWED' : `switched OFF (tell the user to turn on "Allow File Edits & Commands" on the Behavior page in ${PANEL} if they want it)`}.
+${VOICE_OK ? `- Voice: ${!config.voice ? 'off' : voiceReady() ? `on; ${HOTKEYS_OK ? `${userName} holds ${talkWords()} to talk` : `${userName} presses the key they bound to ${BIND.talk} to start talking and again to send (a pause sends too)`}${config.autoListen ? '. Auto-listen is on: when your reply to a spoken question ends with a question, the mic opens by itself for their answer' : ''}${MAC && config.wakeWord ? `. Wake word is on: ${userName} can also say "Hey ${wakeName(config)}" to start talking hands-free, and what they say right after it is the request${config.wakeName ? ` (they chose "${config.wakeName}" as the wake word; your own name is unchanged)` : ''}` : ''}` : `on, but the speech model isn't downloaded yet (${voiceModel.status === 'downloading' ? 'downloading now' : `the Voice page in ${PANEL}`})`}.` : ''}
 - Shortcuts: ${HOTKEYS_OK ? `type a question to you: a quick tap of ${writeWords()} (press both and let go), which opens a text field beside the cursor (Enter sends, Shift+Enter adds a line, Esc or another tap closes it); show or hide you ${keyWords(keys().summon)}` : `on this Wayland desktop no app can have global shortcuts, so ${userName} binds keys to these commands in their desktop's keyboard settings: ${BIND.summon} (show or hide you), ${BIND.ask} (ask you), ${BIND.list} (the list), ${BIND.talk} (talk) and ${BIND.panel} (the panel)`}${SNAP_OK ? `; ask about an area ${keyWords(keys().snap)}` : ''}${CIRCLE_OK ? "; while holding the talk keys, moving the cursor round something circles it (no clicking; it snaps shut with a click when the circle closes, and loose lines don't count) and you'll see what they circled" : ''}${HOTKEYS_OK ? `; show the list ${keyWords(keys().list)}` : ''}.${HANDS_OK ? '' : ' Asking about an area, reading app windows, finding things on screen by their words and working other apps need the Roamies app, which isn\'t running here; draw there with x, y from a screenshot.'}`;
   const memory = `${open ? `Open commitments:\n${open}` : 'No open commitments.'}${done ? `\nDone today (ticked off on the list or by you; still shown struck through until midnight):\n${done}` : ''}
 ${facts.length ? `What you know about ${userName}${total > facts.length ? ` (${facts.length} most relevant of ${total})` : ''}:\n${facts.map((f) => `- ${f.id}: ${f.text}`).join('\n')}` : `You don't know anything lasting about ${userName} yet.`}${working ? `\n${working}` : ''}`;
@@ -675,10 +686,10 @@ let credsBaseUrl;
 
 // One run at a time: a new request waits for (or interrupts) the current one. Folding waits until none is left.
 let queued = 0;
-function enqueue(text, { interrupt = false, image = null, note = '', byVoice = false, news = null } = {}) {
+function enqueue(text, { interrupt = false, image = null, note = '', byVoice = false, listenAfter = false, news = null } = {}) {
   if (interrupt && busy) interruptQuietly('new request');
   queued++;
-  running = running.then(() => prompt(text, image, note, byVoice, news)).catch((e) => console.error('prompt', e))
+  running = running.then(() => prompt(text, image, note, byVoice, news, listenAfter)).catch((e) => console.error('prompt', e))
     .finally(() => { if (--queued === 0) maybeCompact(); });
   return running;
 }
@@ -969,7 +980,8 @@ const desk = newsDesk({
 });
 const stir = desk.stir;
 // news: the agent ids this system turn passes on.
-async function prompt(text, image = null, note = '', byVoice = false, news = null) {
+const snoozeListenOn = () => VOICE_OK && !!config.voice && !!config.snoozeListen && voiceReady() && !intro;
+async function prompt(text, image = null, note = '', byVoice = false, news = null, listenAfter = false) {
   const notReady = await readyAgent();
   // Told once its turn starts, however it goes: the corner and the live state still have the result, so no retries.
   desk.started(news);
@@ -1023,13 +1035,17 @@ async function prompt(text, image = null, note = '', byVoice = false, news = nul
     const use = { t: Date.now(), model: config.model, calls: 0, tools: 0, in: 0, cacheRead: 0, cacheWrite: 0, out: 0 };
     const soon = frontSoon; frontSoon = null;
     frontNow = soon && Date.now() - soon.at < 8000 ? await soon.p : await whereNow();
+    // The first spoken request of the day carries the morning briefing (brief.mjs).
+    const brief = intro ? null : briefNote({ on: !!config.morningBrief, lastDay: config.briefDay, byVoice, todoist: !!config.briefTodoist, canRead: HANDS_OK, name: userName });
+    if (brief) { config.briefDay = brief.day; saveConfig(); logLine('brief', { todoist: !!config.briefTodoist && HANDS_OK }); }
     const quiz = takeQuizNote();
     // They spoke first: untold news rides along with their message, so it's never announced separately afterwards.
     const along = desk.along(text, { intro: !!intro, news: !!news, agentish });
     const stamped = `[${stampNow()}] ${text}${quiz ? `\n(${quiz})` : ''}${along}`;
     const asked = agentish ? `${stamped}\n(They asked for an agent: call send_agent.)` : stamped;
+    const sent = brief ? `${asked}\n(${brief.note})` : asked;
     // An area snap rides along as an image in the same message.
-    const content = image ? [{ type: 'text', text: `${asked}\n(Attached: the area of the screen I ${note ? 'marked' : 'selected'}.${note ? ` ${note}` : ''})` }, image] : asked;
+    const content = image ? [{ type: 'text', text: `${sent}\n(Attached: the area of the screen I ${note ? 'marked' : 'selected'}.${note ? ` ${note}` : ''})` }, image] : sent;
     lastReply = ''; lastFailed = false; lastInput = null;
     let fresh = false; // the reply that matters is the last turn's text (after any tool calls)
     let writing = null; // the beat timer while a tool call is being written
@@ -1114,7 +1130,8 @@ async function prompt(text, image = null, note = '', byVoice = false, news = nul
     trail.end();
     ink.endRequest();
     // Asked by voice and answered with a question: the overlay opens the mic once the reply has been typed and said.
-    const listen = byVoice && !stalled && !controller.signal.aborted && autoListenOn() && endsWithQuestion(lastReply) ? { turn, speech: voice?.id ?? null } : null;
+    // A reminder nudge, with "Listen after reminders" on: the same hands-free listen, for "snooze 10 minutes".
+    const listen = !stalled && !controller.signal.aborted && ((byVoice && autoListenOn() && endsWithQuestion(lastReply)) || (listenAfter && snoozeListenOn())) ? { turn, speech: voice?.id ?? null } : null;
     autoTurn = listen ? turn : null;
     ui({ kind: 'agent', e: stalled ? { type: 'error', message: stallMessage(), speech: voice?.id ?? null } : { type: 'done', speech: voice?.id ?? null, ...(listen ? { listen } : {}) } });
     logUsage({ ...use, ms: Date.now() - use.t });
@@ -1477,6 +1494,51 @@ function onUpdateStatus(m) {
   }
 }
 
+// ---------- focus mode (focus.mjs) ----------
+// A timed block: every CHECK_MS it looks at the window in front (app, title, address; never kept or logged) and, when
+// they stay on something from their distraction list, asks the model for a playful nudge. Ends by itself.
+const distractionList = () => config.distractions ?? DEFAULT_DISTRACTIONS;
+function focusLine() {
+  if (!focusBlock) return '';
+  const left = Math.max(0, Math.round((focusBlock.until - Date.now()) / 60_000));
+  return `- Focus block running${focusBlock.task ? ` (on: ${focusBlock.task})` : ''}: ${left} min left, until ${new Date(focusBlock.until).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}; drifted ${focusBlock.drifts} time${focusBlock.drifts === 1 ? '' : 's'} so far. Help them stay on it.\n`;
+}
+function startFocus(minutes, task) {
+  focusBlock = startBlock(minutes, task);
+  clearInterval(focusTimer);
+  focusTimer = setInterval(() => focusTick().catch((e) => console.error('focus', e)), CHECK_MS);
+  logLine('focus', { start: focusBlock.minutes });
+  agentStale = true; menu();
+  return `Focus block started: ${focusBlock.minutes} minutes, until ${fmtWhen(focusBlock.until)}. I'll check in if they drift to: ${distractionList().slice(0, 8).join(', ')}${distractionList().length > 8 ? ' and more' : ''}.`;
+}
+function stopFocus(byPanel = false) {
+  if (!focusBlock) return 'No focus block is running.';
+  const b = focusBlock;
+  focusBlock = null; clearInterval(focusTimer); focusTimer = null;
+  logLine('focus', { stop: Math.round((Date.now() - b.startedAt) / 60_000), drifts: b.drifts });
+  agentStale = true; menu();
+  if (byPanel) say('Focus block ended. Nice work.', 'happy');
+  return `Focus block ended after ${Math.round((Date.now() - b.startedAt) / 60_000)} minutes, with ${b.drifts} drift${b.drifts === 1 ? '' : 's'}.`;
+}
+async function focusTick() {
+  const b = focusBlock;
+  if (!b) return;
+  const front = Date.now() >= b.until ? null : await frontData();
+  if (b !== focusBlock) return;
+  const r = focusCheck(b, front, distractionList());
+  if (r.end) {
+    const drifts = b.drifts;
+    stopFocus();
+    if (!busy && !onboarding) enqueue(`(System, not ${userName}: their ${b.minutes}-minute focus block${b.task ? ` on ${b.task}` : ''} just ended, with ${drifts} drift${drifts === 1 ? '' : 's'}. Tell them in one or two sentences, in character, celebrating it. Start with the [happy] tag.)`);
+    return;
+  }
+  // A nudge waits while a conversation is going on; the next look decides again.
+  if (r.nudge && !busy && !onboarding && !loggingIn) {
+    logLine('focus', { nudge: true });
+    const left = Math.max(1, Math.round((b.until - Date.now()) / 60_000));
+    enqueue(`(System, not ${userName}: they're in a focus block${b.task ? ` on ${b.task}` : ''} with ${left} min left, but have been on ${r.nudge} for a bit. Nudge them back playfully in one short sentence, in character: teasing, never scolding. Start with the [remind] tag.)`);
+  } else if (r.nudge) b.nudgedAt = 0;
+}
 // ---------- memory sync (sync.mjs) ----------
 // With a sync folder set: a pass every minute, and a few seconds after a change here. A pass merges the other
 // computers' files into memory (only if nothing changed here meanwhile) and writes this computer's file.
@@ -1677,10 +1739,10 @@ function panelState() {
     geminiModel: config.geminiModel, geminiModels: GEMINI_CHOICES,
     studio: tts().local ? studioState() : null,
     voice: VOICE_OK ? {
-      on: !!config.voice, keys: HOTKEYS_OK ? talkSymbols() : null, ready: voiceReady(), mac: MAC, mute: config.muteWhileTalking !== false, autoListen: !!config.autoListen, wakeWord: !!config.wakeWord,
+      on: !!config.voice, keys: HOTKEYS_OK ? talkSymbols() : null, ready: voiceReady(), mac: MAC, mute: config.muteWhileTalking !== false, autoListen: !!config.autoListen, snoozeListen: !!config.snoozeListen, wakeWord: !!config.wakeWord, wakeName: wakeName(config),
       download: NEEDS_MODEL && config.voice && !voiceReady() ? { status: voiceModel.status, pct: voiceModel.total ? Math.floor((voiceModel.done / voiceModel.total) * 100) : 0, size: sizeLabel() } : null,
     } : null,
-    sound: !!config.sound, actions: !!config.allowActions, sync: { dir: config.syncDir || '', at: syncInfo.at, error: syncInfo.error },
+    sound: !!config.sound, actions: !!config.allowActions, brief: { on: !!config.morningBrief, todoist: !!config.briefTodoist, canTodoist: HANDS_OK }, focus: HANDS_OK ? { until: focusBlock?.until ?? null, task: focusBlock?.task ?? '', list: distractionList(), custom: !!config.distractions } : null, sync: { dir: config.syncDir || '', at: syncInfo.at, error: syncInfo.error },
     login: login.supported ? { on: login.on } : null,
     update: { available: update.available, installing: update.installing, checking: update.checking, result: update.result, page: update.page, done: update.done },
     intro: !!intro,
@@ -1690,7 +1752,7 @@ function panelState() {
 }
 
 
-const voiceConfig = () => send({ type: 'voice_config', enabled: VOICE_OK && config.voice && voiceReady(), mute: config.muteWhileTalking !== false, sound: !!config.sound, wake: MAC && !!config.wakeWord, ...(NEEDS_MODEL ? { model: MODEL_DIR } : {}) });
+const voiceConfig = () => send({ type: 'voice_config', enabled: VOICE_OK && config.voice && voiceReady(), mute: config.muteWhileTalking !== false, sound: !!config.sound, wake: MAC && !!config.wakeWord, wakeName: config.wakeName || '', ...(NEEDS_MODEL ? { model: MODEL_DIR } : {}) });
 
 // Progress goes to the setup guide often and to the tray menu now and then.
 let modelShownAt = 0, modelMenuAt = 0;
@@ -1860,6 +1922,16 @@ async function onMenu(id, via) {
   else if (id.startsWith('geminimodel:') && GEMINI_CHOICES.some((c) => c.id === id.slice(12))) {
     config.geminiModel = id.slice(12); saveConfig(); if (tts().id === 'gemini') speech.setModel(config.geminiModel); menu();
   }
+  else if (id === 'morningbrief') { config.morningBrief = !config.morningBrief; saveConfig(); menu(); }
+  else if (id === 'brieftodoist' && HANDS_OK) { config.briefTodoist = !config.briefTodoist; saveConfig(); menu(); }
+  else if (id === 'focusstop') stopFocus(true);
+  else if (id === 'distractions' && HANDS_OK) {
+    const typed = await ask({ prompt: 'What distracts you? Sites or apps, separated by commas (empty for my usual list).', placeholder: distractionList().join(', ') });
+    if (typed == null) return;
+    const list = parseDistractions(typed);
+    config.distractions = list.length ? list : null; saveConfig(); menu();
+    say(list.length ? `Got it: ${list.length} thing${list.length === 1 ? '' : 's'} I'll keep you away from.` : 'Back to my usual list.', 'happy');
+  }
   else if (id === 'syncsetup') {
     const hint = suggestFolders()[0] ?? '';
     const typed = await ask({ prompt: `Sync memory with your other computer: the path of a folder both computers sync (iCloud Drive, OneDrive, Dropbox, Google Drive)${hint ? `. Found: ${hint}` : ''}`, placeholder: hint || 'Folder path' });
@@ -1896,7 +1968,16 @@ async function onMenu(id, via) {
   else if (id === 'list') showList({ seconds: 20 });
   else if (id === 'mutetalk') { config.muteWhileTalking = config.muteWhileTalking === false; saveConfig(); voiceConfig(); menu(); }
   else if (id === 'autolisten') { config.autoListen = !config.autoListen; saveConfig(); menu(); }
+  else if (id === 'snoozelisten') { config.snoozeListen = !config.snoozeListen; saveConfig(); menu(); }
   else if (id === 'wakeword' && MAC) { config.wakeWord = !config.wakeWord; saveConfig(); agentStale = true; voiceConfig(); menu(); }
+  else if (id === 'wakename' && MAC) {
+    const typed = await ask({ prompt: `Wake word: what should come after "Hey"? (now ${wakeName(config)}; leave empty for Roamies)`, placeholder: 'Jarvis' });
+    if (typed == null) return;
+    const r = cleanWakeName(typed);
+    if (!r.ok) { say(r.why, 'concerned'); return; }
+    config.wakeName = r.name; saveConfig(); agentStale = true; voiceConfig(); menu();
+    say(config.wakeWord ? `Got it. Say "Hey ${wakeName(config)}" and I'm listening.` : `Saved. Turn on the wake word, then say "Hey ${wakeName(config)}".`, 'happy');
+  }
   else if (id === 'voicedl') startVoiceDownload();
   else if (id === 'voice') {
     config.voice = !config.voice; saveConfig(); voiceConfig(); menu();
@@ -2157,7 +2238,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   else if (m.type === 'write_tap') onWriteTap();
   else if (m.type === 'auto_listen') {
     // Still the latest reply, nothing running since, and still switched on: listen once, hands-free.
-    if (m.turn !== autoTurn || busy || !autoListenOn()) return;
+    if (m.turn !== autoTurn || busy || !(autoListenOn() || snoozeListenOn())) return;
     autoTurn = null;
     logLine('auto_listen', { turn: m.turn });
     send({ type: 'listen' });
@@ -2173,6 +2254,11 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   else if (m.type === 'draw_done') { if (String(m.id) === showcase?.id) showcaseDrawn(); }
   else if (m.type === 'draw_wait_done') ink.waitDone(String(m.id), m.beat | 0, String(m.result));
   else if (m.type === 'ink_closed') ink.closed(m.part);
+  else if (m.type === 'card_image') {
+    // Save as image on a card: into Downloads (the overlay may have copied it to the clipboard too).
+    saveCardImage(m).then((file) => { logLine('card_image', { copied: !!m.copied }); say(`Saved it to ${path.basename(path.dirname(file))} as “${path.basename(file)}”${m.copied ? ', and copied it' : ''}.`, 'happy'); })
+      .catch((e) => { logLine('card_image', { error: String(e?.code ?? e?.message ?? e).slice(0, 60) }); say("I couldn't save that card as an image.", 'concerned'); });
+  }
   else if (m.type === 'ink_pinned') { ink.pinned(String(m.part), m.on === true); logLine('ink_pinned', { on: m.on === true }); } // a card kept on screen until its × (ink.js)
   else if (m.type === 'ink_action') onInkButton(String(m.part));
   else if (m.type === 'quiz_done') onQuizDone(String(m.part), Array.isArray(m.picks) ? m.picks.slice(0, 12).map((v) => (Number.isInteger(v) ? v : -1)) : []);
@@ -2221,10 +2307,12 @@ async function remindTick() {
   if (busy || queued || loggingIn || onboarding) { reminderRetry(); return; }
   const due = await takeDueReminders();
   if (!due.length) return;
+  const firedAt = Date.now();
+  firedReminders = [...firedReminders.filter((f) => firedAt - f.at < 3600_000), ...due.map((c) => ({ id: c.id, at: firedAt }))].slice(-20);
   menu(); showList({ flash: due[0].id, seconds: 6 });
   const list = due.map((c) => `- ${c.id}: ${c.text}${c.due ? ` (was due ${fmtWhen(c.due)})` : ''}${c.next ? ` [repeating reminder: already moved on to ${fmtWhen(c.next)}, nothing to mark done]` : c.kind === 'reminder' ? ' [plain reminder: already cleared, nothing to mark done]' : ''}${c.repeat && !c.next ? ` [repeats ${repeatLabel(c.repeat)}${c.missed ? '; the last time went by without being done' : ''}]` : ''}`).join('\n');
   if (signedIn.size && [...signedIn.values()].some(Boolean)) {
-    enqueue(`(System, not ${userName}: these commitments are due now. Nudge ${userName} about them in one or two sentences, in character. Start with the [remind] tag, or [upset] if it's well overdue.)\n${list}`);
+    enqueue(`(System, not ${userName}: these commitments are due now. Nudge ${userName} about them in one or two sentences, in character. Start with the [remind] tag, or [upset] if it's well overdue. If they answer "snooze", "in 10 minutes" or "move it to tomorrow", use snooze_reminder.)\n${list}`, { listenAfter: snoozeListenOn() });
   } else {
     ui({ kind: 'agent', e: { type: 'emote', action: 'remind' } });
     say(`Reminder: ${due[0].text}`, 'concerned');
