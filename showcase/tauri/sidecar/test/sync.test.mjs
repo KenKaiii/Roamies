@@ -150,4 +150,45 @@ assert.deepEqual(checkFolder('~/Cloud', TMP), { ok: true, dir: path.join(TMP, 'C
   assert.equal(S.openCommitments().length, 3, 'nothing lost');
   await S.flushWrites();
 }
+// One computer's memory going empty (an unreadable file) mustn't empty the others: the brake holds a pass that removes
+// most of what a computer knew, and an unreadable memory syncs without its old state, so the others' copy comes back.
+{
+  const { tooMuchGone } = await import('../sync.mjs');
+  const items = [c('c11', 'Dentist'), c('c12', 'Pay rent'), c('c13', 'Call mum')], facts = [f('f11', 'Likes tea')];
+  const A1 = merge({ local: { commitments: items, facts }, device: 'aaaaaaaaaaaa', now: T + 1 });
+  const B1 = merge({ local: { commitments: items, facts }, remotes: [remoteOf(A1)], device: 'bbbbbbbbbbbb', now: T + 2 });
+  const wiped = merge({ local: { commitments: [], facts: [] }, state: A1.state, remotes: [remoteOf(B1)], device: 'aaaaaaaaaaaa', now: T + 3 });
+  assert.equal(wiped.removed, 4);
+  assert.ok(tooMuchGone(wiped), 'everything gone here at once is held');
+  const B2 = merge({ local: B1, state: B1.state, remotes: [remoteOf(wiped)], device: 'bbbbbbbbbbbb', now: T + 4 });
+  assert.equal(B2.commitments.length + B2.facts.length, 0);
+  assert.ok(tooMuchGone(B2), 'and so is taking that from another computer');
+  const one = merge({ local: { commitments: items.slice(1), facts }, state: A1.state, device: 'aaaaaaaaaaaa', now: T + 5 });
+  assert.equal(one.removed, 1);
+  assert.ok(!tooMuchGone(one), 'deleting one item syncs as usual');
+  const back = merge({ local: { commitments: [], facts: [] }, state: undefined, remotes: [remoteOf(B1)], device: 'aaaaaaaaaaaa', now: T + 6 });
+  assert.equal(back.commitments.length + back.facts.length, 4, 'without the old state, the other computer\'s copy comes back');
+  assert.ok(!tooMuchGone(back) && Object.keys(back.out.tombs).length === 0, 'and nothing is deleted anywhere');
+}
+
+// The store says when memory couldn't be read (trusted: false) or came from a newer Roamies (readOnly).
+{
+  const fresh = async (name, files = {}) => {
+    process.env.ROAMIES_DATA_DIR = path.join(TMP, name);
+    const dir = path.join(TMP, name, 'sidekick');
+    fs.mkdirSync(dir, { recursive: true });
+    for (const [n, text] of Object.entries(files)) fs.writeFileSync(path.join(dir, n), text);
+    return (await import(`../store.mjs?${name}`)).syncSnapshot();
+  };
+  const ok = JSON.stringify({ version: 1, commitments: [c('c21', 'Saved')], facts: [] });
+  assert.equal((await fresh('first-run')).trusted, true, 'a first run, with no memory yet');
+  assert.equal((await fresh('readable', { 'memory.json': ok })).trusted, true);
+  assert.equal((await fresh('from-bak', { 'memory.json': '{"version":1,"comm', 'memory.json.bak': ok })).trusted, true, 'restored from the backup');
+  const broken = await fresh('broken', { 'memory.json': '{"version":1,"comm', 'memory.json.bak': 'nope' });
+  assert.equal(broken.trusted, false, 'unreadable, backup too');
+  assert.equal(broken.commitments.length, 0);
+  const newer = await fresh('newer', { 'memory.json': JSON.stringify({ version: 2, commitments: [] }) });
+  assert.ok(newer.readOnly && !newer.trusted, 'memory from a newer Roamies');
+  delete process.env.ROAMIES_DATA_DIR;
+}
 console.log('sync tests: passed');

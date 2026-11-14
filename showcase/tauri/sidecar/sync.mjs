@@ -137,17 +137,25 @@ export function merge({ local, state = { items: {}, tombs: {} }, remotes = [], d
     return v;
   }).sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0) || (a.id < b.id ? -1 : 1));
   const commitments = pick('c'), facts = pick('f');
+  // What this computer knew (held, or saw last pass) that this pass removes, for the brake (tooMuchGone).
+  const known = new Set([...mine.keys(), ...Object.keys(prevItems)]);
+  const removed = [...known].filter((key) => !keep.has(key)).length;
 
   const items = {}, outItems = {};
   for (const [key, e] of keep) { items[key] = { hash: hashItem(key[0], e.v), at: e.at }; outItems[key] = { v: strip(key[0], e.v), at: e.at }; }
   const sig = (cs, fs) => [...cs.map((v) => `c:${v.id}:${hashItem('c', v)}`), ...fs.map((v) => `f:${v.id}:${hashItem('f', v)}`)].sort().join('|');
   const changed = sig(commitments, facts) !== sig(local.commitments ?? [], local.facts ?? []);
   return {
-    commitments, facts, changed,
+    commitments, facts, changed, removed, known: known.size,
     state: { items, tombs },
     out: { version: 1, device, name: String(name).slice(0, 60), at: now, items: outItems, tombs },
   };
 }
+
+export const BRAKE_MIN = 3;
+/** A pass that would remove at least BRAKE_MIN items and over half of what this computer knew waits for the user:
+ *  one broken or wiped memory file mustn't empty every computer. */
+export const tooMuchGone = (r) => r.removed >= BRAKE_MIN && r.removed * 2 > r.known;
 
 // ---------- the folder ----------
 /** Folders that sync on this computer, best first, for the setup prompt's suggestion. */
