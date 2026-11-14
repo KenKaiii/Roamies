@@ -28,6 +28,8 @@ import {
 } from './store.mjs';
 import { foldInput, foldPrompt, memoryInput, memoryPrompt, oneShot, parseBrain, transcript } from './brain.mjs';
 import { briefNote } from './brief.mjs';
+import { saveCardImage } from './cardimage.mjs';
+import { cleanWakeName, wakeName } from './wakename.mjs';
 import { EMOTES, EchoFilter, ReplyStream } from './reply.mjs';
 import { downloadModel, isReady, modelDir, sizeLabel, totalBytes } from './voicemodel.mjs';
 import { copyText, createTools, expand, fitImage, imageBlock, winOpen } from './tools.mjs';
@@ -54,6 +56,7 @@ console.log = console.info = (...a) => console.error(...a);
 const send = (o) => process.stdout.write(JSON.stringify(o) + '\n');
 // While the setup guide is open, Sidekick talks through it instead of the desktop overlay.
 let onboarding = false;
+let firedReminders = []; // [{ id, at }]: what went off lately, so "snooze" alone knows which (snooze.mjs)
 let intro = null; // the get-to-know-you chat, while it's on
 // The get-to-know-you chat runs in the guide window: its replies and voice go there, not to the desktop.
 // A reply's voice keeps going where it started, even after the chat ends mid-sentence; "stop" goes to both.
@@ -360,6 +363,7 @@ const userName = (() => {
 // The open request's voice, if replies are spoken: draw's beat lines are said on it, in order with the reply.
 let turnVoice = null;
 const { tools, hands, whereNow, ink, nextTurn } = createTools({
+  firedReminders: () => firedReminders,
   allowActions: () => config.allowActions, ui, ask, openUrl, userName,
   speak: (line) => { if (!turnVoice) return false; turnVoice.say(line); return true; },
   onHandoff: (task) => { activity.handoff(task); panel(); },
@@ -460,6 +464,7 @@ function anim(name, args = {}) {
     case 'web_search': return { tool: 'web', variant: 'search', label: 'searching', detail: 'the web' };
     case 'remember_commitment': return { tool: 'write', variant: 'create', label: 'saving', detail: 'a reminder' };
     case 'forget_fact': return { tool: 'write', variant: 'crumble', label: 'forgetting', detail: 'that' };
+    case 'snooze_reminder': return { tool: 'write', variant: 'edit', label: 'snoozing', detail: String(args.until ?? '10 min').slice(0, 20) };
     case 'update_commitment': return { tool: 'write', variant: 'edit', label: 'updating', detail: 'a reminder' };
     case 'open': {
       const t = String(args.target ?? '');
@@ -523,7 +528,7 @@ const livePrompt = (context = '') => {
   const open = commitmentsText(), done = doneTodayText(), working = agents.liveText();
   const turn = `Live state (current as of this moment):
 ${frontNow ? `${frontNow}\n` : ''}- Editing files, running commands and controlling other apps: ${config.allowActions ? 'ALLOWED' : `switched OFF (tell the user to turn on "Allow File Edits & Commands" on the Behavior page in ${PANEL} if they want it)`}.
-${VOICE_OK ? `- Voice: ${!config.voice ? 'off' : voiceReady() ? `on; ${HOTKEYS_OK ? `${userName} holds ${talkWords()} to talk` : `${userName} presses the key they bound to ${BIND.talk} to start talking and again to send (a pause sends too)`}${config.autoListen ? '. Auto-listen is on: when your reply to a spoken question ends with a question, the mic opens by itself for their answer' : ''}${MAC && config.wakeWord ? `. Wake word is on: ${userName} can also say "Hey Roamies" to start talking hands-free, and what they say right after it is the request` : ''}` : `on, but the speech model isn't downloaded yet (${voiceModel.status === 'downloading' ? 'downloading now' : `the Voice page in ${PANEL}`})`}.` : ''}
+${VOICE_OK ? `- Voice: ${!config.voice ? 'off' : voiceReady() ? `on; ${HOTKEYS_OK ? `${userName} holds ${talkWords()} to talk` : `${userName} presses the key they bound to ${BIND.talk} to start talking and again to send (a pause sends too)`}${config.autoListen ? '. Auto-listen is on: when your reply to a spoken question ends with a question, the mic opens by itself for their answer' : ''}${MAC && config.wakeWord ? `. Wake word is on: ${userName} can also say "Hey ${wakeName(config)}" to start talking hands-free, and what they say right after it is the request${config.wakeName ? ` (they chose "${config.wakeName}" as the wake word; your own name is unchanged)` : ''}` : ''}` : `on, but the speech model isn't downloaded yet (${voiceModel.status === 'downloading' ? 'downloading now' : `the Voice page in ${PANEL}`})`}.` : ''}
 - Shortcuts: ${HOTKEYS_OK ? `type a question to you: a quick tap of ${writeWords()} (press both and let go), which opens a text field beside the cursor (Enter sends, Shift+Enter adds a line, Esc or another tap closes it); show or hide you ${keyWords(keys().summon)}` : `on this Wayland desktop no app can have global shortcuts, so ${userName} binds keys to these commands in their desktop's keyboard settings: ${BIND.summon} (show or hide you), ${BIND.ask} (ask you), ${BIND.list} (the list), ${BIND.talk} (talk) and ${BIND.panel} (the panel)`}${SNAP_OK ? `; ask about an area ${keyWords(keys().snap)}` : ''}${CIRCLE_OK ? "; while holding the talk keys, moving the cursor round something circles it (no clicking; it snaps shut with a click when the circle closes, and loose lines don't count) and you'll see what they circled" : ''}${HOTKEYS_OK ? `; show the list ${keyWords(keys().list)}` : ''}.${HANDS_OK ? '' : ' Asking about an area, reading app windows, finding things on screen by their words and working other apps need the Roamies app, which isn\'t running here; draw there with x, y from a screenshot.'}`;
   const memory = `${open ? `Open commitments:\n${open}` : 'No open commitments.'}${done ? `\nDone today (ticked off on the list or by you; still shown struck through until midnight):\n${done}` : ''}
 ${facts.length ? `What you know about ${userName}${total > facts.length ? ` (${facts.length} most relevant of ${total})` : ''}:\n${facts.map((f) => `- ${f.id}: ${f.text}`).join('\n')}` : `You don't know anything lasting about ${userName} yet.`}${working ? `\n${working}` : ''}`;
@@ -674,10 +679,10 @@ let credsBaseUrl;
 
 // One run at a time: a new request waits for (or interrupts) the current one. Folding waits until none is left.
 let queued = 0;
-function enqueue(text, { interrupt = false, image = null, note = '', byVoice = false, news = null } = {}) {
+function enqueue(text, { interrupt = false, image = null, note = '', byVoice = false, listenAfter = false, news = null } = {}) {
   if (interrupt && busy) interruptQuietly('new request');
   queued++;
-  running = running.then(() => prompt(text, image, note, byVoice, news)).catch((e) => console.error('prompt', e))
+  running = running.then(() => prompt(text, image, note, byVoice, news, listenAfter)).catch((e) => console.error('prompt', e))
     .finally(() => { if (--queued === 0) maybeCompact(); });
   return running;
 }
@@ -968,7 +973,8 @@ const desk = newsDesk({
 });
 const stir = desk.stir;
 // news: the agent ids this system turn passes on.
-async function prompt(text, image = null, note = '', byVoice = false, news = null) {
+const snoozeListenOn = () => VOICE_OK && !!config.voice && !!config.snoozeListen && voiceReady() && !intro;
+async function prompt(text, image = null, note = '', byVoice = false, news = null, listenAfter = false) {
   const notReady = await readyAgent();
   // Told once its turn starts, however it goes: the corner and the live state still have the result, so no retries.
   desk.started(news);
@@ -1117,7 +1123,8 @@ async function prompt(text, image = null, note = '', byVoice = false, news = nul
     trail.end();
     ink.endRequest();
     // Asked by voice and answered with a question: the overlay opens the mic once the reply has been typed and said.
-    const listen = byVoice && !stalled && !controller.signal.aborted && autoListenOn() && endsWithQuestion(lastReply) ? { turn, speech: voice?.id ?? null } : null;
+    // A reminder nudge, with "Listen after reminders" on: the same hands-free listen, for "snooze 10 minutes".
+    const listen = !stalled && !controller.signal.aborted && ((byVoice && autoListenOn() && endsWithQuestion(lastReply)) || (listenAfter && snoozeListenOn())) ? { turn, speech: voice?.id ?? null } : null;
     autoTurn = listen ? turn : null;
     ui({ kind: 'agent', e: stalled ? { type: 'error', message: stallMessage(), speech: voice?.id ?? null } : { type: 'done', speech: voice?.id ?? null, ...(listen ? { listen } : {}) } });
     logUsage({ ...use, ms: Date.now() - use.t });
@@ -1644,7 +1651,7 @@ function panelState() {
     geminiModel: config.geminiModel, geminiModels: GEMINI_CHOICES,
     studio: tts().local ? studioState() : null,
     voice: VOICE_OK ? {
-      on: !!config.voice, keys: HOTKEYS_OK ? talkSymbols() : null, ready: voiceReady(), mac: MAC, mute: config.muteWhileTalking !== false, autoListen: !!config.autoListen, wakeWord: !!config.wakeWord,
+      on: !!config.voice, keys: HOTKEYS_OK ? talkSymbols() : null, ready: voiceReady(), mac: MAC, mute: config.muteWhileTalking !== false, autoListen: !!config.autoListen, snoozeListen: !!config.snoozeListen, wakeWord: !!config.wakeWord, wakeName: wakeName(config),
       download: NEEDS_MODEL && config.voice && !voiceReady() ? { status: voiceModel.status, pct: voiceModel.total ? Math.floor((voiceModel.done / voiceModel.total) * 100) : 0, size: sizeLabel() } : null,
     } : null,
     sound: !!config.sound, actions: !!config.allowActions, brief: { on: !!config.morningBrief, todoist: !!config.briefTodoist, canTodoist: HANDS_OK },
@@ -1657,7 +1664,7 @@ function panelState() {
 }
 
 
-const voiceConfig = () => send({ type: 'voice_config', enabled: VOICE_OK && config.voice && voiceReady(), mute: config.muteWhileTalking !== false, sound: !!config.sound, wake: MAC && !!config.wakeWord, ...(NEEDS_MODEL ? { model: MODEL_DIR } : {}) });
+const voiceConfig = () => send({ type: 'voice_config', enabled: VOICE_OK && config.voice && voiceReady(), mute: config.muteWhileTalking !== false, sound: !!config.sound, wake: MAC && !!config.wakeWord, wakeName: config.wakeName || '', ...(NEEDS_MODEL ? { model: MODEL_DIR } : {}) });
 
 // Progress goes to the setup guide often and to the tray menu now and then.
 let modelShownAt = 0, modelMenuAt = 0;
@@ -1844,7 +1851,16 @@ async function onMenu(id, via) {
   else if (id === 'list') showList({ seconds: 20 });
   else if (id === 'mutetalk') { config.muteWhileTalking = config.muteWhileTalking === false; saveConfig(); voiceConfig(); menu(); }
   else if (id === 'autolisten') { config.autoListen = !config.autoListen; saveConfig(); menu(); }
+  else if (id === 'snoozelisten') { config.snoozeListen = !config.snoozeListen; saveConfig(); menu(); }
   else if (id === 'wakeword' && MAC) { config.wakeWord = !config.wakeWord; saveConfig(); agentStale = true; voiceConfig(); menu(); }
+  else if (id === 'wakename' && MAC) {
+    const typed = await ask({ prompt: `Wake word: what should come after "Hey"? (now ${wakeName(config)}; leave empty for Roamies)`, placeholder: 'Jarvis' });
+    if (typed == null) return;
+    const r = cleanWakeName(typed);
+    if (!r.ok) { say(r.why, 'concerned'); return; }
+    config.wakeName = r.name; saveConfig(); agentStale = true; voiceConfig(); menu();
+    say(config.wakeWord ? `Got it. Say "Hey ${wakeName(config)}" and I'm listening.` : `Saved. Turn on the wake word, then say "Hey ${wakeName(config)}".`, 'happy');
+  }
   else if (id === 'voicedl') startVoiceDownload();
   else if (id === 'voice') {
     config.voice = !config.voice; saveConfig(); voiceConfig(); menu();
@@ -2105,7 +2121,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   else if (m.type === 'write_tap') onWriteTap();
   else if (m.type === 'auto_listen') {
     // Still the latest reply, nothing running since, and still switched on: listen once, hands-free.
-    if (m.turn !== autoTurn || busy || !autoListenOn()) return;
+    if (m.turn !== autoTurn || busy || !(autoListenOn() || snoozeListenOn())) return;
     autoTurn = null;
     logLine('auto_listen', { turn: m.turn });
     send({ type: 'listen' });
@@ -2121,6 +2137,11 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   else if (m.type === 'draw_done') { if (String(m.id) === showcase?.id) showcaseDrawn(); }
   else if (m.type === 'draw_wait_done') ink.waitDone(String(m.id), m.beat | 0, String(m.result));
   else if (m.type === 'ink_closed') ink.closed(m.part);
+  else if (m.type === 'card_image') {
+    // Save as image on a card: into Downloads (the overlay may have copied it to the clipboard too).
+    saveCardImage(m).then((file) => { logLine('card_image', { copied: !!m.copied }); say(`Saved it to ${path.basename(path.dirname(file))} as “${path.basename(file)}”${m.copied ? ', and copied it' : ''}.`, 'happy'); })
+      .catch((e) => { logLine('card_image', { error: String(e?.code ?? e?.message ?? e).slice(0, 60) }); say("I couldn't save that card as an image.", 'concerned'); });
+  }
   else if (m.type === 'ink_pinned') { ink.pinned(String(m.part), m.on === true); logLine('ink_pinned', { on: m.on === true }); } // a card kept on screen until its × (ink.js)
   else if (m.type === 'ink_action') onInkButton(String(m.part));
   else if (m.type === 'quiz_done') onQuizDone(String(m.part), Array.isArray(m.picks) ? m.picks.slice(0, 12).map((v) => (Number.isInteger(v) ? v : -1)) : []);
@@ -2169,10 +2190,12 @@ async function remindTick() {
   if (busy || queued || loggingIn || onboarding) { reminderRetry(); return; }
   const due = await takeDueReminders();
   if (!due.length) return;
+  const firedAt = Date.now();
+  firedReminders = [...firedReminders.filter((f) => firedAt - f.at < 3600_000), ...due.map((c) => ({ id: c.id, at: firedAt }))].slice(-20);
   menu(); showList({ flash: due[0].id, seconds: 6 });
   const list = due.map((c) => `- ${c.id}: ${c.text}${c.due ? ` (was due ${fmtWhen(c.due)})` : ''}${c.next ? ` [repeating reminder: already moved on to ${fmtWhen(c.next)}, nothing to mark done]` : c.kind === 'reminder' ? ' [plain reminder: already cleared, nothing to mark done]' : ''}${c.repeat && !c.next ? ` [repeats ${repeatLabel(c.repeat)}${c.missed ? '; the last time went by without being done' : ''}]` : ''}`).join('\n');
   if (signedIn.size && [...signedIn.values()].some(Boolean)) {
-    enqueue(`(System, not ${userName}: these commitments are due now. Nudge ${userName} about them in one or two sentences, in character. Start with the [remind] tag, or [upset] if it's well overdue.)\n${list}`);
+    enqueue(`(System, not ${userName}: these commitments are due now. Nudge ${userName} about them in one or two sentences, in character. Start with the [remind] tag, or [upset] if it's well overdue. If they answer "snooze", "in 10 minutes" or "move it to tomorrow", use snooze_reminder.)\n${list}`, { listenAfter: snoozeListenOn() });
   } else {
     ui({ kind: 'agent', e: { type: 'emote', action: 'remind' } });
     say(`Reminder: ${due[0].text}`, 'concerned');
