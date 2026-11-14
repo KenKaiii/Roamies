@@ -118,9 +118,9 @@
   // It can be hovered (it sits right against its control), Esc closes it, and it never covers its control.
   let tipFor = null, tipTimer = 0;
   const tipBox = () => $('tip');
-  function showTip(target) {
+  function showTip(target, own = null) {
     clearTimeout(tipTimer);
-    const t = tipBox(), text = target.dataset.tip;
+    const t = tipBox(), text = own ?? target.dataset.tip;
     if (!text) return;
     if (tipFor !== target) { t.textContent = text; t.classList.remove('in'); void t.offsetWidth; t.classList.add('in'); }
     tipFor = target; t.hidden = false;
@@ -139,9 +139,20 @@
     if (soon) { tipTimer = setTimeout(() => hideTip(), 120); return; }
     tipFor = null; const t = tipBox(); if (t) t.hidden = true;
   }
+  // A description cut to one line ("…") shows in full: on hover, and when its row's control has keyboard focus.
+  const clipped = (n) => (n && n.scrollWidth > n.clientWidth ? n.textContent : null);
+  document.addEventListener('pointerover', (e) => {
+    const d = e.target.closest?.('.setting > span small, .ghead p');
+    if (d) { const full = clipped(d); if (full) d.dataset.tip = full; else delete d.dataset.tip; }
+  }, true);
   document.addEventListener('pointerover', (e) => { const x = e.target.closest?.('[data-tip]'); if (x) showTip(x); else if (e.target.closest?.('#tip')) clearTimeout(tipTimer); });
   document.addEventListener('pointerout', (e) => { if (e.target.closest?.('[data-tip], #tip') && !e.relatedTarget?.closest?.('[data-tip], #tip')) hideTip(true); });
-  document.addEventListener('focusin', (e) => { const x = e.target.closest?.('[data-tip]'); if (x && x.matches(':focus-visible')) showTip(x); else hideTip(); });
+  document.addEventListener('focusin', (e) => {
+    const x = e.target.closest?.('[data-tip]');
+    if (x && x.matches(':focus-visible')) return showTip(x);
+    const full = !x && e.target.matches?.(':focus-visible') ? clipped(e.target.closest?.('.setting')?.querySelector(':scope > span small')) : null;
+    if (full) showTip(e.target, full); else hideTip();
+  });
   document.addEventListener('focusout', () => hideTip(true));
 
   const ago = (at) => {

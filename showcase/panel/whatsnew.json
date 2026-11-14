@@ -2,6 +2,17 @@
   "updates": [
     {
       "version": null,
+      "date": "2026-11-14",
+      "items": [
+        { "kind": "fixed", "title": "Wake word works with AirPods", "text": "With AirPods in, the wake word kept restarting and cutting into your audio. Fixed that." },
+        { "kind": "fixed", "title": "It knows you're waking it", "text": "Saying Hey Roamies sometimes made me think you'd called me the wrong name. Not anymore." },
+        { "kind": "fixed", "title": "No more sound blip", "text": "After I answered a wake word request, your sound dipped for a moment. Not anymore." },
+        { "kind": "fixed", "title": "Wake word after Esc", "text": "After you cancelled with Esc, the wake word could stop hearing you for minutes. Fixed." },
+        { "kind": "improved", "title": "Full setting descriptions", "text": "Some setting descriptions got cut off. Point at one and you'll see the whole thing." }
+      ]
+    },
+    {
+      "version": null,
       "date": "2026-11-13",
       "items": [
         { "kind": "improved", "title": "Works over fullscreen apps", "text": "On a Mac, your Roamie now shows up over fullscreen apps and games instead of hiding." },

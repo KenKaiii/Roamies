@@ -174,14 +174,16 @@ final class AnalyzerRecognizer: Recognizer {
         let (stream, cont) = AsyncStream<AVAudioPCMBuffer>.makeStream()
         raw = cont
         work = Task { [weak self] in
+            var analyzer: SpeechAnalyzer?, reader: Task<Void, Error>?
             do {
                 let (locale, format) = try await Self.prepare().value
                 let tr = SpeechTranscriber(locale: locale, preset: .progressiveTranscription)
-                let analyzer = SpeechAnalyzer(modules: [tr])
+                let a = SpeechAnalyzer(modules: [tr])
+                analyzer = a
                 // Lean toward the app's names, as contextualStrings does for the older recogniser ("Hey Roamies").
                 let context = AnalysisContext()
                 context.contextualStrings[.general] = WakeWord.hints
-                try? await analyzer.setContext(context)
+                try? await a.setContext(context)
                 var converter: AVAudioConverter?
                 let inputs = AsyncStream<AnalyzerInput> { out in
                     Task {
@@ -196,8 +198,8 @@ final class AnalyzerRecognizer: Recognizer {
                         out.finish()
                     }
                 }
-                try await analyzer.start(inputSequence: inputs)
-                let reader = Task {
+                try await a.start(inputSequence: inputs)
+                reader = Task {
                     for try await r in tr.results {
                         let text = String(r.text.characters)
                         guard let self else { return }
@@ -208,11 +210,16 @@ final class AnalyzerRecognizer: Recognizer {
                 }
                 // Hold until the user stops talking (end()), then flush what's left.
                 await self?.waitForEnd()
-                try await analyzer.finalizeAndFinishThroughEndOfInput()
-                try await reader.value
+                // Cancelled (Esc, or the wake recogniser's refresh): stop now, so this analyzer is let go at once and
+                // can't hold up the next one.
+                if Task.isCancelled { reader?.cancel(); await a.cancelAndFinishNow(); return }
+                try await a.finalizeAndFinishThroughEndOfInput()
+                try await reader?.value
                 DispatchQueue.main.async { cb.onDone() }
             } catch is CancellationError {
+                reader?.cancel(); await analyzer?.cancelAndFinishNow()
             } catch {
+                reader?.cancel(); await analyzer?.cancelAndFinishNow()
                 DispatchQueue.main.async { cb.onError(error) }
             }
         }
@@ -449,6 +456,15 @@ enum WakeWord {
     /// What was said after the phrase ("" if nothing yet), or nil when the phrase isn't there.
     static func match(_ text: String) -> String? { scan(text).rest }
 
+    /// What follows the first n words of the text: the wake phrase as first heard, once a later reading of it no
+    /// longer matches ("Hey Romies" revised to "Hey Romy is"), so it still isn't sent as part of the request.
+    static func dropping(_ n: Int, from text: String) -> String {
+        let words = tokens(text)
+        guard n > 0 else { return text }
+        guard words.count > n else { return "" }
+        return String(text[words[n].range.lowerBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// The match, plus the closest name's edit distance after a greeting (nil if no greeting), and when there's no match
     /// but it looks like a try, why it missed (for the log: never the words themselves).
     static func scan(_ text: String) -> (rest: String?, distance: Int?, miss: String?) {
@@ -541,7 +557,13 @@ final class Voice {
     }
     private var wakeLoud = 0.0, wakeLevelAt = 0.0 // seconds loud enough to be speech in this wake window
     private var wakeCooldownUntil = 0.0, wakeRetryAt = 0.0, wakeAt = 0.0
+    private var wakeStartedAt = 0.0, wakeDrops = 0 // wake listening that keeps stopping soon after it starts (backOffWake)
+    private var engineRestarted = false // this engine was restarted once after a device change
+    // The mic the open engine listens on (nil: the default input). With the wake word on, the engine stays open between
+    // takes: closing and reopening it reconfigures the audio devices, which briefly drops what's playing.
+    private var engineDevice: AudioDeviceID?
     private var wakeText = "", woke = false, wakeMiss: String?
+    private var wakeWords = 0 // how many words the wake phrase took, in the take it started
     private var useAnalyzer: Bool { if #available(macOS 26, *) { return SpeechTranscriber.isAvailable } else { return false } }
 
     init() {
@@ -650,7 +672,7 @@ final class Voice {
             else if wakeAllowed(now) { startWake(now) }
         case .wake:
             if chord && !prevChord && !blocked { stopWake(); arm(now); return }
-            if !wakeOn || wakeHold { stopWake(); return }
+            if !wakeOn || wakeHold { stopWake(); return } // while Roamies answers, the mic stays open but unheard
             let paused = !wakeText.isEmpty && now - heardAt > Self.wakePause && now - voiceAt > Self.wakePause / 2
             // The 30 s refresh waits for a quiet moment, so it can't split "Hey" from "Roamies".
             let quiet = now - voiceAt > Self.wakePause / 2 && now - heardAt > Self.wakePause
@@ -808,8 +830,9 @@ final class Voice {
     func setWake(_ on: Bool) {
         guard on != wakeOn else { return }
         wakeOn = on
+        if on { wakeDrops = 0; wakeRetryAt = 0 }
         log("wake word \(on ? "on" : "off")")
-        if !on { stopWake() }
+        if !on { stopWake(); if phase == .idle { stopAudio(close: true) } }
     }
 
     // Never asks for permission: wake listening starts only once talking has been allowed.
@@ -819,12 +842,22 @@ final class Voice {
 
     private func startWake(_ now: Double) {
         wakeRetryAt = now + 5 // if the mic won't open, try again in a moment rather than every frame
+        wakeStartedAt = now
         phase = .wake
         best = ""; wakeText = ""; wakeMiss = nil; woke = false; wakeLoud = 0
         wakeAt = now; heardAt = now; voiceAt = now
         let device = InputDevice.forWake()
         startAudio(device: device)
         if phase == .wake { wakeLog("listening\(device == nil ? "" : " on the built-in mic (the default input is Bluetooth)")") }
+    }
+
+    // Wake listening that stops soon after starting, again and again: wait longer each time (5 s, 30 s, 2 min, 10 min),
+    // so a mic that keeps reporting changes doesn't interrupt what's playing every few seconds.
+    private func backOffWake(_ now: Double) {
+        wakeDrops = now - wakeStartedAt < 20 ? wakeDrops + 1 : 1
+        let wait = [5.0, 30, 120, 600][min(wakeDrops - 1, 3)]
+        wakeRetryAt = now + wait
+        if wakeDrops > 1 { wakeLog("stopped again soon after starting: next try in \(Int(wait)) s") }
     }
 
     private func stopWake() {
@@ -865,6 +898,7 @@ final class Voice {
         wakeMiss = nil
         // Same mic, same recogniser: what follows the phrase is already the start of the take.
         woke = true
+        wakeWords = max(0, WakeWord.tokens(text).count - WakeWord.tokens(rest).count)
         phase = .handsFree
         chordAt = now
         best = rest
@@ -920,6 +954,12 @@ final class Voice {
     /// device: a particular mic instead of the default one (wake listening, when the default is Bluetooth).
     private func startAudio(device: AudioDeviceID? = nil) {
         failed = false
+        // The wake word's open mic, on the mic this session wants: just a fresh recogniser on it.
+        if let eng = engine, eng.isRunning, engineDevice == device, LiveTest.url == nil, let r = makeRecognizer() {
+            rec = r; feed.set(r)
+            return
+        }
+        if engine != nil { stopAudio(close: true) }
         // Wake listening fails quietly and tries again later; a take tells the user.
         let fail = { (code: String) in
             if self.phase == .wake { self.phase = .idle; self.wakeRetryAt = uptime() + 30; wakeLog("couldn't start (\(code))") } else { emit(["type": "error", "code": code]); self.cancel() }
@@ -960,18 +1000,44 @@ final class Voice {
             return fail("no_input")
         }
         engine = eng
+        engineDevice = device
         rec = r
+        engineRestarted = false
         // A mic plugged in or out stops the engine: wake listening starts again on the new one.
         configObserver = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: eng, queue: .main) { [weak self] _ in
             guard let self, self.engine === eng, self.phase == .wake else { return }
+            // Switching to the built-in mic (the default input is Bluetooth) reports a change of its own: restart on that
+            // mic once rather than stopping, which reopened the mic every 5 s and kept interrupting what was playing.
+            if let device, !self.engineRestarted, InputDevice.forWake() == device {
+                self.engineRestarted = true
+                let input = eng.inputNode
+                input.removeTap(onBus: 0)
+                eng.stop()
+                _ = InputDevice.use(device, on: input)
+                let format = input.outputFormat(forBus: 0)
+                if format.sampleRate > 0, format.channelCount > 0 {
+                    input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in ingest(buffer) }
+                    eng.prepare()
+                    do {
+                        try eng.start()
+                        wakeLog("restarted on the built-in mic after a device change")
+                        self.recycleWake(uptime()) // a fresh recogniser for the restarted mic's format
+                        return
+                    } catch { wakeLog("restart on the built-in mic failed: \(error)") }
+                }
+            }
             wakeLog("audio devices changed")
             self.stopWake()
+            self.backOffWake(uptime())
         }
     }
 
-    private func stopAudio() {
+    /// With the wake word on, a running engine on the wake word's own mic stays open with its sound going nowhere (see
+    /// engineDevice), unless close. Any other mic closes: an open Bluetooth mic would keep the headset at call quality.
+    private func stopAudio(close: Bool = false) {
         OutputMute.end()
         feed.set(nil)
+        if !close, wakeOn, LiveTest.url == nil, let eng = engine, eng.isRunning, engineDevice == InputDevice.forWake() { return }
         LiveTest.sink = nil
         if let o = configObserver { NotificationCenter.default.removeObserver(o); configObserver = nil }
         guard let eng = engine else { return }
@@ -993,7 +1059,7 @@ final class Voice {
     private func onText(_ raw: String) {
         if phase == .wake { return heardWhileWaiting(raw) }
         // A take started by the wake phrase: the phrase itself isn't part of what was said.
-        let text = woke ? (WakeWord.match(raw) ?? raw) : raw
+        let text = woke ? (WakeWord.match(raw) ?? WakeWord.dropping(wakeWords, from: raw)) : raw
         guard text != best else { return }
         best = text
         heardAt = uptime()
@@ -1105,6 +1171,12 @@ if args.contains("--test-wake") {
     check("Hey", nil)
     check("Hey. Roamies", nil)
     check("", nil)
+    // A later reading of the take that no longer matches the phrase: its words still come off.
+    func dropped(_ n: Int, _ text: String, _ want: String) { let got = WakeWord.dropping(n, from: text); print("\(got == want ? "ok" : "FAIL") drop \(n) \"\(text)\" -> \"\(got)\""); if got != want { bad += 1 } }
+    dropped(2, "Hey Romy's, what time is it?", "what time is it?")
+    dropped(2, "Hey Romy's", "")
+    dropped(3, "Um hey Romy's open Mail", "open Mail")
+    dropped(0, "open Mail", "open Mail")
     // A name of the user's own.
     func named(_ ok: Bool, _ name: String) { let got = WakeWord.setName(name); print("\(got == ok ? "ok" : "FAIL") name \"\(name)\" \(ok ? "taken" : "refused")"); if got != ok { bad += 1 } }
     named(false, "Bob")
