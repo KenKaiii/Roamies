@@ -12,7 +12,8 @@ import { ASK, BLOCK, checkDrawAction, checkFetch, checkOpen, checkRead, checkWri
 import { CARDS, DrawArgs, LIMITS, checkDraw, createParts, createPhotos, describeParts, faviconFor, pickTextMatch, quizNote, resolveTargets } from './draw.mjs';
 import { plain } from './intro.mjs';
 import { linuxSession, seesPointer } from './platform.mjs';
-import { addCommitment, forgetFact, parseDue, parseRepeat, repeatLabel, updateCommitment } from './store.mjs';
+import { addCommitment, forgetFact, getCommitment, parseDue, parseRepeat, repeatLabel, updateCommitment } from './store.mjs';
+import { snoozeTarget, snoozeUntil } from './snooze.mjs';
 
 const HOME = os.homedir();
 export const expand = (p) => path.resolve(String(p).replace(/^~(?=$|\/|\\)/, HOME));
@@ -227,7 +228,7 @@ export function sideSearchFor(route) {
 // Every request and redirect hop of web_fetch goes through safety.mjs, by name and by the addresses it resolves to.
 export const guardFetch = async (url) => { const v = await checkFetch(url); return v.level === BLOCK ? `Blocked for safety: ${v.reason}` : null; };
 
-export function createTools({ allowActions, ui, ask, openUrl, onCommitments, showList, fmtWhen, commitmentsText, userName, onPlan = () => {}, speak = () => false, onHandoff = () => {}, watchClicks = () => {}, onInkGone = () => {}, askShell = async () => ({ ok: false, error: 'Roamies isn\'t running.' }), workdir = HOME, own = null, sideSearch = async () => null }) {
+export function createTools({ allowActions, ui, ask, openUrl, onCommitments, firedReminders = () => [], showList, fmtWhen, commitmentsText, userName, onPlan = () => {}, speak = () => false, onHandoff = () => {}, watchClicks = () => {}, onInkGone = () => {}, askShell = async () => ({ ok: false, error: 'Roamies isn\'t running.' }), workdir = HOME, own = null, sideSearch = async () => null }) {
   // Relative paths (and run_command) start in workdir: the home folder for the chat, its own folder for an agent.
   const at = (p) => { const s = String(p ?? ''); return /^~(?=$|\/|\\)/.test(s) || path.isAbsolute(s) || /^[a-z]:[\\/]/i.test(s) ? s : path.join(workdir, s); };
   const where = workdir === HOME ? "the user's home folder" : `its working folder (${workdir})`;
@@ -830,12 +831,12 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, sho
       description: `Draw on the user's screen while you talk. Your Roamie turns into its cursor and draws with its tip, each beat's marks paced to its spoken line (also shown as a caption). One call holds a whole explanation or walkthrough.
 beats: [{say, marks, wait?}]. say: one short line, under 20 words, spoken and captioned while that beat's marks draw, so your reply after draw never repeats or rephrases it (no restating the steps). Keep 1 to 4 marks per beat, in the order you mention them.
 Places (at, to, tie), best first: {text: the exact words shown on screen} (exact bounds, scrolls to it; target 'screen' searches every app; also words inside paragraphs, text in images or canvases, and a single character, which matches case); add every: true to mark every place that text appears (each letter s, each mention of a word), one mark per place, and within: {x, y, w, h} (screenshot pixels, x, y the centre) to keep to one part of the screen (every s in one sentence); {id} from read_window, for controls without words; {x, y, w, h} pixels in your latest screenshot, for icons, shapes and areas without words: x, y is the thing's centre, and w, h its whole width and height; the box is then fitted to what's really drawn there, so a close guess is enough.
-Which mark: one control they should click: target (with wait 'click' in a walkthrough); one thing to notice: ring (follows its shape; r sets the corner radius); a small spot or icon: point; a region or panel: frame; key words: underline (outdated ones: strike); right or wrong: check, cross; order of steps: num; a name beside something: label (text) or label on any mark; how two things relate: connect (at → to); an odd-shaped group: trace (points); scroll here: scroll (dir); one thing above all else: spotlight (sparingly); something to hover: hover with wait 'hover'; big words: write (text, size).
+Which mark: one control they should click: target (with wait 'click' in a walkthrough); one thing to notice: ring (follows its shape; r sets the corner radius); a small spot or icon: point; a region or panel: frame; key words: underline (outdated ones: strike); right or wrong: check, cross; order of steps: num; a name beside something: label (text) or label on any mark; how two things relate: connect (at → to; flow: true runs moving dots along it, for something that travels or keeps happening); an odd-shaped group: trace (points); scroll here: scroll (dir); one thing above all else: spotlight (sparingly); something to hover: hover with wait 'hover'; big words: write (text, size).
 Walkthroughs ("how do I…"): one beat per step, each a target on that step's control with label and wait 'click'; the next step is found after they click, on the screen as it is then.
-Explanations that a picture makes clearer go on cards beside the window (tie connects a card to what it explains; every card can take a title): card (heading, text, items, sources), note (text, tone), list (title, items), clip (title, text), sources ([{name, url}]), legend (keys [{tone, text}]).
+Explanations that a picture makes clearer go on cards beside the window (tie connects a card to what it explains; every card can take a title, and card_size: small for an aside, large for something to read closely (a dense table, a detailed graph or diagram), full to fill the screen for something to study; normal by default. They can still resize it or make it full screen themselves): card (heading, text, items, sources), note (text, tone), list (title, items), clip (title, text), sources ([{name, url}]), legend (keys [{tone, text}]).
 photo (query: a thing with a Wikipedia page, or url; text = caption). To name its parts add labels [{text, x, y}], x and y as fractions of the picture from its top left (0 to 1): only after see_photo has shown you that same picture, never from memory.
 Numbers: bars (bars [{label, value, tone}], unit) compares amounts; graph (x_range, y_range, plots [{points, tone, label}], dots [{x, y, label}]) is for curves and change over time; timeline (events [{when, text}]) for dates. table (columns [headings], rows [[one cell per column]], up to ${LIMITS.columns} by ${LIMITS.rows}) compares things side by side: the first column names each row, cells stay short, and a cell of exactly "yes" or "no" is drawn as a tick or a cross.
-flow (nodes [{id, text, shape: box|round|diamond, tone}], links [{from, to, label, flow}] by node id, dir: down|right) for a process, cause and effect or a decision: round for a start or an end, diamond for a question, flow: true runs moving dots along a link (what travels: data, blood, current). Up to ${LIMITS.nodes} nodes, a few words each; it lays itself out.
+flow (nodes [{id, text, shape: box|round|diamond, tone}], links [{from, to, label, flow}] by node id, dir: down|right) for a process, cause and effect or a decision: round for a start or an end, diamond for a question, flow: true runs moving dots along a link (what travels: data, blood, current), animate: true on the flow runs them along every link. Up to ${LIMITS.nodes} nodes, a few words each; it lays itself out.
 map (region: world, a continent, or country names with commas between; shade [{name, tone}] colours countries in; pins [{name, lat, lon}]; routes [{from, to}] between pins by name). Country outlines only, no streets: cities, states and very small countries have no outline, so mark them with pins. Without region it fits what is shaded and pinned.
 math (steps [{tex, note}]) writes worked maths one step at a time. tex: one line of LaTeX per step (\\frac{a}{b}, \\sqrt{x}, x^{2}, x_{1}, \\left( \\right), \\text{words}, Greek, \\times \\cdot \\pm \\le \\ne \\approx \\pi \\infty; no \\begin, & or \\\\ line breaks); note: a few plain words on what changed. geometry (vertices [{id, x, y}] in your own units with y up, lines [{from, to, label, dash}], angles [{at, from, to, label}] with at the corner, circles [{at, r, label}]) for triangles, circles and angles.
 molecule (smiles, label) for chemistry. model (parts [{shape: box|sphere|cylinder|cone|torus, at [x,y,z], size [x,y,z], rot [deg x,y,z], tone, label, motion}] within about -1 to 1, title) for objects and machines. motion {do: spin|orbit|slide|pulse, axis: x|y|z, around [x,y,z], to [x,y,z], secs} makes a part move to show how the thing works: slide goes from at to "to" and back (a piston), orbit circles the point "around" (a planet, a crank pin), spin turns it in place (a round part spinning on its own axis looks still, so spin a box or orbit one round it), pulse swells and shrinks (a heart).
@@ -998,6 +999,23 @@ A drawing stays until the user clears it or the window changes; your next drawin
       name: 'show_list', description: "Show the user their list on screen (reminders and commitments, Today and Later). Use when they ask to see their list, to-dos or reminders; then answer in a few words, don't read it all out.",
       parameters: z.object({}),
       execute: async () => { showList(); return 'The list is on screen.'; },
+    },
+    {
+      name: 'snooze_reminder',
+      description: `Snooze a reminder or commitment that just went off, when ${userName} says "snooze", "snooze 10 minutes", "remind me again in an hour", "move it to tomorrow" or "later tonight". until: "in 10m" / "10 minutes" / "1h", "tomorrow" (same time of day, next day), "tonight" (8 pm), or a local time YYYY-MM-DDTHH:mm; "snooze" alone means 10 minutes. Leave id out for the one that just went off; give it when they name another. This brings back a plain reminder that already cleared itself.`,
+      parameters: z.object({ until: z.string().max(40).optional(), id: z.string().optional() }),
+      execute: async ({ until = 'in 10m', id }) => {
+        const target = snoozeTarget(id, firedReminders());
+        if (!target) throw new Error('Nothing went off in the last 30 minutes. Call list_commitments and pass the id.');
+        const c = getCommitment(target);
+        if (!c) throw new Error(`No reminder with id ${target}. Call list_commitments to see the ids.`);
+        const ms = snoozeUntil(until, c.due);
+        if (ms === undefined) throw new Error(`Couldn't read "${until}" as a time ahead. Use "in 10m", "tomorrow", "tonight" or YYYY-MM-DDTHH:mm.`);
+        // keepSeries: a repeating one (where that's supported) moves only this time, not its whole series.
+        const u = await updateCommitment(target, { status: 'open', dueMs: ms, keepSeries: true });
+        onCommitments(u);
+        return `Snoozed "${u.text}" until ${fmtWhen(ms)}.`;
+      },
     },
     {
       name: 'list_commitments', description: "List the open commitments you're keeping track of.",

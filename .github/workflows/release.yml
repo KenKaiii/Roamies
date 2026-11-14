@@ -151,6 +151,47 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: ./build.sh release --target ${{ matrix.target }}
 
+      # CI only runs the debug build; this installs the real installer the way users do (silently, per user) and checks
+      # every part landed, the helpers start from where they were installed, and the app starts its sidecar.
+      - name: Smoke test the Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem "src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*-setup.exe" | Select-Object -First 1
+          if (-not $setup) { throw 'No installer was built' }
+          $p = Start-Process -FilePath $setup.FullName -ArgumentList '/S' -Wait -PassThru
+          if ($p.ExitCode) { throw "The installer failed (exit code $($p.ExitCode))" }
+          $app = Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Roamies'), (Join-Path $env:ProgramFiles 'Roamies') -Filter roamies.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $app) { throw 'roamies.exe is not where the installer puts it' }
+          $dir = $app.DirectoryName
+          "Installed in $dir"
+          $missing = @('node.exe', 'roamies-voice.exe', 'roamies-hands.exe', 'sidecar/sidekick.mjs') | Where-Object { -not (Test-Path (Join-Path $dir $_)) }
+          if ($missing) { throw "The installed app is missing: $($missing -join ', ')" }
+          & (Join-Path $dir 'roamies-hands.exe') --self-test
+          if ($LASTEXITCODE) { throw "The installed hands helper failed its self-test ($LASTEXITCODE)" }
+          $perms = & (Join-Path $dir 'roamies-voice.exe') --perms
+          if (-not ($perms -match '"type":"perms"')) { throw "The installed voice helper didn't start: $perms" }
+          # Voice off so the first run doesn't download the voice model.
+          $data = Join-Path $env:RUNNER_TEMP 'roamies-installed'
+          New-Item -ItemType Directory -Force $data | Out-Null
+          Set-Content (Join-Path $data 'sidekick.json') '{"onboarded":true,"setupVersion":2,"voice":false}'
+          $env:ROAMIES_DATA_DIR = $data
+          $run = Start-Process -FilePath $app.FullName -PassThru
+          $logs = Join-Path $data 'sidekick/logs'
+          $started = $false
+          for ($i = 0; $i -lt 60; $i++) {
+            Start-Sleep -Seconds 1
+            if ($run.HasExited) { break }
+            if (Get-ChildItem $logs -Filter *.log -ErrorAction SilentlyContinue | Select-String -Pattern ' start ' -Quiet) { $started = $true; break }
+          }
+          $alive = -not $run.HasExited
+          if ($alive) { taskkill /PID $run.Id /T /F | Out-Null }
+          if (-not ($started -and $alive)) {
+            Get-Content (Join-Path $env:USERPROFILE '.gg/sidekick.log') -ErrorAction SilentlyContinue | Select-Object -Last 40
+            throw "The installed Roamies didn't start its sidecar (started: $started, still running: $alive)"
+          }
+          "The installed Roamies started its sidecar (pid $($run.Id))"
+
       # Tauri notarizes the app inside; the DMG around it is a download of its own that macOS checks too.
       - name: Notarize the DMG
         if: runner.os == 'macOS'
