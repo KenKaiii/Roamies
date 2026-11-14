@@ -1594,6 +1594,9 @@ fn handle_sidecar(app: &AppHandle, msg: Value) {
         Some("wake_hold") => to_voice(app, &json!({ "cmd": "wake_hold", "on": msg.get("on").and_then(Value::as_bool) == Some(true) })),
         // Esc while it's listening: drop the take.
         Some("listen_cancel") => to_voice(app, &json!({ "cmd": "cancel" })),
+        // The panel's mic picker: ask for the list, and pass on the pick (an id from it, or "" for the default).
+        Some("voice_mics") => to_voice(app, &json!({ "cmd": "mics" })),
+        Some("voice_mic") => to_voice(app, &json!({ "cmd": "mic", "id": msg.get("id").and_then(Value::as_str).unwrap_or("") })),
         Some("voice_config") => {
             if let Some(dir) = msg.get("model").and_then(Value::as_str) {
                 *app.state::<VoiceModel>().0.lock().unwrap() = Some(dir.to_owned());

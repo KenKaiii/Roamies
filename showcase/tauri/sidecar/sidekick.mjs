@@ -1752,6 +1752,9 @@ function panelState() {
     voice: VOICE_OK ? {
       on: !!config.voice, keys: HOTKEYS_OK ? talkSymbols() : null, ready: voiceReady(), mac: MAC, mute: config.muteWhileTalking !== false, autoListen: !!config.autoListen, snoozeListen: !!config.snoozeListen, wakeWord: !!config.wakeWord, wakeName: wakeName(config),
       download: NEEDS_MODEL && config.voice && !voiceReady() ? { status: voiceModel.status, pct: voiceModel.total ? Math.floor((voiceModel.done / voiceModel.total) * 100) : 0, size: sizeLabel() } : null,
+      // The mic picker: what the voice helper lists (once it has), the pick ('' is automatic) and what automatic uses now
+      // (the system's default, or the built-in mic while that's a Bluetooth headset).
+      mics: mics.list, mic: config.mic ?? '', micDefault: mics.list.find((x) => x.id === mics.default)?.name ?? '',
     } : null,
     sound: !!config.sound, actions: !!config.allowActions, brief: { on: !!config.morningBrief, todoist: !!config.briefTodoist, canTodoist: HANDS_OK }, focus: HANDS_OK ? { until: focusBlock?.until ?? null, task: focusBlock?.task ?? '', list: distractionList(), custom: !!config.distractions } : null, sync: { dir: config.syncDir || '', at: syncInfo.at, error: syncInfo.error, paused: !!syncInfo.paused },
     login: login.supported ? { on: login.on } : null,
@@ -1801,6 +1804,9 @@ const startVoiceDownload = () => {
   getVoiceModel();
 };
 const PRIVACY = { microphone: 'Privacy_Microphone', speech: 'Privacy_SpeechRecognition' };
+// The mics the voice helper last listed (it's asked whenever the panel opens).
+let mics = { list: [], default: '' };
+const micPick = () => send({ type: 'voice_mic', id: config.mic ?? '' });
 function onVoice(m) {
   if (m.type === 'voice_state') { voiceBusy = m.state === 'listening' || m.state === 'processing'; stir(); }
   if (m.type === 'voice_state' && m.state === 'listening') { interruptQuietly('listening'); speech.stop(); warmUp(); } // talking over it stops it
@@ -1811,6 +1817,11 @@ function onVoice(m) {
     onSpoken(m.text.trim(), m.area);
   }
   else if (m.type === 'voice_state' && m.state === 'idle' && snap?.waitingVoice) snap.waitingVoice = false;
+  else if (m.type === 'voice_ready') micPick();
+  else if (m.type === 'voice_mics' && Array.isArray(m.list)) {
+    mics = { list: m.list.filter((x) => typeof x?.id === 'string' && x.id).map((x) => ({ id: x.id.slice(0, 300), name: String(x.name ?? x.id).slice(0, 120) })).slice(0, 40), default: String(m.auto || m.default || '') };
+    panel();
+  }
   else if (m.type === 'voice_error') {
     if (m.code === 'nothing_heard' && snap) { snap.waitingVoice = false; return; }
     if (m.code === 'model_missing') startVoiceDownload();
@@ -1978,6 +1989,7 @@ async function onMenu(id, via) {
   else if (id === 'intro') send({ type: 'onboarding', mode: 'chat' });
   else if (id === 'snap') areaSnap();
   else if (id === 'list') showList({ seconds: 20 });
+  else if (id.startsWith('mic:')) { config.mic = id.slice(4); saveConfig(); micPick(); menu(); }
   else if (id === 'mutetalk') { config.muteWhileTalking = config.muteWhileTalking === false; saveConfig(); voiceConfig(); menu(); }
   else if (id === 'autolisten') { config.autoListen = !config.autoListen; saveConfig(); menu(); }
   else if (id === 'snoozelisten') { config.snoozeListen = !config.snoozeListen; saveConfig(); menu(); }
@@ -2226,7 +2238,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   let m;
   try { m = JSON.parse(line); } catch { return; }
   if (m.type === 'menu') onMenu(m.id, m.via).catch((e) => console.error('menu', e));
-  else if (m.type === 'panel_open') { panelOpen = true; panelAt = Date.now(); logLine('panel_open', {}); Promise.all([refreshAuth(), signedIn.get('local') && syncLocal(), tts().local && speech.checkLocal()]).catch(() => {}).finally(() => panel()); }
+  else if (m.type === 'panel_open') { panelOpen = true; panelAt = Date.now(); logLine('panel_open', {}); if (VOICE_OK) send({ type: 'voice_mics' }); Promise.all([refreshAuth(), signedIn.get('local') && syncLocal(), tts().local && speech.checkLocal()]).catch(() => {}).finally(() => panel()); }
   else if (m.type === 'diagnostics') { shellInfo?.(m); shellInfo = null; }
   else if (m.type === 'panel_closed') { panelOpen = false; logLine('panel_closed', { why: String(m.why ?? ''), ms: Date.now() - panelAt }); }
   else if (m.type === 'panel_key' && typeof m.provider === 'string' && typeof m.key === 'string') {

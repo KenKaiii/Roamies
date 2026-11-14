@@ -338,8 +338,9 @@ final class Feed {
     func append(_ buffer: AVAudioPCMBuffer) { lock.lock(); let t = target; lock.unlock(); t?.append(buffer) }
 }
 
-// Wake listening keeps the mic open. On a Bluetooth headset that drops it (AirPods too) to call-quality sound for as
-// long as it's on, so it listens on the built-in mic instead.
+// A Bluetooth headset's mic drops the headset (AirPods too) to call-quality sound for as long as it's open, and it takes
+// a few seconds to come back after. So while the default input is Bluetooth, Roamies listens on the built-in mic
+// (wake listening and talking alike), unless that headset's mic was picked in the panel.
 enum InputDevice {
     private static func addr(_ sel: AudioObjectPropertySelector, _ scope: AudioObjectPropertyScope = kAudioObjectPropertyScopeGlobal) -> AudioObjectPropertyAddress {
         AudioObjectPropertyAddress(mSelector: sel, mScope: scope, mElement: kAudioObjectPropertyElementMain)
@@ -366,15 +367,70 @@ enum InputDevice {
         var ids = [AudioDeviceID](repeating: 0, count: Int(size) / MemoryLayout<AudioDeviceID>.size)
         return AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &a, 0, nil, &size, &ids) == noErr ? ids : []
     }
+    static func uid(_ dev: AudioDeviceID) -> String? { text(dev, kAudioDevicePropertyDeviceUID) }
+    private static func text(_ dev: AudioDeviceID, _ sel: AudioObjectPropertySelector) -> String? {
+        var v: Unmanaged<CFString>?, size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        var a = addr(sel)
+        guard AudioObjectGetPropertyData(dev, &a, 0, nil, &size, &v) == noErr, let s = v?.takeRetainedValue() else { return nil }
+        return s as String
+    }
+    /// The mic picked in the panel (its UID, which stays the same across replugs); nil is the system's default.
+    static var chosen: String?
+    /// Every input device: [{id: UID, name}], and the default's UID (the panel's mic picker).
+    static func list() -> [String: Any] {
+        let mics = all().filter(hasInput).compactMap { d -> [String: String]? in
+            guard let uid = text(d, kAudioDevicePropertyDeviceUID) else { return nil }
+            return ["id": uid, "name": text(d, kAudioObjectPropertyName) ?? uid]
+        }
+        // "" for none: no default input, or nothing picked. auto: what "System default" uses now (the built-in mic while
+        // the default is a Bluetooth headset).
+        let uid = { (d: AudioDeviceID?) in d.flatMap { text($0, kAudioDevicePropertyDeviceUID) } ?? "" }
+        return ["type": "mics", "list": mics, "default": uid(defaultInput()), "auto": uid(forWake() ?? defaultInput()), "chosen": chosen ?? ""]
+    }
+    /// The picked mic, if it's plugged in now.
+    static func picked() -> AudioDeviceID? {
+        guard let uid = chosen else { return nil }
+        return all().first { hasInput($0) && text($0, kAudioDevicePropertyDeviceUID) == uid }
+    }
     /// The built-in mic when the default input is Bluetooth; nil means use the default.
     static func forWake() -> AudioDeviceID? {
         guard let dev = defaultInput(), let t = transport(dev), t == kAudioDeviceTransportTypeBluetooth || t == kAudioDeviceTransportTypeBluetoothLE else { return nil }
         return all().first { transport($0) == kAudioDeviceTransportTypeBuiltIn && hasInput($0) }
     }
-    static func use(_ dev: AudioDeviceID, on input: AVAudioInputNode) -> Bool {
-        guard let unit = input.audioUnit else { return false }
-        var id = dev
-        return AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &id, UInt32(MemoryLayout<AudioDeviceID>.size)) == noErr
+}
+
+/// Records from one particular mic, as 16 kHz mono Float32. AVAudioEngine can't: on current macOS it records from the
+/// default devices' aggregate whatever its input unit is set to, so picking the built-in mic still opened a Bluetooth
+/// headset's mic (dropping it to call-quality sound) and no sound arrived at all.
+final class MicCapture: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
+    private let session = AVCaptureSession()
+    private let out = AVCaptureAudioDataOutput()
+    private let sink: (AVAudioPCMBuffer) -> Void
+    let device: AVCaptureDevice
+
+    init?(uid: String, sink: @escaping (AVAudioPCMBuffer) -> Void) {
+        guard let dev = AVCaptureDevice(uniqueID: uid), let input = try? AVCaptureDeviceInput(device: dev) else { return nil }
+        device = dev
+        self.sink = sink
+        super.init()
+        out.audioSettings = [AVFormatIDKey: kAudioFormatLinearPCM, AVLinearPCMIsFloatKey: true, AVLinearPCMBitDepthKey: 32,
+                             AVLinearPCMIsNonInterleaved: true, AVNumberOfChannelsKey: 1, AVSampleRateKey: 16000]
+        out.setSampleBufferDelegate(self, queue: DispatchQueue(label: "roamies.mic"))
+        guard session.canAddInput(input), session.canAddOutput(out) else { return nil }
+        session.addInput(input)
+        session.addOutput(out)
+        session.startRunning()
+        guard session.isRunning else { return nil }
+    }
+    func stop() { session.stopRunning() }
+
+    func captureOutput(_ output: AVCaptureOutput, didOutput sb: CMSampleBuffer, from connection: AVCaptureConnection) {
+        guard let desc = CMSampleBufferGetFormatDescription(sb) else { return }
+        let format = AVAudioFormat(cmAudioFormatDescription: desc), n = AVAudioFrameCount(CMSampleBufferGetNumSamples(sb))
+        guard n > 0, let pcm = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: n) else { return }
+        pcm.frameLength = n
+        guard CMSampleBufferCopyPCMDataIntoAudioBufferList(sb, at: 0, frameCount: Int32(n), into: pcm.mutableAudioBufferList) == noErr else { return }
+        sink(pcm)
     }
 }
 
@@ -527,6 +583,7 @@ final class Voice {
     // The keys already reading down when the chord went down: they can't be part of its shortcut (isShortcut).
     private var heldAtArm = Set<CGKeyCode>()
     private var engine: AVAudioEngine?
+    private var capture: MicCapture?
     // Kept across sessions (same mic, usually), so later takes start at the right boost.
     private let autoGain = AutoGain()
     private var rec: Recognizer?
@@ -824,8 +881,11 @@ final class Voice {
         wakeAt = now; heardAt = now; voiceAt = now
         let device = InputDevice.forWake()
         startAudio(device: device)
-        if phase == .wake { wakeLog("listening\(device == nil ? "" : " on the built-in mic (the default input is Bluetooth)")") }
+        if phase == .wake { wakeLog("listening\(InputDevice.picked() != nil ? " on the picked mic" : device == nil ? "" : " on the built-in mic (the default input is Bluetooth)")") }
     }
+
+    /// Another mic was picked: wake listening starts again on it (a take in progress keeps its mic).
+    func micChanged() { stopWake() }
 
     private func stopWake() {
         guard phase == .wake else { return }
@@ -940,9 +1000,28 @@ final class Voice {
         }
         if LiveTest.url != nil { feed.set(r); rec = r; LiveTest.sink = ingest; return }
 
+        // A particular mic (the one picked in the panel, or the built-in one while the default is a Bluetooth headset):
+        // recorded straight from that device.
+        if let dev = InputDevice.picked() ?? device ?? InputDevice.forWake(), let uid = InputDevice.uid(dev) {
+            feed.set(r)
+            guard let cap = MicCapture(uid: uid, sink: ingest) else {
+                log("couldn't open the mic \(uid)")
+                feed.set(nil); r.cancel()
+                return fail("no_input")
+            }
+            capture = cap
+            rec = r
+            // That mic unplugged: wake listening starts again on whichever is right now.
+            configObserver = NotificationCenter.default.addObserver(forName: .AVCaptureDeviceWasDisconnected, object: cap.device, queue: .main) { [weak self] _ in
+                guard let self, self.capture === cap, self.phase == .wake else { return }
+                wakeLog("mic unplugged")
+                self.stopWake()
+            }
+            return
+        }
+
         let eng = AVAudioEngine()
         let input = eng.inputNode
-        if let device, !InputDevice.use(device, on: input) { log("couldn't switch to the built-in mic") }
         let format = input.outputFormat(forBus: 0)
         guard format.sampleRate > 0, format.channelCount > 0 else {
             r.cancel()
@@ -974,6 +1053,7 @@ final class Voice {
         feed.set(nil)
         LiveTest.sink = nil
         if let o = configObserver { NotificationCenter.default.removeObserver(o); configObserver = nil }
+        capture?.stop(); capture = nil
         guard let eng = engine else { return }
         eng.inputNode.removeTap(onBus: 0)
         eng.stop()
@@ -1259,6 +1339,11 @@ Thread.detachNewThread {
         // Roamies is answering or speaking: don't listen for the phrase (it mustn't wake itself).
         case "wake_hold": let on = msg["on"] as? Bool == true; DispatchQueue.main.async { voice.wakeHold = on }
         case "mute": if let on = msg["on"] as? Bool { DispatchQueue.main.async { OutputMute.enabled = on; if !on { OutputMute.end() } } }
+        // The panel's mic picker: the list, and a pick (an id from it; none or "" is the system's default).
+        case "mics": DispatchQueue.main.async { emit(InputDevice.list()) }
+        case "mic":
+            let id = (msg["id"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            DispatchQueue.main.async { if InputDevice.chosen != id { InputDevice.chosen = id; log("mic: \(id ?? "default")"); voice.micChanged() } }
         default: break
         }
     }
