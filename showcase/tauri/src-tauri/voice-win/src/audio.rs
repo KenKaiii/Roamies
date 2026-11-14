@@ -188,6 +188,32 @@ pub fn has_input() -> bool {
     cpal::default_host().default_input_device().is_some()
 }
 
+/// The mic picked in the panel, by its name (cpal has no id that survives a replug here); None is the default.
+pub static CHOSEN: Mutex<Option<String>> = Mutex::new(None);
+
+#[cfg(any(windows, target_os = "linux"))]
+fn name_of(d: &cpal::Device) -> Option<String> {
+    use cpal::traits::DeviceTrait;
+    d.description().ok().map(|x| x.name().to_owned())
+}
+
+/// {"type":"mics"}: every input by name (its id too), the default's, and the pick (the panel's mic picker).
+#[cfg(any(windows, target_os = "linux"))]
+pub fn mics() -> serde_json::Value {
+    use cpal::traits::HostTrait;
+    let host = cpal::default_host();
+    let mut names: Vec<String> = host.input_devices().map(|l| l.filter_map(|d| name_of(&d)).collect()).unwrap_or_default();
+    names.dedup();
+    let list: Vec<_> = names.iter().map(|n| serde_json::json!({ "id": n, "name": n })).collect();
+    let default = host.default_input_device().and_then(|d| name_of(&d)).unwrap_or_default();
+    serde_json::json!({ "type": "mics", "list": list, "default": default, "chosen": CHOSEN.lock().unwrap().clone().unwrap_or_default() })
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+pub fn mics() -> serde_json::Value {
+    serde_json::json!({ "type": "mics", "list": [], "default": "", "chosen": "" })
+}
+
 /// Every microphone the system lists, the default one, and the format each records in, or why it can't (--devices,
 /// for diagnostics reports).
 #[cfg(any(windows, target_os = "linux"))]
@@ -249,7 +275,11 @@ pub fn open_mic(mut sink: Sink) -> Result<Source, MicError> {
         )
     }
 
-    let dev = cpal::default_host().default_input_device().ok_or_else(|| MicError::new("missing", "no default input device"))?;
+    // The picked mic when it's plugged in, else the default.
+    let host = cpal::default_host();
+    let chosen = CHOSEN.lock().unwrap().clone();
+    let picked = chosen.and_then(|want| host.input_devices().ok()?.find(|d| name_of(d).as_deref() == Some(want.as_str())));
+    let dev = picked.or_else(|| host.default_input_device()).ok_or_else(|| MicError::new("missing", "no default input device"))?;
     let supported = dev.default_input_config().map_err(open_failed)?;
     sink.start(supported.sample_rate(), supported.channels() as usize);
     let err_tx = sink.tx.clone();

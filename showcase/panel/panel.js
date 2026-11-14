@@ -599,8 +599,22 @@
           ? (v.download.status === 'downloading' ? `Downloading the voice model… ${v.download.pct}%` : v.download.status === 'error' ? 'The download failed' : `Needs a ${v.download.size} download`)
           : v.keys ? `Hold ${v.keys} to talk` : 'Press your talk shortcut to talk', v.on, () => act('voice'), 'voice'),
         v.download && v.download.status !== 'downloading' ? el('div', { className: 'links' }, link(v.download.status === 'error' ? 'Retry the download' : `Download (${v.download.size})`, () => act('voicedl'), { k: 'voicedl' })) : null,
+        micPicker(v),
         v.mac ? toggle('Mute Mac while talking', 'Other sounds go quiet while you talk', v.mute, () => act('mutetalk'), 'mutetalk') : null) : null,
     ];
+  }
+  // Which mic it listens on: automatic (the system's default, or the built-in mic while that's a Bluetooth headset, which
+  // would drop to call-quality sound), or one picked here (kept when it's unplugged, used again when it's back).
+  function micPicker(v) {
+    if (!v.mics?.length) return null;
+    const gone = v.mic && !v.mics.some((m) => m.id === v.mic);
+    return el('div', { className: 'reveal', 'data-anim': 'mic' },
+      el('p', { className: 'sub', textContent: 'Microphone' }),
+      el('span', { className: 'px field select' },
+        el('select', { 'aria-label': 'Microphone', 'data-k': 'mic', on: { change: (e) => act(`mic:${e.target.value}`) } },
+          el('option', { value: '', textContent: v.micDefault ? `Automatic (${v.micDefault})` : 'Automatic', selected: !v.mic }),
+          v.mics.map((m) => el('option', { value: m.id, textContent: m.name, selected: m.id === v.mic })),
+          gone ? el('option', { value: v.mic, textContent: 'Picked mic (not plugged in: using the default)', selected: true }) : null)));
   }
   // Wayland: the commands to bind to keys in the desktop's settings (no app may hold its own shortcuts there).
   // A command shows only after copying it failed, so it can be copied by hand.

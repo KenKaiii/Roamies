@@ -544,6 +544,14 @@ impl Voice {
                 Some("cancel") => self.external_cancel(),
                 Some("listen") => self.listen_now(),
                 Some("toggle") => self.toggle(),
+                // The panel's mic picker: the list, and a pick (a name from it; none or "" is the default). It applies
+                // from the next time the mic opens.
+                Some("mics") => emit(audio::mics()),
+                Some("mic") => {
+                    let id = msg.get("id").and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_owned);
+                    log(&format!("mic: {}", id.as_deref().unwrap_or("default")));
+                    *audio::CHOSEN.lock().unwrap() = id;
+                }
                 Some("chord") => {
                     let mods: Vec<String> = msg.get("mods").and_then(Value::as_array).map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect()).unwrap_or_default();
                     self.set_chord(&mods);
