@@ -610,6 +610,8 @@
     return [
       group('Behavior', 'What I may do, and when I start.', null,
         toggle('Sound effects', null, state.sound, () => act('sound'), 'sound'),
+        state.brief ? toggle('Morning briefing', 'The first time you talk to me each day, I start with what’s due.', state.brief.on, () => act('morningbrief'), 'morningbrief') : null,
+        state.brief?.on && state.brief.canTodoist ? toggle('Include Todoist', 'I read your Todoist window (opening it if needed). Stay signed in.', state.brief.todoist, () => act('brieftodoist'), 'brieftodoist') : null,
         state.focus ? el('div', { className: 'setting' },
           el('span', {}, state.focus.until ? 'Focus block running' : 'Focus distractions',
             el('small', { textContent: state.focus.until ? `Until ${new Date(state.focus.until).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}${state.focus.task ? ` · ${state.focus.task}` : ''}` : `Say “focus for 30 minutes”. I watch for: ${state.focus.list.slice(0, 4).join(', ')}${state.focus.list.length > 4 ? '…' : ''}` })),
