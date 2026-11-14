@@ -1,30 +1,34 @@
 {
   "updates": [
     {
-      "version": null,
+      "version": "0.1.39",
       "date": "2026-11-14",
       "items": [
-        { "kind": "fixed", "title": "Wake word works with AirPods", "text": "With AirPods in, the wake word kept restarting and cutting into your audio. Fixed that." },
+        { "kind": "new", "title": "Mind map cards", "text": "Ask me for a mind map, then click a branch to open its points. Thanks LeoU29935!" },
+        { "kind": "new", "title": "Moving arrows", "text": "Arrows and flow charts can show moving dots for things that travel. Thanks LeoU29935!" },
+        { "kind": "new", "title": "Save a card as a picture", "text": "A new button on each card saves it as an image in Downloads. Thanks LeoU29935!" },
+        { "kind": "new", "title": "Your own wake word", "text": "On a Mac, wake me with your own name for me, like Hey Jarvis. Thanks LeoU29935!" },
+        { "kind": "new", "title": "Snooze by voice", "text": "When a reminder goes off, just say snooze 10 minutes. Thanks LeoU29935!" },
+        { "kind": "new", "title": "Morning briefing", "text": "The first time you talk each day, I can start with what's due. Thanks LeoU29935!" },
+        { "kind": "new", "title": "Focus mode", "text": "Say focus for 30 minutes and I'll nudge you if you drift off. Thanks LeoU29935!" },
+        { "kind": "new", "title": "Sync between computers", "text": "Share reminders and memory through iCloud or OneDrive, encrypted. Thanks LeoU29935!" },
+        { "kind": "new", "title": "Stays out of your games", "text": "In a fullscreen game, I move your Roamie aside and every click goes to the game." },
+        { "kind": "improved", "title": "Cards open at the right size", "text": "I now open a card small, large or full screen to fit what I show. Thanks LeoU29935!" },
+        { "kind": "improved", "title": "Works over fullscreen apps", "text": "On a Mac, your Roamie now shows up over fullscreen apps and games instead of hiding." },
+        { "kind": "improved", "title": "Full setting descriptions", "text": "Some setting descriptions got cut off. Point at one and you'll see the whole thing." },
+        { "kind": "fixed", "title": "Wake word works with AirPods", "text": "With AirPods in, the wake word kept cutting into your audio. Fixed. Thanks MASEGE!" },
         { "kind": "fixed", "title": "It knows you're waking it", "text": "Saying Hey Roamies sometimes made me think you'd called me the wrong name. Not anymore." },
         { "kind": "fixed", "title": "No more sound blip", "text": "After I answered a wake word request, your sound dipped for a moment. Not anymore." },
         { "kind": "fixed", "title": "Wake word after Esc", "text": "After you cancelled with Esc, the wake word could stop hearing you for minutes. Fixed." },
-        { "kind": "improved", "title": "Full setting descriptions", "text": "Some setting descriptions got cut off. Point at one and you'll see the whole thing." }
-      ]
-    },
-    {
-      "version": null,
-      "date": "2026-11-13",
-      "items": [
-        { "kind": "improved", "title": "Works over fullscreen apps", "text": "On a Mac, your Roamie now shows up over fullscreen apps and games instead of hiding." },
-        { "kind": "new", "title": "Stays out of your games", "text": "In a fullscreen game, I move your Roamie aside and every click goes to the game." }
+        { "kind": "fixed", "title": "Listening pill is back", "text": "After a display change, the listening pill could stop showing. Thanks mattschwarz!" }
       ]
     },
     {
       "version": "0.1.38",
       "date": "2026-11-13",
       "items": [
-        { "kind": "fixed", "title": "Talk in your language", "text": "On a Mac, voice input was stuck in English. Now it listens in the language you use." },
-        { "kind": "fixed", "title": "Typing works on Linux", "text": "On KDE, the ask box often ignored your typing after you used another app. Fixed that." }
+        { "kind": "fixed", "title": "Talk in your language", "text": "Mac voice input was stuck in English. Now it uses your language. Thanks eduardocodes!" },
+        { "kind": "fixed", "title": "Typing works on Linux", "text": "On KDE, the ask box often ignored typing after you used another app. Thanks Cluttero!" }
       ]
     },
     {
