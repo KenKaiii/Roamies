@@ -98,6 +98,54 @@ pub(crate) fn set_hit_rects(window: &tauri::WebviewWindow, flat: &[f64]) {
     });
 }
 
+// ---------- COSMIC: an overlay no window manager touches ----------
+
+/// COSMIC files every X11 window it manages with the apps: it ignores "keep above" (_NET_WM_STATE_ABOVE), so app
+/// windows cover the overlay, and it rounds and tints it like an app. It draws override-redirect windows (ones no
+/// window manager manages, like menus) above every app window, untouched. ROAMIES_UNMANAGED=1 or 0 forces it.
+fn unmanaged_for(desktop: Option<&str>, force: Option<&str>) -> bool {
+    match force {
+        Some("1") => true,
+        Some("0") => false,
+        _ => desktop.is_some_and(|d| d.split(':').any(|p| p.eq_ignore_ascii_case("cosmic"))),
+    }
+}
+
+pub(crate) fn unmanaged_overlay() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| {
+        let env = |k: &str| std::env::var(k).ok();
+        unmanaged_for(env("XDG_CURRENT_DESKTOP").as_deref(), env("ROAMIES_UNMANAGED").as_deref())
+    })
+}
+
+/// Makes the overlay override-redirect (on) or an ordinary window again, and shows it. The flag is read when the
+/// window is mapped, so it's taken down and put back up around the change. Only a managed window gets the keyboard
+/// on COSMIC, so typing turns it back into one for the while: `focus` then asks for the keyboard once it's up.
+pub(crate) fn set_unmanaged(window: &tauri::WebviewWindow, on: bool, focus: bool) {
+    let w = window.clone();
+    let _ = window.run_on_main_thread(move || {
+        use gtk::prelude::{GtkWindowExt, WidgetExt};
+        let Ok(gw) = w.gtk_window() else { return };
+        gw.realize();
+        let Some(win) = gw.window() else { return };
+        if trace() {
+            eprintln!("overlay unmanaged: {on}");
+        }
+        let (x, y) = gw.position();
+        if gw.is_visible() {
+            gw.hide();
+        }
+        win.set_override_redirect(on);
+        gw.move_(x, y);
+        gw.show_all();
+        if focus {
+            gw.present();
+            activate(&w);
+        }
+    });
+}
+
 // ---------- keyboard focus ----------
 
 /// _NET_ACTIVE_WINDOW's data for a request from a pager or taskbar (source 2), with no timestamp. GTK sends one
@@ -507,6 +555,17 @@ pub(crate) fn open_releases_page() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_overlay_is_unmanaged_on_cosmic_only() {
+        assert!(unmanaged_for(Some("COSMIC"), None));
+        assert!(unmanaged_for(Some("pop:COSMIC"), None), "a desktop list");
+        assert!(!unmanaged_for(Some("GNOME"), None));
+        assert!(!unmanaged_for(Some("KDE"), None));
+        assert!(!unmanaged_for(None, None));
+        assert!(!unmanaged_for(Some("COSMIC"), Some("0")), "switched off by hand");
+        assert!(unmanaged_for(Some("KDE"), Some("1")), "switched on by hand");
+    }
 
     #[test]
     fn x11_key_state_maps_to_the_tap_bits() {

@@ -329,12 +329,20 @@ fn sidecar_send(app: AppHandle, msg: Value) {
 /// The input bubble needs keystrokes: make the overlay key while typing, then hand focus back.
 #[tauri::command]
 fn set_typing(app: AppHandle, window: WebviewWindow, on: bool) {
-    TYPING.store(on, Ordering::Relaxed);
+    let was = TYPING.swap(on, Ordering::Relaxed);
     let _ = window.set_focusable(on);
+    // COSMIC: the unmanaged overlay can't get the keyboard, so it's an ordinary window while typing (linux.rs).
+    #[cfg(target_os = "linux")]
+    if linux::unmanaged_overlay() && was != on {
+        linux::set_unmanaged(&window, !on, on);
+    }
+    let _ = was;
     if on {
         let _ = window.set_focus();
         #[cfg(target_os = "linux")]
-        linux::activate(&window);
+        if !linux::unmanaged_overlay() {
+            linux::activate(&window);
+        }
         // Opened from a hotkey (e.g. after an area snap), Roamies isn't the active app and macOS 14+
         // ignores plain focus requests, so make the overlay key directly, then ask to activate.
         #[cfg(target_os = "macos")]
@@ -1075,8 +1083,14 @@ fn build_overlays(app: &AppHandle) -> tauri::Result<()> {
         if mine.iter().any(|id| id == "\"sidekick\"") {
             *SIDEKICK_OVERLAY.lock().unwrap() = Some(label.clone());
         }
+        // COSMIC: built hidden, then shown unmanaged (linux.rs set_unmanaged).
+        #[cfg(target_os = "linux")]
+        let unmanaged = linux::unmanaged_overlay();
+        #[cfg(not(target_os = "linux"))]
+        let unmanaged = false;
         let w = WebviewWindowBuilder::new(app, label, WebviewUrl::App("desktop.html".into()))
             .title("Roamies")
+            .visible(!unmanaged)
             .transparent(true)
             .decorations(false)
             .shadow(false)
@@ -1094,6 +1108,10 @@ fn build_overlays(app: &AppHandle) -> tauri::Result<()> {
             .initialization_script(init)
             .build()?;
         w.set_ignore_cursor_events(true)?;
+        #[cfg(target_os = "linux")]
+        if unmanaged {
+            linux::set_unmanaged(&w, true, false);
+        }
         #[cfg(target_os = "macos")]
         full_frame_rate(&w);
         #[cfg(target_os = "macos")]
