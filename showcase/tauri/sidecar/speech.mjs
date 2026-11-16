@@ -3,9 +3,13 @@
 // - prose is spoken; list lines ("- ", "1. "), quotes ("> ", drafts), headings, tables, code blocks and the
 //   "Sources:" line are for the screen only (lists and drafts show on screen, never read out).
 // - markdown, links, URLs, emoji, file paths and long code are dropped from what's said.
-const SENTENCE_END = /[.!?…]+["'”’)\]]*(?=\s)/g;
+const SENTENCE_END = /[.!?…]+["'”’)\]]*(?=\s|$)/g; // $: the end of what's left, once the reply is done (see drain)
 const SCREEN_ONLY = /^\s*(?:[-*•+]\s|\d{1,2}[.)]\s|>|#{1,6}\s|\||sources?\s*:)/i;
 const LONG = 220; // speak a run-on sentence in pieces rather than wait for its end
+// The first chunk of a reply is cut sooner, so speech starts on its first clause: at a comma, semicolon, colon or
+// dash once FIRST_CLAUSE characters are in, or at a word once FIRST_WORDS are, when no sentence has ended by then.
+const CLAUSE = /[,;:](?=\s)|\s[—–-](?=\s)/g;
+const FIRST_CLAUSE = 40, FIRST_WORDS = 90;
 
 // Fish Audio S2 voice cues: [chuckling], [warm], [break]… shape how a line is said (tested on the JARVIS voice:
 // they're performed, not read out). Only these are kept for the voice; on screen they're never shown.
@@ -104,6 +108,7 @@ export class SpeechText {
     this.fence = false;
     this.skip = false; // inside a screen-only line
     this.tone = null; // a cue for the next sentence, from the body's emote, when it has none of its own
+    this.first = true; // nothing said yet: the first chunk may be cut early (earlyCut)
   }
 
   /** The body's emote ([hype] etc.) colours the next sentence. */
@@ -118,7 +123,25 @@ export class SpeechText {
     let t = speakable(s);
     if (!t) return;
     if (this.tone) { if (!/^\[/.test(t)) t = `${this.tone} ${t}`; this.tone = null; }
+    this.first = false;
     this.emit(t);
+  }
+
+  /** The first chunk only: where to cut it, given the sentence cut (cut, or -1). Returns the earliest of the two. */
+  earlyCut(line, cut) {
+    const limit = cut > 0 ? cut : Infinity;
+    CLAUSE.lastIndex = 0;
+    let m;
+    while ((m = CLAUSE.exec(line))) {
+      const at = m.index + m[0].length;
+      if (at >= limit) break;
+      if (at >= FIRST_CLAUSE) return at;
+    }
+    if ((cut < 0 || cut > FIRST_WORDS) && line.length > FIRST_WORDS) {
+      const sp = line.lastIndexOf(' ', FIRST_WORDS);
+      if (sp > 0) return sp;
+    }
+    return cut;
   }
 
   drain(all) {
@@ -146,8 +169,10 @@ export class SpeechText {
       const line = nl < 0 ? this.buf : this.buf.slice(0, nl);
       SENTENCE_END.lastIndex = 0;
       let cut = -1, m;
-      while ((m = SENTENCE_END.exec(line))) { if (m.index + m[0].length < line.length || nl >= 0) { cut = m.index + m[0].length; break; } }
+      // A sentence at the very end of the text counts once the reply is done (all): nothing more is coming after it.
+      while ((m = SENTENCE_END.exec(line))) { if (m.index + m[0].length < line.length || nl >= 0 || all) { cut = m.index + m[0].length; break; } }
       if (cut < 0 && nl >= 0) cut = nl;
+      if (this.first) cut = this.earlyCut(line, cut);
       if (cut < 0 && line.length > LONG) { const sp = line.lastIndexOf(', ', LONG); cut = sp > 40 ? sp + 1 : line.lastIndexOf(' ', LONG); }
       if (cut <= 0) {
         if (all) { this.out(this.buf); this.buf = ''; }

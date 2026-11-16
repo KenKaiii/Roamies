@@ -112,3 +112,19 @@ console.log('fish voice tests: passed');
   assert.ok(FISH_MODELS.indexOf('drama-3') < FISH_MODELS.indexOf('s2.1-pro'), 'priciest first');
   assert.ok(!Number.isNaN(Date.parse(FISH_CHOICES[0].promo.until)));
 }
+
+{ // Prewarm: a socket opened with placeholder callbacks takes a reply's callbacks; once closed it can't be rebound.
+  const got = { audio: [], ended: 0 };
+  const v = new FishVoice({ key: 'sk-test', voice: 'vid', WebSocketImpl: FakeWS, onAudio() {}, onEnd() {}, onError() {} }).open();
+  const ws = FakeWS.last;
+  ws.open();
+  assert.equal(v.rebind({ onAudio: (a) => got.audio.push(a), onEnd: () => got.ended++, onError: () => {} }), true);
+  v.say('Hi.'); v.end();
+  assert.deepEqual(ws.sent.map((m) => m.event), ['start', 'text', 'flush', 'stop']);
+  ws.server({ event: 'audio', audio: new Uint8Array([1, 2]) });
+  ws.server({ event: 'finish', reason: 'stop' });
+  assert.deepEqual(got.audio.map((a) => [...a]), [[1, 2]]);
+  assert.equal(got.ended, 1);
+  assert.equal(v.rebind({ onAudio() {} }), false);
+  console.log('fish rebind tests: passed');
+}

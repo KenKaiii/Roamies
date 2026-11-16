@@ -46,6 +46,7 @@ export const BEATS = [
   'Moment.', 'Okay, checking.', 'Sure, checking.', 'Okie-dokie.',
 ];
 const RECENT = 8; // a beat isn't picked again until this many others have played
+const PREWARM_MS = 20_000; // a socket opened ahead of a reply that nothing takes is closed after this
 
 // The beats shipped with the app (beats/make.mjs), next to this file or the bundle: (voice, model) → Map of phrase →
 // { rate, pcm } (base64), or null for a voice or model not recorded. The free tier uses the S2.1 Pro takes.
@@ -66,13 +67,14 @@ export function bundledBeats(dir = path.join(path.dirname(fileURLToPath(import.m
 }
 
 // beatStore: { read(name), write(name, data) }, where beats made here are kept between runs (none: made again each run).
-export function createSpeaker({ emit, onProblem = () => {}, log = () => {}, FishVoiceImpl = FishVoice, account = fishAccount, providers = {}, beatPhrases = BEATS, bundled = bundledBeats(), beatStore = null, LocalVoiceImpl = StudioVoice, localStatus = studioStatus }) {
+export function createSpeaker({ emit, onProblem = () => {}, log = () => {}, FishVoiceImpl = FishVoice, account = fishAccount, providers = {}, beatPhrases = BEATS, bundled = bundledBeats(), beatStore = null, LocalVoiceImpl = StudioVoice, localStatus = studioStatus, prewarmMs = PREWARM_MS }) {
   const all = { ...PROVIDERS, fish: { ...PROVIDERS.fish, Voice: FishVoiceImpl, account }, ...providers };
   let P = all.fish; // the service in use
   let key = null, voice = P.defaultVoice, pref = P.pick ?? P.models[0], model = pref, seq = 0, current = null, checking = null;
   // The pick and the cheaper ones after it (models run from priciest to free).
   const chain = () => P.models.slice(Math.max(0, P.models.indexOf(pref)));
   let beats = new Map(), recent = [], warming = null; // phrase → [base64 PCM], for the current key, voice and model
+  let prewarmed = null; // Fish's socket opened ahead of a reply (prewarm), for the key, voice and model it was opened with
   // A random beat, not one of the last few: one that's already made if there is one, so it plays instantly.
   const shipped = () => bundled(voice, model);
   const ready = (p) => beats.has(p) || !!shipped()?.has(p);
@@ -191,6 +193,38 @@ export function createSpeaker({ emit, onProblem = () => {}, log = () => {}, Fish
     return me;
   }
 
+  // Fish only: open the socket now, while the user is still talking, so the reply's first sentence doesn't wait for
+  // the connection (0.4-1.4 s). The socket has placeholder callbacks until start() takes it; one nothing takes is
+  // closed after prewarmMs.
+  function prewarm() {
+    if (localOn || !key || P.id !== 'fish') return;
+    const w = prewarmed;
+    if (w && w.key === key && w.voice === voice && w.model === model && w.p === P && w.v.state !== 'done') return;
+    dropPrewarm();
+    try {
+      const v = new P.Voice({ key, voice, model, onAudio() {}, onEnd() {}, onError() {} }).open();
+      const timer = setTimeout(dropPrewarm, prewarmMs);
+      timer.unref?.();
+      prewarmed = { key, voice, model, p: P, v, timer };
+    } catch (e) { log('speech_prewarm_error', { message: e.message }); }
+  }
+  function dropPrewarm() {
+    const w = prewarmed;
+    if (!w) return;
+    prewarmed = null;
+    clearTimeout(w.timer);
+    w.v.abort?.();
+  }
+  // The warm socket for a reply on model m, if it still matches the key, voice and model; otherwise it's closed.
+  function takePrewarm(m) {
+    const w = prewarmed;
+    if (!w) return null;
+    prewarmed = null;
+    clearTimeout(w.timer);
+    if (w.key !== key || w.voice !== voice || w.model !== m || w.p !== P || w.v.state === 'done') { w.v.abort?.(); return null; }
+    return w.v;
+  }
+
   /** A new reply's voice, its socket opening now. say(sentence) as they come, then end(). */
   function start() {
     if (localOn) return startLocal();
@@ -226,8 +260,7 @@ export function createSpeaker({ emit, onProblem = () => {}, log = () => {}, Fish
     };
     const connect = (m) => {
       tries++;
-      v = new P.Voice({
-        key, voice, model: m,
+      const cbs = {
         onAudio: (pcm) => {
           if (done) return;
           if (!heard) { heard = true; if (m !== model) model = m; log('speech_first_audio', { id, model: m, ms: Date.now() - t0 }); }
@@ -255,7 +288,11 @@ export function createSpeaker({ emit, onProblem = () => {}, log = () => {}, Fish
           }
           finish();
         },
-      }).open();
+      };
+      // The first try takes the socket opened ahead of the reply, if it's still the one this reply needs.
+      const warm = tries === 1 ? takePrewarm(m) : null;
+      if (warm?.rebind(cbs)) v = warm;
+      else { warm?.abort?.(); v = new P.Voice({ key, voice, model: m, ...cbs }).open(); }
     };
     log('speech_start', { id, model });
     connect(model);
@@ -264,7 +301,7 @@ export function createSpeaker({ emit, onProblem = () => {}, log = () => {}, Fish
   }
 
   return {
-    setKey(k) { if (localOn) return; if ((k || null) !== key) { beats = new Map(); if (!k) stopAll(); } key = k || null; if (key) check(); },
+    setKey(k) { if (localOn) return; if ((k || null) !== key) { beats = new Map(); dropPrewarm(); if (!k) stopAll(); } key = k || null; if (key) check(); },
     // The user's pick. Beats are remade in it; with no credit it stays on the free tier until there is some.
     setModel(m) {
       if (!P.models.includes(m) || m === P.freeModel || m === pref) return;
@@ -277,6 +314,7 @@ export function createSpeaker({ emit, onProblem = () => {}, log = () => {}, Fish
     // Fish Audio, Gemini or VoiceStudio. Starts clean: the key, voice and model are the old service's, so set them again after.
     setProvider(id) {
       const p = all[id];
+      dropPrewarm(); // a socket opened for the old service is never used for the new one
       if (id === 'voicestudio') {
         if (localOn) return;
         if (key) stopAll();
@@ -300,6 +338,7 @@ export function createSpeaker({ emit, onProblem = () => {}, log = () => {}, Fish
     get on() { return localOn || !!key; },
     check,
     start,
+    prewarm,
     stop: stopAll,
   };
 }

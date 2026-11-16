@@ -345,17 +345,30 @@ const signedIn = new Map();
 // Per method, for the guide's cards: Claude and ChatGPT can be signed in, have a key, or both. keyOn is per kind
 // of key (keyCards' ids): Kimi and Xiaomi each take a plan key and a pay-per-token key, saved apart.
 const oauthOn = new Map(), keyOn = new Map(), storedKeys = new Set();
-async function refreshAuth() {
-  for (const p of MENU_PROVIDERS) signedIn.set(p, await auth.hasProviderAuth(p).catch(() => false));
+// The credential checks all run at once. { cached: true } (a request's own check) reuses the last run when it started
+// under 2 s ago; every other caller (sign-in, saving a key, a server) always runs it fresh.
+let authRun = null, authAt = 0;
+function refreshAuth({ cached = false } = {}) {
+  if (cached && authRun && Date.now() - authAt < 2000) return authRun;
+  authAt = Date.now();
+  authRun = refreshAuthNow();
+  return authRun;
+}
+async function refreshAuthNow() {
+  const set = (map, k) => (ok) => { map.set(k, ok); };
+  const jobs = [];
+  for (const p of MENU_PROVIDERS) jobs.push(auth.hasProviderAuth(p).catch(() => false).then(set(signedIn, p)));
   for (const p of Object.keys(OAUTH)) {
-    oauthOn.set(p, p === 'anthropic' ? await auth.hasClaudeCodeLogin().catch(() => false) : await auth.hasCredentials(dualAuthProvider(p)?.oauthKey ?? p).catch(() => false));
+    const check = p === 'anthropic' ? auth.hasClaudeCodeLogin() : auth.hasCredentials(dualAuthProvider(p)?.oauthKey ?? p);
+    jobs.push(check.catch(() => false).then(set(oauthOn, p)));
   }
   for (const meta of AUTH_PROVIDERS.filter((x) => x.methods?.includes('apikey'))) {
     const kinds = keyKinds(meta);
-    for (const [id] of kinds) keyOn.set(id, await (kinds.length > 1 ? auth.hasCredentials(id) : auth.hasApiKey(id)).catch(() => false));
-    for (const k of apiKeyStorageKeys(meta.value)) if (await auth.hasCredentials(k).catch(() => false)) storedKeys.add(k); else storedKeys.delete(k);
+    for (const [id] of kinds) jobs.push((kinds.length > 1 ? auth.hasCredentials(id) : auth.hasApiKey(id)).catch(() => false).then(set(keyOn, id)));
+    for (const k of apiKeyStorageKeys(meta.value)) jobs.push(auth.hasCredentials(k).catch(() => false).then((ok) => { if (ok) storedKeys.add(k); else storedKeys.delete(k); }));
   }
-  for (const k of servers().map((x) => `local:${x.id}`)) if (await auth.hasCredentials(k).catch(() => false)) storedKeys.add(k); else storedKeys.delete(k);
+  for (const k of servers().map((x) => `local:${x.id}`)) jobs.push(auth.hasCredentials(k).catch(() => false).then((ok) => { if (ok) storedKeys.add(k); else storedKeys.delete(k); }));
+  await Promise.all(jobs);
 }
 // The local servers: Ollama, LM Studio and the ones the user added. Their models are found when they're connected:
 // those that can see and use tools. local.windows: the context Ollama really serves each model with, measured once
@@ -719,13 +732,16 @@ async function agentModel() {
   const m = getModel(config.model), c = cc ? {} : await credsFor().catch(() => ({}));
   return {
     provider: config.provider, model: config.model, route: cc ? 'claude-code' : 'api', cc: cc ?? undefined,
-    thinking: m?.supportsThinking ? (CHAT_THINKING ?? undefined) : undefined,
+    thinking: m?.supportsThinking ? (AGENT_THINKING ?? undefined) : undefined,
     baseUrl: c.baseUrl, modelInfo: config.provider === 'local' ? m : undefined, budget: Math.round(getContextWindow(config.model, { provider: config.provider }) * 0.6),
   };
 }
 let agentRoute = null;
-// The chat's thinking level (null: off); side calls never think harder than this.
-const CHAT_THINKING = process.env.ROAMIES_THINKING === 'off' ? null : process.env.ROAMIES_THINKING || 'low';
+// Thinking levels (null: off). The chat reply doesn't think by default, so it starts speaking sooner; background
+// agents and side calls (memory, summaries) keep 'low' unless ROAMIES_AGENT_THINKING says otherwise.
+const thinkingLevel = (v, fallback) => (v === 'off' ? null : v || fallback);
+const CHAT_THINKING = thinkingLevel(process.env.ROAMIES_THINKING, null);
+const AGENT_THINKING = thinkingLevel(process.env.ROAMIES_AGENT_THINKING, 'low');
 function makeAgent(cc) {
   const m = getModel(config.model);
   controller = new AbortController();
@@ -908,7 +924,7 @@ function applyPendingFold() {
 // ---------- the memory pass ----------
 // Facts come only from here: what the fold call returns, and a pass over a conversation as it ends.
 async function sideRoute() {
-  return { provider: config.provider, model: config.model, cc: await claudeCodeRoute(), credsFor: (m) => credsFor(config.provider, m), cwd: HOME, chatThinking: CHAT_THINKING };
+  return { provider: config.provider, model: config.model, cc: await claudeCodeRoute(), credsFor: (m) => credsFor(config.provider, m), cwd: HOME, chatThinking: AGENT_THINKING };
 }
 async function learnFacts(facts) {
   const added = [];
@@ -1020,7 +1036,7 @@ let lastReply = '', lastFailed = false;
 async function readyAgent() {
   await resumed;
   await voiceKeysLoaded;
-  await refreshAuth();
+  await refreshAuth({ cached: true });
   if (!ensureModel()) { openPanel('model'); return 'Sign in to an AI provider first: I opened the Model page for you. Then ask me again!'; }
   if (config.provider === 'local') {
     if (!getModel(config.model)) await syncLocal();
@@ -1050,6 +1066,12 @@ function warmUp() {
 }
 // The front window, looked up when the talk keys are let go: the words take a moment more to arrive.
 let frontSoon = null;
+// The front window for a request, waited for at most 150 ms: a slow helper never holds the request up (it goes
+// without front-window info instead).
+const frontWithin = (p) => new Promise((done) => {
+  const t = setTimeout(() => done(''), 150);
+  p.then((v) => { clearTimeout(t); done(v); }, () => { clearTimeout(t); done(''); });
+});
 // Auto-listen: the turn whose reply ended on a question, until the overlay says it's been typed out and said.
 let autoTurn = null;
 // Wake word: the voice helper doesn't listen for "Hey Roamies" while a reply runs, until the overlay says it's been
@@ -1102,6 +1124,8 @@ async function prompt(text, image = null, note = '', byVoice = false, news = nul
   try {
     // Voice: a short first line before a tool ("On it, checking Paris.") is a beat: it's spoken, but not
     // shown, so the card or bubble starts with the answer. It shows after all if no tool follows.
+    // The hold is for the pre-tool beat only: a short line before a tool call is dropped once the tool starts. It isn't
+    // released at a sentence end, since "On it, checking Paris." is a whole sentence; past 40 characters it's an answer.
     let beatText = voice ? '' : null, trimNext = false;
     const showText = (text) => {
       if (trimNext) { text = text.replace(/^\s+/, ''); if (!text) return; trimNext = false; }
@@ -1121,14 +1145,14 @@ async function prompt(text, image = null, note = '', byVoice = false, news = nul
       if (cues) { ev = { ...ev, text: cues.push(ev.text) }; if (!ev.text) return; }
       if (beatText == null) return showText(ev.text);
       beatText += ev.text;
-      if (beatText.length > 70 || /\n/.test(beatText)) releaseBeat(false); // too long to be a beat
+      if (beatText.length > 40 || /\n/.test(beatText)) releaseBeat(false); // too long to be a beat
     });
     const turn = nextTurn();
     requestNo = turn;
     logLine('request', { turn, model: config.model, chars: text.length, image: !!image, session: session?.id });
     const use = { t: Date.now(), model: config.model, calls: 0, tools: 0, in: 0, cacheRead: 0, cacheWrite: 0, out: 0 };
     const soon = frontSoon; frontSoon = null;
-    frontNow = soon && Date.now() - soon.at < 8000 ? await soon.p : await whereNow();
+    frontNow = await frontWithin(soon && Date.now() - soon.at < 8000 ? soon.p : whereNow());
     // The first spoken request of the day carries the morning briefing (brief.mjs).
     const brief = intro ? null : briefNote({ on: !!config.morningBrief, lastDay: config.briefDay, byVoice, todoist: !!config.briefTodoist, canRead: HANDS_OK, name: userName });
     if (brief) { config.briefDay = brief.day; saveConfig(); logLine('brief', { todoist: !!config.briefTodoist && HANDS_OK }); }
@@ -1931,7 +1955,7 @@ let mics = { list: [], auto: '' };
 const micPick = () => send({ type: 'voice_mic', id: config.mic ?? '' });
 function onVoice(m) {
   if (m.type === 'voice_state') { voiceBusy = m.state === 'listening' || m.state === 'processing'; stir(); }
-  if (m.type === 'voice_state' && m.state === 'listening') { interruptQuietly('listening'); speech.stop(); warmUp(); } // talking over it stops it
+  if (m.type === 'voice_state' && m.state === 'listening') { interruptQuietly('listening'); speech.stop(); warmUp(); if (VOICE_ON()) speech.prewarm(); } // talking over it stops it
   else if (m.type === 'voice_state' && m.state === 'processing') frontSoon = { at: Date.now(), p: whereNow() };
   else if (m.type === 'voice' && m.text?.trim()) {
     // Key release to the words arriving (mic tail and the recogniser finishing), to see what that step costs.
@@ -2000,6 +2024,8 @@ function shellAnswer(m) {
 let barAsk = null;
 async function typeToAsk({ interrupt = false } = {}) {
   warmUp();
+  if (VOICE_ON()) speech.prewarm(); // the reply may be spoken: its socket opens while they type
+  frontSoon = { at: Date.now(), p: whereNow() }; // and the front window, as for talking
   const ctl = barAsk = new AbortController();
   const text = await ask({ placeholder: 'Ask me anything…', bar: true }, ctl.signal);
   if (barAsk === ctl) barAsk = null;

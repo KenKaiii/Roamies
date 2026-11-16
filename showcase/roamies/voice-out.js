@@ -3,7 +3,7 @@
 // level() is the live loudness, for the body to move with the voice.
 (() => {
   const R = window.Roamie;
-  const LEAD = 0.12; // cushion before a reply's first chunk, so the next chunk is never late
+  const LEAD = 0.05; // cushion before a reply's first chunk, so the next chunk is never late (small: speech should start at once)
   let ac = null, out = null, meter = null, buf = null, id = null, endAt = 0, live = [], lv = 0;
   // How fast the voice talks (characters a second), learned from each whole reply: its audio length against how much
   // text it said. Drawings pace their marks to it (ink.js).
@@ -21,7 +21,7 @@
       meter = ac.createAnalyser(); meter.fftSize = 512; buf = new Float32Array(meter.fftSize);
       out.connect(meter); meter.connect(ac.destination);
     }
-    if (ac.state !== 'running') ac.resume();
+    if (ac.state !== 'running') ac.resume().catch(() => {});
     return ac;
   };
 
@@ -48,7 +48,8 @@
     const b = pcm(m.pcm, m.rate || 44100), s = a.createBufferSource();
     s.buffer = b; s.connect(out);
     const now = a.currentTime;
-    if (!live.length) { out.gain.cancelScheduledValues(now); out.gain.setValueAtTime(1, now); }
+    // A new reply fades in over 30 ms (a replaced reply's tail never plays at full level).
+    if (!live.length) { out.gain.cancelScheduledValues(now); out.gain.setValueAtTime(0, now); out.gain.linearRampToValueAtTime(1, now + 0.03); }
     const at = Math.max(endAt, now + LEAD);
     s.start(at); endAt = at + b.duration; secs += b.duration;
     live.push(s);
@@ -65,7 +66,7 @@
       }
       if (m.pcm) play(m);
     },
-    playing: () => !!ac && live.length > 0 && ac.currentTime < endAt + 0.05,
+    playing: () => !!ac && ac.state === 'running' && live.length > 0 && ac.currentTime < endAt + 0.05,
     cps: () => rate,
     // That reply has nothing left to play: its end arrived (or it was stopped), and nothing is still sounding.
     finished(rid) { return !this.playing() && (!rid || over.has(rid)); },
@@ -79,5 +80,8 @@
       return (lv += (v - lv) * (v > lv ? 0.5 : 0.15));
     },
     stop,
+    // Make the audio context ahead of the first reply (host.js calls it when a request starts), so the first
+    // chunk doesn't pay for creating it.
+    warm() { try { ctx(); } catch { /* no audio */ } },
   };
 })();

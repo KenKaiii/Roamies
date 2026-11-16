@@ -128,3 +128,19 @@ assert.equal(endsWithQuestion('Ready? 🙂\n'), true);
 assert.equal(endsWithQuestion('He said "really?"'), true);
 assert.equal(endsWithQuestion(''), false);
 assert.equal(endsWithQuestion(null), false);
+
+// The first chunk of a reply is cut at its first clause (past 40 characters), not at the sentence's end.
+assert.deepEqual(said(['The forecast for Paris looks good this afternoon, so take a light jacket. Enjoy it.']), ['The forecast for Paris looks good this afternoon,', 'so take a light jacket.', 'Enjoy it.']);
+// Later chunks keep the sentence rules: a comma in the second sentence doesn't cut it.
+assert.deepEqual(said(['Ok. Sure, the weather in Paris is sunny and warm today, with light winds. Enjoy.']), ['Ok.', 'Sure, the weather in Paris is sunny and warm today, with light winds.', 'Enjoy.']);
+// No sentence or clause yet: the first chunk goes out at a word past 90 characters.
+{
+  const w = said(['alpha '.repeat(20).trim()]);
+  assert.equal(w.length, 2, JSON.stringify(w));
+  assert.equal(w[0].length, 89);
+}
+// A sentence at the very end of the text, with nothing after it, is spoken when the reply is done.
+assert.deepEqual(said(['Done. Really? Yes.']), ['Done.', 'Really?', 'Yes.']);
+// Mid-stream, a sentence end at the end of the buffer waits for the next chunk (it might be "3." of "3.14").
+assert.deepEqual(said(['It costs 3.', '14 dollars. Okay.']), ['It costs 3.14 dollars.', 'Okay.']);
+console.log('speech early-cut tests: passed');

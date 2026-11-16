@@ -119,6 +119,14 @@ export class FishVoice {
 
   abort() { this.close(); }
 
+  // A socket opened before its reply (speaker.prewarm, while the user is still talking) takes the reply's callbacks
+  // in place of the placeholders it was made with. False once it has closed: then it can't be used.
+  rebind({ onAudio, onEnd, onError }) {
+    if (this.state === 'done') return false;
+    Object.assign(this, { onAudio, onEnd, onError });
+    return true;
+  }
+
   // PCM samples are 2 bytes; a chunk can end mid-sample, so carry the odd byte into the next one.
   whole(bytes) {
     let b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);

@@ -11,6 +11,7 @@ class FakeVoice {
   say(s) { this.said.push(s); }
   end() { this.ended = true; }
   abort() { this.aborted = true; }
+  rebind(cbs) { Object.assign(this, cbs); return true; }
 }
 const setup = (acct = { ok: true, credit: 4.5 }, beatPhrases = [], bundled = () => null) => {
   made.length = 0;
@@ -368,4 +369,34 @@ console.log('bundled beats: passed');
   assert.equal(made.at(-1).model, 'drama-3'); assert.deepEqual(made.at(-1).said, ['Fish again.']);
   sp.setProvider('nope'); assert.equal(sp.provider, 'fish', 'unknown providers are ignored');
   console.log('speaker provider tests: passed');
+}
+
+{ // Prewarm: Fish's socket opens while the user talks; the reply takes it (no second socket), and an unused one closes after prewarmMs.
+  made.length = 0;
+  const out = [];
+  const sp = createSpeaker({ emit: (m) => out.push(m), FishVoiceImpl: FakeVoice, account: async () => ({ ok: true, credit: 4.5 }), beatPhrases: [], bundled: () => null, prewarmMs: 20 });
+  sp.prewarm(); assert.equal(made.length, 0, 'no key: nothing to open');
+  sp.setKey('sk-test'); await tick();
+  sp.prewarm(); assert.equal(made.length, 1, 'opened ahead of the reply');
+  const warm = made[0];
+  sp.prewarm(); assert.equal(made.length, 1, 'already warm: not opened again');
+  const r = sp.start();
+  assert.equal(made.length, 1, 'the reply adopts the warm socket');
+  r.say('Hi.');
+  assert.deepEqual(warm.said, ['Hi.']);
+  warm.onAudio(new Uint8Array([1, 2]));
+  assert.ok(out.some((m) => m.kind === 'speech' && m.id === r.id && m.pcm), 'its audio is the reply\'s');
+  // Unused: closed after prewarmMs.
+  made.length = 0; out.length = 0;
+  sp.prewarm(); const idle = made[0];
+  await new Promise((res) => setTimeout(res, 40));
+  assert.equal(idle.aborted, true, 'an unused socket is closed');
+  // A different voice or model doesn't adopt it: it's closed and the reply opens its own.
+  sp.prewarm(); const other = made.at(-1);
+  sp.setVoice('someone-else');
+  const r2 = sp.start();
+  assert.equal(other.aborted, true, 'a mismatched socket is closed');
+  assert.equal(made.at(-1).voice, 'someone-else');
+  r2.abort();
+  console.log('speaker prewarm tests: passed');
 }

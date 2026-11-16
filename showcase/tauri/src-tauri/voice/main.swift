@@ -572,6 +572,7 @@ final class Voice {
     private var rec: Recognizer?
     private var best = ""
     private var finishTimer: Timer?
+    private var earlyTimer: Timer? // the 0.6 s "send the partial" check after end (see finish)
     private let feed = Feed()
     private var configObserver: NSObjectProtocol?
     // Wake word: on in settings; held off while Roamies answers and speaks; resting just after a take.
@@ -622,8 +623,12 @@ final class Voice {
     private static let tapLimit = 0.25
     // A release must last this long to count, so one glitchy frame of key state can't end a session.
     private static let releaseDebounce = 0.09
-    private static let pauseEnds = 1.5
-    private static let wordsEnd = 2.5 // hands-free: no new words for this long ends it, even with background sound
+    // Hands-free: this much quiet (no voice above the level) ends the take. Was 1.5 s; 0.9 s still leaves room for a
+    // short breath mid-sentence while not making the user wait a long beat before the request goes out.
+    private static let pauseEnds = 0.9
+    // Hands-free safety net: no new words for this long ends it, even with background sound. Kept at 2.5 s: it only
+    // matters in noisy rooms, where the quiet check above never passes, and a shorter value could cut speech short.
+    private static let wordsEnd = 2.5
     private static let maxSession = 60.0
     private static let wakeRecycle = 30.0 // a fresh wake recogniser this often, so memory stays bounded
     private static let wakePause = 1.2 // words stopped this long without the phrase: start fresh for the next thing said
@@ -707,7 +712,8 @@ final class Voice {
             if released { phase = .handsFree; showListening("handsfree", now); return }
             if down && now - chordAt >= Self.tapLimit { phase = .holding; showListening("hold", now) }
         case .holding:
-            if released { end("released"); finish(); return }
+            // Push-to-talk ends on the release: a short mic tail (0.15 s) is enough for a word said while letting go.
+            if released { end("released"); finish(tail: 0.15); return }
             if now - listenAt > Self.maxSession { end("max length"); finish() }
         case .handsFree:
             // Pressing again switches to push-to-talk; letting go then sends.
@@ -762,7 +768,9 @@ final class Voice {
         if !best.isEmpty { emit(["type": "partial", "text": best]) }
     }
 
-    private func finish() {
+    // tail: how long the mic stays open after the take ends, before the recogniser is told to finish. Push-to-talk
+    // passes 0.15 s (it ends on the release); other ends keep the 0.3 s default.
+    private func finish(tail tailFor: Double = 0.3) {
         guard phase == .armed || phase == .holding || phase == .handsFree else { return }
         let shown = phase != .armed
         reportEmpty = shown && !failed
@@ -774,13 +782,24 @@ final class Voice {
         if shown { emit(["type": "state", "state": "processing"]) }
         guard let r = rec, !failed else { stopAudio(); endedVia = "failed"; finalize(); return }
         // Keep the mic open a moment after release so a word said while letting go isn't clipped.
-        let tail = Timer(timeInterval: 0.3, repeats: false) { [weak self] _ in
+        let tail = Timer(timeInterval: tailFor, repeats: false) { [weak self] _ in
             guard let self, self.phase == .finishing, self.rec === r else { return }
             self.stopAudio()
             r.end()
+            // Fallback cap (2.5 s) for the recogniser's final result, used when there's no text yet.
             let t = Timer(timeInterval: 2.5, repeats: false) { [weak self] _ in self?.endedVia = "cap"; self?.finalize() }
             RunLoop.main.add(t, forMode: .common)
             self.finishTimer = t
+            // The final result normally lands within a few hundred ms of end(). If it hasn't by 0.6 s and there's
+            // already text, send that text now instead of waiting out the cap. No double emit: finalize() clears rec,
+            // so the recogniser's later final/partial callbacks are dropped (rec === mine), and this check
+            // requires rec === r and phase == .finishing.
+            let early = Timer(timeInterval: 0.6, repeats: false) { [weak self] _ in
+                guard let self, self.phase == .finishing, self.rec === r, !self.best.isEmpty else { return }
+                self.endedVia = "partial"; self.finalize()
+            }
+            RunLoop.main.add(early, forMode: .common)
+            self.earlyTimer = early
         }
         RunLoop.main.add(tail, forMode: .common)
         finishTimer = tail
@@ -789,6 +808,7 @@ final class Voice {
     private func finalize() {
         guard phase == .finishing else { return }
         finishTimer?.invalidate(); finishTimer = nil
+        earlyTimer?.invalidate(); earlyTimer = nil
         rec?.cancel(); rec = nil
         phase = .idle
         woke = false; wakeCooldownUntil = uptime() + Self.wakeCooldown
@@ -825,6 +845,7 @@ final class Voice {
         stopAudio()
         rec?.cancel(); rec = nil
         finishTimer?.invalidate(); finishTimer = nil
+        earlyTimer?.invalidate(); earlyTimer = nil
         phase = .idle
         woke = false; wakeCooldownUntil = uptime() + Self.wakeCooldown
         reportEmpty = false

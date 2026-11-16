@@ -257,6 +257,7 @@
         // Nor is it still working in another app, even if that work's end was missed.
         a.hand?.end();
         responding = true;
+        Roamie.voiceOut?.warm?.();
         heard = null;
         research = false; fromWeb = false; spoken = '';
         agentish = !!e.agentish;
@@ -426,7 +427,7 @@
     endTalk(); listen?.close(); listen = null;
     if (a?.visible) a.hide({ instant: true });
     if (held) return;
-    held = { q: [], t: setTimeout(flush, 300) };
+    held = { q: [], t: setTimeout(flush, 150) };
     addEventListener('resize', () => requestAnimationFrame(() => requestAnimationFrame(flush)), { once: true });
   };
 
