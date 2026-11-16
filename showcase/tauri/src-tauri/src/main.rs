@@ -1630,6 +1630,8 @@ fn handle_sidecar(app: &AppHandle, msg: Value) {
                 to_voice(app, &json!({ "cmd": "wake", "on": wake }));
                 let name = msg.get("wakeName").and_then(Value::as_str).unwrap_or("");
                 to_voice(app, &json!({ "cmd": "wake_name", "word": name }));
+                let listen_for = msg.get("listenFor").and_then(Value::as_f64).unwrap_or(8.0);
+                to_voice(app, &json!({ "cmd": "listen_for", "s": listen_for }));
             } else {
                 stop_voice(app);
             }

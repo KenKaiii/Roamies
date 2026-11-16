@@ -625,6 +625,9 @@ final class Voice {
     private static let pauseEnds = 1.5
     private static let wordsEnd = 2.5 // hands-free: no new words for this long ends it, even with background sound
     private static let maxSession = 60.0
+    // Hands-free: how long to wait for the first word before giving up ("Keep listening" in settings, 5/8/15/30 s).
+    var listenFor = 8.0
+    private var sessionCap: Double { max(Self.maxSession, listenFor + 5) }
     private static let wakeRecycle = 30.0 // a fresh wake recogniser this often, so memory stays bounded
     private static let wakePause = 1.2 // words stopped this long without the phrase: start fresh for the next thing said
     private static let wakeCooldown = 2.0
@@ -715,8 +718,8 @@ final class Voice {
             let quiet = now - max(heardAt, voiceAt)
             // Steady sound in the room (a fan, music) keeps the level up, so words that stopped coming end it too.
             if !best.isEmpty && (quiet > Self.pauseEnds || now - heardAt > Self.wordsEnd) { end(quiet > Self.pauseEnds ? "pause" : "no new words"); finish() }
-            else if best.isEmpty && now - listenAt > 8 { end("nothing heard"); cancel() }
-            else if now - listenAt > Self.maxSession { end("max length"); finish() }
+            else if best.isEmpty && now - listenAt > listenFor { end("nothing heard"); cancel() }
+            else if now - listenAt > sessionCap { end("max length"); finish() }
         case .finishing:
             break
         }
@@ -1353,6 +1356,8 @@ Thread.detachNewThread {
         case "chord": if let mods = msg["mods"] as? [String] { DispatchQueue.main.async { voice.setChord(mods) } }
         case "watch_clicks": let on = msg["on"] as? Bool == true; DispatchQueue.main.async { voice.watchClicks = on }
         case "sound": if let on = msg["on"] as? Bool { DispatchQueue.main.async { SnapCue.soundOn = on } }
+        // How long hands-free listening waits for the first word ("Keep listening": 5, 8, 15 or 30 seconds).
+        case "listen_for": if let s = (msg["s"] as? NSNumber)?.doubleValue { DispatchQueue.main.async { voice.listenFor = max(3, min(60, s)) } }
         case "wake": if let on = msg["on"] as? Bool { DispatchQueue.main.async { voice.setWake(on) } }
         // The name after "Hey" (empty: Roamies). Only whether it's custom is logged, never the word.
         case "wake_name":
