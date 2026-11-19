@@ -1,0 +1,34 @@
+// Top lessons for an app, ranked by BM25 against the request text. Plan rule: at most five per request.
+query lessons_for_app($app: String, $q: String) {
+    match {
+        $l: Lesson
+        $a: App { slug: $app }
+        $l appliesToApp $a
+    }
+    return { $l.slug, $l.kind, $l.text }
+    order { bm25($l.text, $q) }
+    limit 5
+}
+
+query lessons_for_task($task: String, $q: String) {
+    match {
+        $l: Lesson
+        $t: Task { slug: $task }
+        $l appliesToTask $t
+    }
+    return { $l.slug, $l.kind, $l.text }
+    order { bm25($l.text, $q) }
+    limit 5
+}
+
+query add_lesson($slug: String, $kind: String, $text: String, $createdAt: DateTime) {
+    insert Lesson { slug: $slug, kind: $kind, text: $text, createdAt: $createdAt }
+}
+
+query link_lesson_app($lesson: String, $app: String) {
+    insert AppliesToApp { from: $lesson, to: $app }
+}
+
+query add_app($slug: String, $name: String) {
+    insert App { slug: $slug, name: $name }
+}

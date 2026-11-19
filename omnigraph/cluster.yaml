@@ -1,0 +1,13 @@
+version: 1
+state: { backend: cluster, lock: true }
+graphs:
+  memory:
+    schema: schema.pg
+    queries: queries/
+policies:
+  memory-access:
+    file: graph.policy.yaml
+    applies_to: [memory]
+  server-access:
+    file: server.policy.yaml
+    applies_to: [cluster]

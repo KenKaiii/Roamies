@@ -1,0 +1,13 @@
+version: 1
+groups:
+  owner: [act-me]
+  everyone: [act-me, act-agent]
+rules:
+  - id: owner-manages
+    allow:
+      actors: { group: owner }
+      actions: [config_manage]
+  - id: all-list-graphs
+    allow:
+      actors: { group: everyone }
+      actions: [graph_list]
