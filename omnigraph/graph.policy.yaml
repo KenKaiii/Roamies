@@ -1,0 +1,41 @@
+# Agents (Claude Code, the sidecar) write only to unprotected branches such as `proposed`.
+# Only the owner merges into `main`, so no lesson becomes live without confirmation.
+version: 1
+protected_branches: [main]
+groups:
+  owner: [act-me]
+  agents: [act-agent]
+rules:
+  - id: owner-all-data
+    allow:
+      actors: { group: owner }
+      actions: [read, export, change]
+      branch_scope: any
+  - id: owner-all-branches
+    allow:
+      actors: { group: owner }
+      actions: [branch_create, branch_delete, branch_merge, commit_publish, commit_drop]
+      target_branch_scope: any
+  - id: owner-queries
+    allow:
+      actors: { group: owner }
+      actions: [invoke_query]
+  - id: agents-read
+    allow:
+      actors: { group: agents }
+      actions: [read]
+      branch_scope: any
+  - id: agents-write-proposed
+    allow:
+      actors: { group: agents }
+      actions: [change]
+      branch_scope: unprotected
+  - id: agents-make-proposed
+    allow:
+      actors: { group: agents }
+      actions: [branch_create]
+      target_branch_scope: unprotected
+  - id: agents-queries
+    allow:
+      actors: { group: agents }
+      actions: [invoke_query]
