@@ -10,7 +10,7 @@ import AppKit
 import QuartzCore
 
 final class Buddy: NSObject {
-    private let panel: NSPanel
+    private var panel: NSPanel
     private let body = CALayer()
     private var open: CGImage?, shut: CGImage?
     private var on = false, paused = true, hidden = false
@@ -26,7 +26,17 @@ final class Buddy: NSObject {
     private var blinkID = 0
 
     override init() {
-        panel = NSPanel(contentRect: NSScreen.main?.frame ?? NSRect(x: 0, y: 0, width: 1, height: 1), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        panel = Self.build()
+        body.contentsGravity = .resize
+        body.magnificationFilter = .nearest
+        body.anchorPoint = .zero
+        body.actions = ["position": NSNull(), "bounds": NSNull(), "contents": NSNull()]
+        panel.contentView!.layer!.addSublayer(body)
+        super.init()
+    }
+
+    private static func build() -> NSPanel {
+        let panel = NSPanel(contentRect: NSScreen.main?.frame ?? NSRect(x: 0, y: 0, width: 1, height: 1), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
@@ -40,13 +50,25 @@ final class Buddy: NSObject {
         let view = NSView(frame: NSRect(origin: .zero, size: panel.frame.size))
         view.wantsLayer = true
         view.autoresizingMask = [.width, .height]
-        body.contentsGravity = .resize
-        body.magnificationFilter = .nearest
-        body.anchorPoint = .zero
-        body.actions = ["position": NSNull(), "bounds": NSNull(), "contents": NSNull()]
-        view.layer!.addSublayer(body)
         panel.contentView = view
-        super.init()
+        return panel
+    }
+
+    /// A new panel in place of one the window server isn't drawing (spaces.swift). The picture moves across; the
+    /// display link was made on the old panel's view, so it goes with it and run() makes a new one.
+    private func rebuild() {
+        stop()
+        if #available(macOS 14.0, *) { (link as? CADisplayLink)?.invalidate() }
+        link = nil
+        panel.orderOut(nil)
+        panel.contentView = nil
+        panel = Self.build()
+        panel.contentView!.layer!.addSublayer(body)
+        screen = nil
+        place()
+        panel.alphaValue = hidden ? 0 : 1
+        panel.orderFrontRegardless()
+        run()
     }
 
     /// Takes over drawing: picture, follow rules and the page's current position and motion.
@@ -76,6 +98,7 @@ final class Buddy: NSObject {
         place()
         panel.alphaValue = hidden ? 0 : 1
         panel.orderFrontRegardless()
+        checkOnScreen("sidekick", { [weak self] in guard let self, self.on else { return [] }; return [self.panel] }) { [weak self] in self?.rebuild() }
         run()
         blink()
         var ack: [String: Any] = ["type": "buddy", "state": "shown"]

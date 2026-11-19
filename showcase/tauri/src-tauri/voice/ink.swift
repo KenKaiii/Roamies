@@ -280,6 +280,16 @@ final class Ink {
             syncScreens()
             for p in panels { p.orderFrontRegardless() }
             last = NSEvent.mouseLocation; lastMoved = ProcessInfo.processInfo.systemUptime; onPanel = nil; snapped = false
+            // Shown but not drawn (spaces.swift): with builtScreens emptied, syncScreens makes new panels as for a display
+            // change. A stroke under way starts again on them; once a circle has snapped they're left as they are, so
+            // it's still there to capture.
+            checkOnScreen("drawing layer", { [weak self] in guard let self, self.armed, !self.snapped else { return [] }; return self.panels }) { [weak self] in
+                guard let self else { return }
+                self.builtScreens = []
+                self.syncScreens()
+                self.onPanel = nil
+                for p in self.panels { p.orderFrontRegardless() }
+            }
         } else {
             for p in panels {
                 p.view.end()

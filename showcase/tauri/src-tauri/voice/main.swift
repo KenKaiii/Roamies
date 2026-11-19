@@ -1389,6 +1389,65 @@ if args.contains("--test-chord") {
     check("an extra ⇧ or ⌘ still counts with a key held", Voice.isShortcut(extra: true, heldAtArm: [0x00], now: [0x00]))
     exit(bad == 0 ? 0 : 1)
 }
+// --test-spaces checks when a shown panel the window server isn't drawing is built again; exits 1 on a failure.
+if args.contains("--test-spaces") {
+    var bad = 0
+    func check(_ name: String, _ ok: Bool) { print("\(ok ? "ok" : "FAIL") \(name)"); if !ok { bad += 1 } }
+    func step(_ stage: OnScreenStage, _ onScreen: [Bool?], screen: Bool = true) -> (line: String?, next: OnScreenNext) {
+        onScreenStep("pill", stage, onScreen: onScreen, screenAttached: screen)
+    }
+    check("first look, on screen: done", step(.first, [true]) == (nil, .done))
+    check("first look, off screen: a second look before anything else", step(.first, [false]) == (nil, .confirm))
+    check("first look, no answer from the window server: done", step(.first, [nil]) == (nil, .done))
+    check("no display attached (asleep): never built again", step(.first, [false], screen: false) == (nil, .done) && step(.confirm, [false], screen: false) == (nil, .done))
+    check("no panel shown: nothing", step(.first, []) == (nil, .done))
+    check("one panel of two off screen (the drawing layer has one per screen): a second look", step(.first, [true, false]).next == .confirm)
+    // Regression: the pill faded to alpha 1 beside the cursor while the window server said it wasn't on screen.
+    check("off at the second look too: built again, and said", step(.confirm, [false]) == ("pill: not on screen after being shown, building it again", .rebuild))
+    check("on screen at the second look: left alone", step(.confirm, [true]) == (nil, .done))
+    check("no answer at the second look: left alone", step(.confirm, [nil]) == (nil, .done))
+    check("after the rebuild, on screen: said, not built again", step(.rebuilt, [true]) == ("pill: on screen after being built again", .done))
+    check("after the rebuild, still off: said, not built again", step(.rebuilt, [false]) == ("pill: still not on screen after being built again", .done))
+    check("after the rebuild, one on and one unknown: nothing", step(.rebuilt, [true, nil]) == (nil, .done))
+    // The looks themselves, on a made-up clock with made-up window-server answers (no windows): when each look reads, in
+    // ms after the call, and when the panel is built again. shownUntil: hidden from then on; replacedAt: another panel.
+    var clock = 0.0, due: [(at: Double, run: () -> Void)] = []
+    func later(_ d: Double, _ f: @escaping () -> Void) { due.append((clock + d, f)) }
+    func runClock() { while let i = due.indices.min(by: { due[$0].at < due[$1].at }) { let d = due.remove(at: i); clock = d.at; d.run() } }
+    func ms(_ t: [Double]) -> [Int] { t.map { Int(($0 * 1000).rounded()) } }
+    func watch(_ name: String, _ answers: [Bool?], screen: Bool = true, shownUntil: Double = .infinity, replacedAt: Double = .infinity) -> (reads: [Int], rebuilds: [Int]) {
+        clock = 0
+        let a = NSObject(), b = NSObject()
+        var reads: [Double] = [], rebuilds: [Double] = [], left = answers
+        watchOnScreen(name, { clock >= shownUntil ? [] : [(ObjectIdentifier(clock >= replacedAt ? b : a), 1)] },
+                      read: { _ in reads.append(clock); return left.isEmpty ? nil : left.removeFirst() },
+                      screenAttached: { screen }, after: later) { rebuilds.append(clock) }
+        runClock()
+        return (ms(reads), ms(rebuilds))
+    }
+    // Regression: the drawing layer is armed just before the mic starts in the same turn; a turn held past 0.2 s put the
+    // first look ahead of the order-in, and a panel that was fine was built again.
+    check("off at the first look, on 0.1 s later (before the order-in): not built again", watch("race", [false, true]) == ([200, 300], []))
+    check("off at both looks: built again once, at the second, then looked at once more", watch("off", [false, false, true]) == ([200, 300, 500], [300]))
+    check("off, then no answer: not built again", watch("unknown", [false, nil]) == ([200, 300], []))
+    check("still off after the rebuild: never built twice", watch("stuck", [false, false, false]) == ([200, 300, 500], [300]))
+    check("on at the first look: one look only", watch("on", [true]) == ([200], []))
+    check("hidden before the second look: it does nothing", watch("hidden", [false, false], shownUntil: 0.25) == ([200], []))
+    check("replaced before the second look (a display-change rebuild): it does nothing", watch("replaced", [false, false], replacedAt: 0.25) == ([200], []))
+    check("no display attached: one look, nothing built", watch("asleep", [false], screen: false) == ([200], []))
+    clock = 0
+    let shown = NSObject()
+    var earlierReads = 0, earlierRebuilds = 0, newerRebuilds = 0
+    watchOnScreen("again", { [(ObjectIdentifier(shown), 1)] }, read: { _ in earlierReads += 1; return false }, screenAttached: { true }, after: later) { earlierRebuilds += 1 }
+    later(0.25) { watchOnScreen("again", { [(ObjectIdentifier(shown), 1)] }, read: { _ in true }, screenAttached: { true }, after: later) { newerRebuilds += 1 } }
+    runClock()
+    check("a newer show before the second look: the earlier show's look does nothing", earlierReads == 1 && earlierRebuilds == 0 && newerRebuilds == 0)
+    check("window 0 is never a window: no answer", windowOnScreen(0) == nil)
+    check("a negative number: no answer", windowOnScreen(-1) == nil)
+    check("past a window id's range: no answer", windowOnScreen(Int(UInt32.max) + 1) == nil)
+    check("a window number nobody has: no answer", windowOnScreen(0x7fff_fff0) == nil)
+    exit(bad == 0 ? 0 : 1)
+}
 // --test-mics: which mics a take tries when the first won't open; exits 1 on a failure.
 if args.contains("--test-mics") {
     var bad = 0

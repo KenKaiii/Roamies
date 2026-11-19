@@ -119,6 +119,11 @@ final class Wave {
             tick()
             panel.orderFrontRegardless()
         }
+        // Shown but not drawn (spaces.swift): with builtScreens emptied, the display-change rebuild makes a new panel.
+        checkOnScreen("listening pill", { [weak self] in guard let self, self.shown else { return [] }; return [self.panel] }) { [weak self] in
+            self?.builtScreens = []
+            self?.rebuildIfScreensChanged()
+        }
         fade(to: hidden ? 0 : 1)
     }
 
