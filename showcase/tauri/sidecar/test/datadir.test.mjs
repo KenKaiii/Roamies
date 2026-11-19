@@ -137,4 +137,21 @@ const full = {
   assert.equal(fs.readFileSync(path.join(p.dir, 'settings.json'), 'utf8'), settings);
   assert.equal(dataPaths({ CLANKY_DATA_DIR: base }), p, 'resolved once');
 }
+// Clanky: ~/Roamies (from before the rename) becomes ~/Clanky in one move; an existing ~/Clanky is never touched,
+// and a background agent never moves it.
+{
+  const s = setup({});
+  fs.mkdirSync(path.join(s.home, 'Roamies', 'Data'), { recursive: true });
+  fs.writeFileSync(path.join(s.home, 'Roamies', 'Data', 'memory.json'), memory);
+  assert.equal(s.run({ agent: true }).dir, path.join(s.home, 'Clanky', 'Data'));
+  assert.ok(fs.existsSync(path.join(s.home, 'Roamies')), 'an agent leaves it');
+  const p = s.run();
+  assert.equal(p.dir, path.join(s.home, 'Clanky', 'Data'));
+  assert.equal(fs.readFileSync(path.join(p.dir, 'memory.json'), 'utf8'), memory, 'memory came across');
+  assert.ok(!fs.existsSync(path.join(s.home, 'Roamies')), 'moved, not copied');
+  assert.ok(s.logs.some((m) => /moved .*Roamies to .*Clanky/.test(m)));
+  fs.mkdirSync(path.join(s.home, 'Roamies'));
+  s.run();
+  assert.ok(fs.existsSync(path.join(s.home, 'Roamies')), 'with ~/Clanky there, a later ~/Roamies stays put');
+}
 console.log('datadir tests: passed');

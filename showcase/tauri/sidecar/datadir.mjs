@@ -69,6 +69,11 @@ function verify(files, tmp) {
  */
 export function migrateData({ base = baseDir(), old = oldBase(), agent = false, log = (m) => console.error(`[datadir] ${m}`), afterCopy } = {}) {
   const L = layout(base, old);
+  // Clanky: before the rename the folder was ~/Roamies. Same volume, so one rename moves everything at once.
+  const pre = path.join(base, 'Roamies');
+  if (!agent && !existsSync(L.root) && isDir(pre)) {
+    try { renameSync(pre, L.root); log(`moved ${pre} to ${L.root}`); } catch (e) { log(`couldn't move ${pre} to ${L.root}: ${e.message}`); }
+  }
   const paths = { root: L.root, dir: L.dir, config: L.config, legacy: false, migrated: false };
   const hasOld = isDir(L.oldDir) || existsSync(L.oldConfig);
   if (existsSync(L.dir) || !hasOld) return paths;
