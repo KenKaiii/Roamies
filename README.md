@@ -21,9 +21,9 @@
 </p>
 
 > [!NOTE]
-> **Clanky** is a modified fork of [Prathu3110/Clanky](https://github.com/Prathu3110/Clanky), maintained by
+> **Clanky** is a modified fork of [Roamies](https://github.com/KenKaiii/Roamies) by KenKaiii, maintained by
 > [Prathu3110](https://github.com/Prathu3110). It is licensed under AGPL-3.0, like the original. See
-> [docs/CLANKY_PLAN.md](docs/CLANKY_PLAN.md) for what changes. The rest of this README describes upstream Clanky.
+> [docs/CLANKY_PLAN.md](docs/CLANKY_PLAN.md) for what changes.
 
 Clanky is a little AI buddy that lives on your desktop. It stays by your cursor, talks back in its own
 voice, keeps track of what you said you'd do and nudges you when it's due.
