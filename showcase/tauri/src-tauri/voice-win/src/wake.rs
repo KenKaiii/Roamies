@@ -1,10 +1,10 @@
 // The wake phrase, "Hey Clanky": a port of WakeWord in voice/main.swift (keep the two in step). A greeting, then the
 // name, at the start of something said (the text's start or after a sentence end). Near-misses the recogniser writes
-// count too ("Romies", "Clanky's", "Roomies"). The name can be the user's own ("Hey Jarvis"); the greeting stays, so
+// count too ("Klanky", "Clanky's", "Cranky"). The name can be the user's own ("Hey Jarvis"); the greeting stays, so
 // the name alone in a sentence never wakes it.
 
 const GREETINGS: [&str; 5] = ["hey", "hi", "hay", "heya", "hiya"];
-const DEFAULT_NAMES: [&str; 2] = ["clanky", "clanky"];
+const DEFAULT_NAMES: [&str; 1] = ["clanky"];
 
 pub struct WakeWord {
     names: Vec<String>,
@@ -57,7 +57,11 @@ impl WakeWord {
     fn plausible(&self, heard: &str) -> bool {
         match (&self.custom, self.names.first()) {
             (Some(_), Some(n)) => heard.chars().next() == n.chars().next() && heard.chars().count() + 1 >= n.chars().count(),
-            _ => heard.starts_with('r') && heard.contains('m') && heard.chars().count() >= 5,
+            // Clanky: c or k, then l or r, with n and k ("Klanky", "Cranky", "clan key"; not "Clancy", "Chunky", "Clink").
+            _ => {
+                let c: Vec<char> = heard.chars().collect();
+                c.len() >= 6 && matches!(c[0], 'c' | 'k') && matches!(c[1], 'l' | 'r') && heard.contains('n') && heard.contains('k')
+            }
         }
     }
 
@@ -192,30 +196,29 @@ mod tests {
             ("hey clanky open safari", Some("open safari")),
             ("Hey, Clanky.", Some("")),
             ("Hi Clanky what time is it?", Some("what time is it?")),
-            ("Hey Romies", Some("")),
+            ("Hey Klanky", Some("")),
             ("Hey Clanky's, open Notes", Some("open Notes")),
-            ("Hey Clanky", Some("")),
-            ("Hey Roomies, play some music", Some("play some music")),
-            ("Hey Romi's", Some("")),
-            ("Hey, Romees.", Some("")),
-            ("Hey Romy's", None),
-            ("Hey roam ies, hello", Some("hello")),
+            ("Hey Cranky, play some music", Some("play some music")),
+            ("Hey Clanki", Some("")),
+            ("Hey, Clankie.", Some("")),
+            ("Hey Clankies", None),
+            ("Hey clan key, hello", Some("hello")),
             ("That's it. Hey Clanky, open Mail", Some("open Mail")),
             ("HEY CLANKY! What's on today?", Some("What's on today?")),
             ("Hey Clanky\u{2019} open notes", Some("open notes")),
-            ("Hey Ronnie", None),
-            ("Hey Robbie, come here", None),
-            ("Hey Rome", None),
-            ("Hey rooms", None),
-            ("Hey ramen", None),
-            ("Hey Remy", None),
-            ("Hey rhymes", None),
-            ("Hey room is ready", None),
+            ("Hey Clancy", None),
+            ("Hey Candy, come here", None),
+            ("Hey Lanky", None),
+            ("Hey Kenny", None),
+            ("Hey Frankie", None),
+            ("Hey Chunky", None),
+            ("Hey Clink", None),
+            ("Hey crank it up", None),
             ("Clanky is great", None),
             ("I told him hey Clanky", None),
             ("Um hey Clanky, open Mail", Some("open Mail")),
             ("Okay, hi Clanky", Some("")),
-            ("The hey Romies what time is it", Some("what time is it")),
+            ("The hey Klanky what time is it", Some("what time is it")),
             ("So I said hey Clanky", None),
             ("Hey there", None),
             ("Hey", None),

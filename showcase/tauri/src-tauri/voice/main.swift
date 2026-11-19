@@ -462,16 +462,16 @@ final class AutoGain {
 }
 
 // The wake phrase, "Hey Clanky": a greeting, then the name, at the start of something said (the text's start or
-// after a sentence end). Near-misses the recogniser really writes count too ("Romies", "Clanky's", "Roomies").
+// after a sentence end). Near-misses the recogniser really writes count too ("Klanky", "Clanky's", "Cranky").
 // The name can be the user's own ("Hey Jarvis"); the greeting stays, so the name alone in a sentence never wakes it.
 enum WakeWord {
     static let greetings: Set<String> = ["hey", "hi", "hay", "heya", "hiya"]
-    static let defaultNames = ["clanky", "clanky"]
+    static let defaultNames = ["clanky"]
     // Set and read on the main thread.
     private(set) static var names = defaultNames
     /// The chosen name as a word for the recogniser's hints ("Jarvis"); nil for Clanky.
     private(set) static var custom: String?
-    static var hints: [String] { ["Clanky", "Clanky", "JARVIS"] + (custom.map { [$0] } ?? []) }
+    static var hints: [String] { ["Clanky", "JARVIS"] + (custom.map { [$0] } ?? []) }
 
     /// Sets the name after the greeting; nil, "" or Clanky goes back to Clanky. Letters only, 4 to 20 of them;
     /// anything else is refused (returns false) and the name stays as it was.
@@ -486,7 +486,11 @@ enum WakeWord {
 
     /// Whether a heard word (within the allowed edits) is shaped like the name. Clanky keeps its own tuned rule.
     static func plausible(_ heard: String) -> Bool {
-        guard custom != nil, let n = names.first else { return heard.hasPrefix("r") && heard.contains("m") && heard.count >= 5 }
+        // Clanky: c or k, then l or r, with n and k ("Klanky", "Cranky", "clan key"; not "Clancy", "Chunky", "Clink").
+        guard custom != nil, let n = names.first else {
+            let c = Array(heard)
+            return c.count >= 6 && "ck".contains(c[0]) && "lr".contains(c[1]) && heard.contains("n") && heard.contains("k")
+        }
         return heard.first == n.first && heard.count >= n.count - 1
     }
 
@@ -536,7 +540,7 @@ enum WakeWord {
         }
         if late { return (nil, closest, "the phrase came after other words") }
         if let c = closest, c <= 4 { return (nil, closest, "a greeting, then a name \(c) letters off") }
-        let initial = names.first?.first ?? "r"
+        let initial = names.first?.first ?? "c"
         if words.contains(where: { $0.word.first == initial && distance($0.word) <= 2 }) { return (nil, closest, "the name without a greeting") }
         return (nil, closest, nil)
     }
@@ -1272,30 +1276,29 @@ if args.contains("--test-wake") {
     check("hey clanky open safari", "open safari")
     check("Hey, Clanky.", "")
     check("Hi Clanky what time is it?", "what time is it?")
-    check("Hey Romies", "")
+    check("Hey Klanky", "")
     check("Hey Clanky's, open Notes", "open Notes")
-    check("Hey Clanky", "")
-    check("Hey Roomies, play some music", "play some music")
-    check("Hey Romi's", "")
-    check("Hey, Romees.", "")
-    check("Hey Romy's", nil) // three edits away
-    check("Hey roam ies, hello", "hello")
+    check("Hey Cranky, play some music", "play some music")
+    check("Hey Clanki", "")
+    check("Hey, Clankie.", "")
+    check("Hey Clankies", nil) // three edits away
+    check("Hey clan key, hello", "hello")
     check("That's it. Hey Clanky, open Mail", "open Mail")
     check("HEY CLANKY! What's on today?", "What's on today?")
     check("Hey Clanky\u{2019} open notes", "open notes")
-    check("Hey Ronnie", nil)
-    check("Hey Robbie, come here", nil)
-    check("Hey Rome", nil)
-    check("Hey rooms", nil)
-    check("Hey ramen", nil)
-    check("Hey Remy", nil)
-    check("Hey rhymes", nil)
-    check("Hey room is ready", nil)
+    check("Hey Clancy", nil)
+    check("Hey Candy, come here", nil)
+    check("Hey Lanky", nil)
+    check("Hey Kenny", nil)
+    check("Hey Frankie", nil)
+    check("Hey Chunky", nil)
+    check("Hey Clink", nil)
+    check("Hey crank it up", nil)
     check("Clanky is great", nil)
     check("I told him hey Clanky", nil)
     check("Um hey Clanky, open Mail", "open Mail")
     check("Okay, hi Clanky", "")
-    check("The hey Romies what time is it", "what time is it")
+    check("The hey Klanky what time is it", "what time is it")
     check("So I said hey Clanky", nil)
     check("Hey there", nil)
     check("Hey", nil)

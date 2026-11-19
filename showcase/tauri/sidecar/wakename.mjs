@@ -9,7 +9,7 @@ const COMMON = new Set(['hello', 'there', 'okay', 'yeah', 'thanks', 'sorry', 'ri
 /** Typed text → { ok: true, name } (name '' means back to Clanky) or { ok: false, why }. */
 export function cleanWakeName(raw) {
   const t = String(raw ?? '').trim().replace(/^(hey|hi)[\s,]+/i, '');
-  if (!t || /^clanky?$/i.test(t)) return { ok: true, name: '' };
+  if (!t || /^clanky$/i.test(t)) return { ok: true, name: '' };
   if (/\s/.test(t)) return { ok: false, why: 'Just one word, please, like Jarvis.' };
   const w = t.replace(/[^\p{L}]/gu, '');
   if (w.length !== t.length) return { ok: false, why: 'Letters only, please.' };
