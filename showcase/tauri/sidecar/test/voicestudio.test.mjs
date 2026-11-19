@@ -24,8 +24,8 @@ const base = `http://127.0.0.1:${server.address().port}`;
 
 { // The address: loopback only, the default otherwise.
   assert.equal(studioUrl({}), STUDIO_DEFAULT_URL);
-  assert.equal(studioUrl({ ROAMIES_VOICESTUDIO_URL: 'http://localhost:4900/x' }), 'http://localhost:4900');
-  assert.equal(studioUrl({ ROAMIES_VOICESTUDIO_URL: 'http://example.com:3900' }), STUDIO_DEFAULT_URL, 'never a remote host');
+  assert.equal(studioUrl({ CLANKY_VOICESTUDIO_URL: 'http://localhost:4900/x' }), 'http://localhost:4900');
+  assert.equal(studioUrl({ CLANKY_VOICESTUDIO_URL: 'http://example.com:3900' }), STUDIO_DEFAULT_URL, 'never a remote host');
 }
 { // Fish voice cues are taken out: VoiceStudio's engines would read them aloud.
   assert.equal(plain('[warm] Hi there. [chuckling] Heh.'), 'Hi there. Heh.');

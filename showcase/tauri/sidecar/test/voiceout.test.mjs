@@ -1,11 +1,11 @@
-// Spoken replies' playback (showcase/roamies/voice-out.js): on Linux, chunks that come just late grow the cushion
+// Spoken replies' playback (showcase/clanky/voice-out.js): on Linux, chunks that come just late grow the cushion
 // (#80); elsewhere scheduling is unchanged. Run: npm test
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 
 const noop = () => {};
-const src = fs.readFileSync(new URL('../../../roamies/voice-out.js', import.meta.url), 'utf8');
+const src = fs.readFileSync(new URL('../../../clanky/voice-out.js', import.meta.url), 'utf8');
 const chunk = Buffer.alloc(4410 * 2).toString('base64'); // 0.1 s at 44.1 kHz
 // A player with its own clock; starts: when each chunk was scheduled to play.
 function player(linux) {
@@ -19,9 +19,9 @@ function player(linux) {
     createBuffer(_c, n, rate) { return { duration: n / rate, getChannelData: () => new Float32Array(n) }; }
     createBufferSource() { return { connect: noop, stop: noop, start(at) { starts.push({ at, d: this.buffer.duration }); } }; }
   }
-  const window = { Roamie: {}, ...(linux ? { ROAMIE_LINUX: 'x11' } : {}) };
+  const window = { Clanky: {}, ...(linux ? { CLANKY_LINUX: 'x11' } : {}) };
   vm.runInNewContext(src, { window, AudioContext, Float32Array, Math, Set, atob: (s) => Buffer.from(s, 'base64').toString('latin1') });
-  const out = window.Roamie.voiceOut;
+  const out = window.Clanky.voiceOut;
   const at = (t, id) => { clock.t = t; out.handle({ id, rate: 44100, pcm: chunk }); return starts.at(-1).at - t; };
   // Silence between chunks, from the nth one on.
   const gaps = (from) => { let g = 0; for (let i = from + 1; i < starts.length; i++) g += Math.max(0, starts[i].at - (starts[i - 1].at + starts[i - 1].d)); return g; };

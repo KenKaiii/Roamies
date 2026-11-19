@@ -1,4 +1,4 @@
-// Windows 11 starts a new tray icon hidden behind the ^ arrow, so people couldn't find Roamies (or its settings).
+// Windows 11 starts a new tray icon hidden behind the ^ arrow, so people couldn't find Clanky (or its settings).
 // There's no API to show it; Windows keeps the choice per program under HKCU\Control Panel\NotifyIconSettings\<id>
 // (ExecutablePath, and IsPromoted: 1 shows it next to the clock). Explorer makes that entry once the icon has been
 // added. Undocumented, so it's tried once and quietly given up on if the entry never shows up.
@@ -16,7 +16,7 @@ export function trayEntries(out) {
   return entries;
 }
 
-// The path may start with a known-folder GUID instead of the folder ("{F1B32785-…}\Roamies\roamies.exe"), so the
+// The path may start with a known-folder GUID instead of the folder ("{F1B32785-…}\Clanky\clanky.exe"), so the
 // program is matched on its folder and file name.
 const tail = (p) => String(p).toLowerCase().split(/[\\/]+/).filter(Boolean).slice(-2).join('\\');
 export const entriesFor = (entries, exe) => (exe ? entries.filter((e) => tail(e.path) === tail(exe) && tail(exe).includes('\\')) : []);

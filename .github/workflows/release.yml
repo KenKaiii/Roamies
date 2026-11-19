@@ -161,23 +161,23 @@ jobs:
           if (-not $setup) { throw 'No installer was built' }
           $p = Start-Process -FilePath $setup.FullName -ArgumentList '/S' -Wait -PassThru
           if ($p.ExitCode) { throw "The installer failed (exit code $($p.ExitCode))" }
-          $app = Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Roamies'), (Join-Path $env:ProgramFiles 'Roamies') -Filter roamies.exe -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $app) { throw 'roamies.exe is not where the installer puts it' }
+          $app = Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Clanky'), (Join-Path $env:ProgramFiles 'Clanky') -Filter clanky.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $app) { throw 'clanky.exe is not where the installer puts it' }
           $dir = $app.DirectoryName
           "Installed in $dir"
-          $missing = @('roamies-node.exe', 'roamies-voice.exe', 'roamies-hands.exe', 'sidecar/sidekick.mjs') | Where-Object { -not (Test-Path (Join-Path $dir $_)) }
+          $missing = @('clanky-node.exe', 'clanky-voice.exe', 'clanky-hands.exe', 'sidecar/sidekick.mjs') | Where-Object { -not (Test-Path (Join-Path $dir $_)) }
           if ($missing) { throw "The installed app is missing: $($missing -join ', ')" }
-          & (Join-Path $dir 'roamies-hands.exe') --self-test
+          & (Join-Path $dir 'clanky-hands.exe') --self-test
           if ($LASTEXITCODE) { throw "The installed hands helper failed its self-test ($LASTEXITCODE)" }
-          $perms = & (Join-Path $dir 'roamies-voice.exe') --perms
+          $perms = & (Join-Path $dir 'clanky-voice.exe') --perms
           if (-not ($perms -match '"type":"perms"')) { throw "The installed voice helper didn't start: $perms" }
           # Voice off so the first run doesn't download the voice model.
-          $data = Join-Path $env:RUNNER_TEMP 'roamies-installed'
+          $data = Join-Path $env:RUNNER_TEMP 'clanky-installed'
           New-Item -ItemType Directory -Force $data | Out-Null
           Set-Content (Join-Path $data 'sidekick.json') '{"onboarded":true,"setupVersion":2,"voice":false}'
-          $env:ROAMIES_DATA_DIR = $data
+          $env:CLANKY_DATA_DIR = $data
           $run = Start-Process -FilePath $app.FullName -PassThru
-          $logs = Join-Path $data 'Roamies/Data/logs' # the old-layout sidekick.json above moves in there first
+          $logs = Join-Path $data 'Clanky/Data/logs' # the old-layout sidekick.json above moves in there first
           $started = $false
           for ($i = 0; $i -lt 60; $i++) {
             Start-Sleep -Seconds 1
@@ -187,10 +187,10 @@ jobs:
           $alive = -not $run.HasExited
           if ($alive) { taskkill /PID $run.Id /T /F | Out-Null }
           if (-not ($started -and $alive)) {
-            Get-Content (Join-Path $env:USERPROFILE 'Roamies/Data/logs/sidekick.log') -ErrorAction SilentlyContinue | Select-Object -Last 40
-            throw "The installed Roamies didn't start its sidecar (started: $started, still running: $alive)"
+            Get-Content (Join-Path $env:USERPROFILE 'Clanky/Data/logs/sidekick.log') -ErrorAction SilentlyContinue | Select-Object -Last 40
+            throw "The installed Clanky didn't start its sidecar (started: $started, still running: $alive)"
           }
-          "The installed Roamies started its sidecar (pid $($run.Id))"
+          "The installed Clanky started its sidecar (pid $($run.Id))"
 
       # Tauri notarizes the app inside; the DMG around it is a download of its own that macOS checks too.
       - name: Notarize the DMG
@@ -233,19 +233,19 @@ jobs:
         run: |
           TAG="${GITHUB_REF_NAME}"
           [[ "$TAG" == v* ]] || TAG="v$(node -p "require('./src-tauri/tauri.conf.json').version")"
-          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --draft --title "Roamies $TAG" --generate-notes || true
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --draft --title "Clanky $TAG" --generate-notes || true
           shopt -s nullglob
           B=src-tauri/target/${{ matrix.target }}/release/bundle
           files=($B/dmg/*.dmg $B/nsis/*-setup.exe $B/appimage/*.AppImage $B/deb/*.deb $B/rpm/*.rpm)
           [ ${#files[@]} -gt 0 ] || { echo "No installers were built"; exit 1; }
-          # Update bundles: both Macs produce Roamies.app.tar.gz, so name them per architecture.
+          # Update bundles: both Macs produce Clanky.app.tar.gz, so name them per architecture.
           VER=$(node -p "require('./src-tauri/tauri.conf.json').version")
           if [ "$RUNNER_OS" = macOS ]; then
             ARCH=$([ "${{ matrix.target }}" = aarch64-apple-darwin ] && echo aarch64 || echo x64)
-            [ -f $B/macos/Roamies.app.tar.gz.sig ] || { echo "::error::No signed update bundle was built"; exit 1; }
-            cp $B/macos/Roamies.app.tar.gz "Roamies_${VER}_${ARCH}.app.tar.gz"
-            cp $B/macos/Roamies.app.tar.gz.sig "Roamies_${VER}_${ARCH}.app.tar.gz.sig"
-            files+=("Roamies_${VER}_${ARCH}.app.tar.gz" "Roamies_${VER}_${ARCH}.app.tar.gz.sig")
+            [ -f $B/macos/Clanky.app.tar.gz.sig ] || { echo "::error::No signed update bundle was built"; exit 1; }
+            cp $B/macos/Clanky.app.tar.gz "Clanky_${VER}_${ARCH}.app.tar.gz"
+            cp $B/macos/Clanky.app.tar.gz.sig "Clanky_${VER}_${ARCH}.app.tar.gz.sig"
+            files+=("Clanky_${VER}_${ARCH}.app.tar.gz" "Clanky_${VER}_${ARCH}.app.tar.gz.sig")
           elif [ "$RUNNER_OS" = Linux ]; then
             # In-app updates on Linux replace the AppImage; .deb and .rpm copies are pointed to the release page.
             sigs=($B/appimage/*.AppImage.sig)
@@ -280,15 +280,15 @@ jobs:
             const api = Object.fromEntries(JSON.parse(fs.readFileSync("assets.json", "utf8")).assets.map((a) => [a.name, a.apiUrl]));
             const link = (f) => { if (!api[f]) throw new Error(`${f} is not on the release`); return api[f]; };
             const platforms = {
-              "darwin-aarch64": `Roamies_${VER}_aarch64.app.tar.gz`,
-              "darwin-x86_64": `Roamies_${VER}_x64.app.tar.gz`,
-              "windows-x86_64": `Roamies_${VER}_x64-setup.exe`,
+              "darwin-aarch64": `Clanky_${VER}_aarch64.app.tar.gz`,
+              "darwin-x86_64": `Clanky_${VER}_x64.app.tar.gz`,
+              "windows-x86_64": `Clanky_${VER}_x64-setup.exe`,
             };
             // The Linux beta leg may have failed: its AppImage is listed only when it and its signature are there.
-            const linux = `Roamies_${VER}_amd64.AppImage`;
+            const linux = `Clanky_${VER}_amd64.AppImage`;
             if (api[linux] && fs.existsSync("sigs/" + linux + ".sig")) platforms["linux-x86_64"] = linux;
             else console.log("No Linux AppImage on this release: latest.json leaves Linux out.");
-            const out = { version: VER, notes: `Roamies ${VER}`, pub_date: new Date().toISOString(), platforms: {} };
+            const out = { version: VER, notes: `Clanky ${VER}`, pub_date: new Date().toISOString(), platforms: {} };
             for (const [k, f] of Object.entries(platforms)) out.platforms[k] = { signature: sig(f + ".sig"), url: link(f) };
             fs.writeFileSync("latest.json", JSON.stringify(out, null, 2));
           '

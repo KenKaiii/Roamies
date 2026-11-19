@@ -2,7 +2,7 @@
 //  - trail: the parts of a "do this, then that" request, ticking off as each finishes; a skipped part says why.
 // API on agent.cards: trail(e)
 (() => {
-  const R = window.Roamie;
+  const R = window.Clanky;
   const { clamp } = R;
   const G = R.glass;
   const BODY = `400 13px ${G.MONO}`, NOW = `500 13px ${G.MONO}`, SMALL = `400 11px ${G.MONO}`, HEAD = `500 10px ${G.MONO}`;

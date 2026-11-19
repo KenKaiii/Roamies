@@ -1,10 +1,10 @@
 // The mini agent: a small version of the Sidekick (the LED-matrix dither blob in its five-colour palette, ordered
 // dither, 3x3 dots on a 4 px grid at 2x, pixel eyes) drawn on a small canvas, in the poses of a background agent's
 // life: hatch, fly, work, wait, done, fail, stop. Also the pixel-art file icons of the "made" shelf and fileKind.
-// API: Roamie.minis.draw(ctx, { size, dpr, pose, t, time, glyph, vx, vy, squash, reduce, seed }), .icon(kind),
+// API: Clanky.minis.draw(ctx, { size, dpr, pose, t, time, glyph, vx, vy, squash, reduce, seed }), .icon(kind),
 //      .fileKind(name, dir), .KINDS
 (() => {
-  const R = window.Roamie;
+  const R = window.Clanky;
 
   // ---------- which icon a file gets ----------
   const EXT = {

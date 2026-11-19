@@ -29,7 +29,7 @@ const cfg = scrubConfig({ provider: 'anthropic', userName: 'Jane', fishKey: 'abc
 assert.deepEqual(cfg, { provider: 'anthropic', userName: '<redacted>', fishKey: '<redacted>', keys: { talk: ['control', 'option'], summon: 'Control+Alt+KeyS' }, sound: true, fishKeySaved: true, email: '' });
 
 // Long logs keep their newest lines, from a whole line.
-const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'roamies-diag-'));
+const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'clanky-diag-'));
 const big = path.join(dir, 'big.log');
 await fs.writeFile(big, Array.from({ length: 2000 }, (_, i) => `line ${i}`).join('\n') + '\n');
 const t = await tail(big, 1000);
@@ -51,12 +51,12 @@ assert.ok(act[1][1].startsWith('2026-11-10 event'), 'the newest day comes whole'
 
 // The report: a header saying where to send it, each section, all of it scrubbed.
 const report = buildReport({ now: new Date('2026-11-11T09:30:00Z'), version: '1.2.3', sections: [['System', { platform: 'win32' }], ['Voice helper log', '/Users/jane/x sk-ant-api03-AbCdEfGhIjKlMnOpQrSt'], ['Empty', '']] }, who);
-assert.match(report, /^Roamies diagnostics\nMade 2026-11-11T09:30:00\.000Z by Roamies 1\.2\.3\./);
-assert.match(report, /github\.com\/KenKaiii\/Roamies\/issues/);
+assert.match(report, /^Clanky diagnostics\nMade 2026-11-11T09:30:00\.000Z by Clanky 1\.2\.3\./);
+assert.match(report, /github\.com\/Prathu3110\/Clanky\/issues/);
 assert.match(report, /-------- System -+\n\{\n {2}"platform": "win32"\n\}/);
 assert.match(report, /-------- Voice helper log -+\n~\/x <key>\n/);
 assert.match(report, /-------- Empty -+\n\(none\)/);
 assert.ok(!report.includes('jane') && !report.includes('AbCdEf'));
-assert.equal(reportName(new Date('2026-11-11T09:30:05Z')), 'roamies-diagnostics-2026-11-11-09-30-05.log');
+assert.equal(reportName(new Date('2026-11-11T09:30:05Z')), 'clanky-diagnostics-2026-11-11-09-30-05.log');
 await fs.rm(dir, { recursive: true, force: true });
 console.log('diagnostics tests: passed');

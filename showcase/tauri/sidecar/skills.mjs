@@ -1,4 +1,4 @@
-// Skills: how-to memory, learned or installed from a link (a GitHub repo or folder, a skills.sh page, a SKILL.md). Each is ~/Roamies/Skills/<slug>/SKILL.md, with name and description up top
+// Skills: how-to memory, learned or installed from a link (a GitHub repo or folder, a skills.sh page, a SKILL.md). Each is ~/Clanky/Skills/<slug>/SKILL.md, with name and description up top
 // (the agentskills / GG layout) and the steps below. Only the index (one line each) rides in the live state; the
 // steps are read with use_skill when one fits. Every save goes through checkSkill (safety.mjs) and loses its keys.
 import { randomBytes } from 'node:crypto';
@@ -7,9 +7,9 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { redactKeys } from './diagnostics.mjs';
 import { BLOCK, checkFetch, checkSkill } from './safety.mjs';
-import { roamiesRoot } from './store.mjs';
+import { clankyRoot } from './store.mjs';
 
-export const SKILLS_DIR = path.join(roamiesRoot(), 'Skills');
+export const SKILLS_DIR = path.join(clankyRoot(), 'Skills');
 export const MAX_SKILLS = 60, MAX_STEPS = 6000, MAX_DESC = 200;
 
 /** A name → its folder name: lower case, a-z 0-9 and dashes, at most 48 characters; '' when nothing is left. */
@@ -132,7 +132,7 @@ export async function httpGet(url, { json = false, limit = MAX_SKILL_MD * 4, tim
   for (let hop = 0; hop < 4; hop++) {
     const v = await checkFetch(at);
     if (v.level === BLOCK) throw new Error(v.reason);
-    const res = await fetch(at, { redirect: 'manual', signal: AbortSignal.timeout(timeout), headers: { 'user-agent': 'Roamies', accept: json ? 'application/vnd.github+json' : 'text/plain, text/markdown, */*' } });
+    const res = await fetch(at, { redirect: 'manual', signal: AbortSignal.timeout(timeout), headers: { 'user-agent': 'Clanky', accept: json ? 'application/vnd.github+json' : 'text/plain, text/markdown, */*' } });
     if (res.status >= 300 && res.status < 400 && res.headers.get('location')) { at = new URL(res.headers.get('location'), at).href; continue; }
     if (res.status === 404) throw new Error(`Nothing at ${at} (404).`);
     if (res.status === 403 || res.status === 429) throw new Error('GitHub is limiting requests right now; try again in a few minutes.');

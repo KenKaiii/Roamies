@@ -1,5 +1,5 @@
 // Scheduled jobs: work a background agent does on a schedule ("every weekday at 8, sum up the tech news"), unlike a
-// reminder, which is only a nudge. Kept in ~/Roamies/Data/jobs.json on this computer only (never synced), so two
+// reminder, which is only a nudge. Kept in ~/Clanky/Data/jobs.json on this computer only (never synced), so two
 // computers never run the same job twice. Runs missed while the computer slept come back as one catch-up run.
 import { randomBytes } from 'node:crypto';
 import path from 'node:path';

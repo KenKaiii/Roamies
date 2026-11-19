@@ -7,8 +7,8 @@ import { EMOTES } from './reply.mjs';
 export const QUESTIONS = 4;
 const NOTE = '[Getting to know you: a note from the app, not typed by the user]';
 
-// me: the Roamie's own name (its look's: Roamie, JARVIS, Sarah…).
-export const opener = (name, me = 'Roamie') => `Hi ${name}, I'm ${me}! I'm here to help you get things done and keep you on track, whatever you're going for. I'm just curious about you, so I've got four quick questions. What are you working on these days?`;
+// me: the Clanky's own name (its look's: Clanky, JARVIS, Sarah…).
+export const opener = (name, me = 'Clanky') => `Hi ${name}, I'm ${me}! I'm here to help you get things done and keep you on track, whatever you're going for. I'm just curious about you, so I've got four quick questions. What are you working on these days?`;
 
 const RULES = (name) => `This is a short, relaxed get-to-know-you chat; ${name} just set you up. Be a curious friend who happens to be a little pixel creature on their screen, not an interviewer or a coach. You want the general shape of their days: what they do, what they're working on or learning, the apps and projects they live in (by name), and ONE real goal in their words (a launch, a number, a deadline, a thing they want to exist; doing their job well is a full answer, never push for a bigger dream). Never assume they run a business. Never ask about their personal life, what's blocking them, how they'll get there, or their name. No tools this chat. Keep it in bubbles: no "- " lines, no dashes of any kind.
 SKIPPING: if they want to skip, stop or get out of this chat (any words, any language), let them: ONE short friendly line with no question in it, and nothing else. Don't argue or ask why.
@@ -80,7 +80,7 @@ const GOAL = /\b(goal|want(?:s|ed)? to|aim|aiming|launch|build|grow|finish|reach
 /** The fact that reads most like their goal, or null. */
 export const goalFrom = (facts = []) => facts.map((f) => String(f.text ?? f)).find((t) => GOAL.test(t)) ?? null;
 /** The tour's beats: three tickets and, with a goal, its medal. mac: whether the how-to ticket can use words on screen. */
-export function tourBeats(name, me = 'Roamie', goal = null, { mac = true } = {}) {
+export function tourBeats(name, me = 'Clanky', goal = null, { mac = true } = {}) {
   const ask = (value) => ({ do: 'ask', value });
   const beats = [
     { say: `[warm] Okay ${name}, here's what I can do. Tap one to try it.`, marks: [{ kind: 'ticket', n: 1, title: 'Show you how', text: "Ask how to do something in an app and I'll draw each step right on your screen.", label: 'Try it', action: ask(mac ? 'How do I take a screenshot on this Mac?' : 'How do I change my wallpaper?') }] },
@@ -97,7 +97,7 @@ export function tourBeats(name, me = 'Roamie', goal = null, { mac = true } = {})
 // Hardcoded content (no model call), plain draw beats like the tour above. The last beat only wraps up.
 export const SHOWCASE = ['web', 'graph', 'timeline', 'molecule', 'model', 'list'];
 const savings = (rate) => Array.from({ length: 16 }, (_, i) => [i * 2, Math.round(1000 * (1 + rate) ** (i * 2))]);
-export function showcaseBeats(name, me = 'Roamie') {
+export function showcaseBeats(name, me = 'Clanky') {
   const beats = [
     { say: `[warm] Here's a quick look at what I can do, ${name}. First, I can search the web for you.`, marks: [{ kind: 'card', title: 'web search', heading: 'How tall is Everest?', text: '8,849 metres. China and Nepal agreed on that height together in 2020.', sources: [{ name: 'Wikipedia', url: 'https://en.wikipedia.org/wiki/Mount_Everest' }, { name: 'BBC', url: 'https://www.bbc.com/news/world-asia-55218208' }] }] },
     { say: 'I can turn numbers into graphs, like how saving grows.', marks: [{ kind: 'graph', title: '$1,000 over 30 years', x_range: [0, 30], plots: [{ points: savings(0.07), tone: 'accent', label: 'at 7%' }, { points: savings(0), tone: 'amber', label: 'under the bed' }] }] },

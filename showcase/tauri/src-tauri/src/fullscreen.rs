@@ -62,7 +62,7 @@ pub(crate) fn watch(app: AppHandle) {
                         if on {
                             let _ = w.set_ignore_cursor_events(true);
                         }
-                        let _ = w.eval(format!("window.__roamieGame&&__roamieGame({on})"));
+                        let _ = w.eval(format!("window.__clankyGame&&__clankyGame({on})"));
                     }
                 }
             }

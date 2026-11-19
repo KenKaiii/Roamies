@@ -55,7 +55,7 @@ cases('read', (p) => checkRead(p, HOME), [
   ['~/.ssh/id_ed25519', BLOCK], ['~/.ssh/config', BLOCK], ['~/.gg/auth.json', BLOCK], ['~/projects/app/.env', BLOCK],
   ['~/projects/app/.env.local', BLOCK], ['~/.aws/credentials', BLOCK], ['~/certs/server.key', BLOCK], ['~/.config/gh/hosts.yml', BLOCK],
   ['~/Library/Containers/com.apple.mail/Data', BLOCK], ['~/Library/Messages/chat.db', BLOCK], ['~/../ken/.ssh/id_rsa', BLOCK],
-  ['/Users/ken/.ssh/id_rsa', BLOCK], ['~/Library/Application Support/Google/Chrome/Default/Cookies', BLOCK], ['~/.tauri/roamies-updater.key', BLOCK],
+  ['/Users/ken/.ssh/id_rsa', BLOCK], ['~/Library/Application Support/Google/Chrome/Default/Cookies', BLOCK], ['~/.tauri/clanky-updater.key', BLOCK],
   ['~/.env.example.md', SAFE], ['~/environment.txt', SAFE],
 ]);
 assert.equal(checkRead('~', HOME, { recursive: true }).level, BLOCK, 'searching all of home is blocked');
@@ -66,7 +66,7 @@ assert.equal(checkRead('~', HOME).level, SAFE, 'listing home (not recursing) is 
 cases('write', (p) => checkWrite(p, HOME), [
   ['~/notes.txt', SAFE], ['~/Desktop/todo.md', SAFE], ['/tmp/out.txt', SAFE], ['~/projects/app/src/new.js', SAFE],
   ['~/.zshrc', BLOCK], ['~/.bash_profile', BLOCK], ['~/Library/LaunchAgents/evil.plist', BLOCK], ['~/.ssh/authorized_keys', BLOCK],
-  ['~/.gg/auth.json', BLOCK], ['/etc/hosts', BLOCK], ['/Applications/Roamies.app/Contents/x', BLOCK], ['/usr/local/bin/x', BLOCK],
+  ['~/.gg/auth.json', BLOCK], ['/etc/hosts', BLOCK], ['/Applications/Clanky.app/Contents/x', BLOCK], ['/usr/local/bin/x', BLOCK],
   ['~/.gitconfig', BLOCK], ['~/projects/app/.env', BLOCK], ['~/../../etc/passwd', BLOCK], ['~/Library/Preferences/com.apple.x.plist', BLOCK],
 ]);
 assert.equal(checkWrite('~/notes.txt', HOME, { exists: true }).level, ASK, 'overwriting an existing file asks first');
@@ -323,7 +323,7 @@ cases('read-only loopholes', cmd, [
 ]);
 // Wildcards and symlinks into secrets, with real files: ~/.ss*/id_* reads ~/.ssh/id_rsa once the shell expands it.
 {
-  const home = fs.realpathSync(fs.mkdtempSync(nodePath.join(os.tmpdir(), 'roamies-safety-')));
+  const home = fs.realpathSync(fs.mkdtempSync(nodePath.join(os.tmpdir(), 'clanky-safety-')));
   fs.mkdirSync(nodePath.join(home, '.ssh')); fs.writeFileSync(nodePath.join(home, '.ssh', 'id_rsa'), 'key');
   fs.writeFileSync(nodePath.join(home, 'notes.txt'), 'hi');
   let links = true; // Windows may not allow symlinks without extra rights: those cases are skipped there
@@ -345,13 +345,13 @@ cases('read-only loopholes', cmd, [
   // An agent's own folder: overwriting inside it is fine without a yes; outside it, or through a link that leads out
   // of it, still asks, and protected files stay blocked.
   {
-    const own = nodePath.join(home, 'Roamies', 'Agents', 'Dog page');
+    const own = nodePath.join(home, 'Clanky', 'Agents', 'Dog page');
     fs.mkdirSync(nodePath.join(own, 'files'), { recursive: true });
     fs.writeFileSync(nodePath.join(own, 'files', 'index.html'), 'x');
     fs.writeFileSync(nodePath.join(home, 'notes.txt'), 'x');
     const w = (p, exists = true) => checkWrite(p, home, { exists, own });
     assert.equal(w(nodePath.join(own, 'files', 'index.html')).level, SAFE, 'overwriting in its own folder needs no yes');
-    assert.equal(w('~/Roamies/Agents/Dog page/files/index.html').level, SAFE, 'also written from ~');
+    assert.equal(w('~/Clanky/Agents/Dog page/files/index.html').level, SAFE, 'also written from ~');
     assert.equal(w('~/notes.txt').level, ASK, 'overwriting outside its folder still asks');
     assert.equal(w(nodePath.join(own, '..', 'other', 'a.txt')).level, ASK, 'a .. out of its folder still asks');
     assert.equal(checkWrite(nodePath.join(own, 'files', 'index.html'), home, { exists: true }).level, ASK, 'without own it asks as before');
@@ -417,7 +417,7 @@ console.log('safety loophole tests: passed');
   console.log('checkFetch tests: passed');
 }
 
-// Learned skills: steps the Roamie follows later. Ordinary how-tos pass; reading secrets, keeping things from the
+// Learned skills: steps the Clanky follows later. Ordinary how-tos pass; reading secrets, keeping things from the
 // user, skipping their yes and fake app instructions are refused.
 {
   const { checkSkill } = await import('../safety.mjs');
@@ -500,32 +500,32 @@ console.log('safety loophole tests: passed');
   console.log('MCP safety tests: passed');
 }
 
-// Skills live in ~/Roamies/Skills: only save_skill and install_skill (screened, and asked) write there, never
+// Skills live in ~/Clanky/Skills: only save_skill and install_skill (screened, and asked) write there, never
 // write_file or a shell redirect, so a page can't plant one; the agents' folder beside it stays writable.
 {
   const H = '/Users/k';
-  assert.equal(checkWrite('~/Roamies/Skills/x/SKILL.md', H).level, BLOCK);
-  assert.equal(checkWrite('/Users/k/Roamies/skills/x/notes.md', H).level, BLOCK, 'any case');
-  assert.equal(checkWrite('~/Roamies/Agents/a/files/x.md', H).level, SAFE, 'agents still save their work');
-  assert.equal(classifyCommand('echo hi > ~/Roamies/Skills/x/SKILL.md', H, { exists: () => false }).level, BLOCK);
-  assert.equal(classifyCommand('cp a.md ~/Roamies/Skills/x/SKILL.md', H, { exists: () => false }).level, ASK, 'a copy asks first');
-  assert.equal(classifyCommand('cat ~/Roamies/Skills/pdf/SKILL.md', H, { exists: () => false }).level, SAFE, 'reading one is fine');
+  assert.equal(checkWrite('~/Clanky/Skills/x/SKILL.md', H).level, BLOCK);
+  assert.equal(checkWrite('/Users/k/Clanky/skills/x/notes.md', H).level, BLOCK, 'any case');
+  assert.equal(checkWrite('~/Clanky/Agents/a/files/x.md', H).level, SAFE, 'agents still save their work');
+  assert.equal(classifyCommand('echo hi > ~/Clanky/Skills/x/SKILL.md', H, { exists: () => false }).level, BLOCK);
+  assert.equal(classifyCommand('cp a.md ~/Clanky/Skills/x/SKILL.md', H, { exists: () => false }).level, ASK, 'a copy asks first');
+  assert.equal(classifyCommand('cat ~/Clanky/Skills/pdf/SKILL.md', H, { exists: () => false }).level, SAFE, 'reading one is fine');
   console.log('safety (skills folder) tests: passed');
 }
 
-// Roamies' own data (~/Roamies/Data: settings, memory, chats) is protected as ~/.gg was: readable, never written by a
+// Clanky' own data (~/Clanky/Data: settings, memory, chats) is protected as ~/.gg was: readable, never written by a
 // tool, and the Windows key store there is never read.
 {
   const H = '/Users/k', WH = 'C:\\Users\\ken';
-  assert.equal(checkWrite('~/Roamies/Data/settings.json', H).level, BLOCK);
-  assert.equal(checkWrite('/Users/k/roamies/data/memory.json', H).level, BLOCK, 'any case');
-  assert.equal(checkWrite('C:\\Users\\ken\\Roamies\\Data\\settings.json', WH).level, BLOCK, 'on Windows too');
-  assert.equal(classifyCommand('echo {} > ~/Roamies/Data/settings.json', H, { exists: () => false }).level, BLOCK);
-  assert.equal(classifyCommand('rm -rf ~/Roamies/Data', H, { exists: () => true }).level, ASK, 'deleting asks first, as for ~/.gg');
-  assert.equal(checkRead('~/Roamies/Data/secrets.json', H).level, BLOCK, 'the Windows key store');
-  assert.equal(checkRead('C:\\Users\\ken\\Roamies\\Data\\secrets.json', WH).level, BLOCK);
-  assert.equal(checkRead('~/Roamies/Data/logs/2026-11-18.log', H).level, SAFE, 'reading its own logs is fine');
-  assert.equal(checkWrite('~/Roamies/Database/x.md', H).level, SAFE, 'only the Data folder itself');
-  assert.equal(checkWrite('~/Roamies/Agents/a/files/Data/x.md', H).level, SAFE, 'an agent folder named Data is theirs');
+  assert.equal(checkWrite('~/Clanky/Data/settings.json', H).level, BLOCK);
+  assert.equal(checkWrite('/Users/k/clanky/data/memory.json', H).level, BLOCK, 'any case');
+  assert.equal(checkWrite('C:\\Users\\ken\\Clanky\\Data\\settings.json', WH).level, BLOCK, 'on Windows too');
+  assert.equal(classifyCommand('echo {} > ~/Clanky/Data/settings.json', H, { exists: () => false }).level, BLOCK);
+  assert.equal(classifyCommand('rm -rf ~/Clanky/Data', H, { exists: () => true }).level, ASK, 'deleting asks first, as for ~/.gg');
+  assert.equal(checkRead('~/Clanky/Data/secrets.json', H).level, BLOCK, 'the Windows key store');
+  assert.equal(checkRead('C:\\Users\\ken\\Clanky\\Data\\secrets.json', WH).level, BLOCK);
+  assert.equal(checkRead('~/Clanky/Data/logs/2026-11-18.log', H).level, SAFE, 'reading its own logs is fine');
+  assert.equal(checkWrite('~/Clanky/Database/x.md', H).level, SAFE, 'only the Data folder itself');
+  assert.equal(checkWrite('~/Clanky/Agents/a/files/Data/x.md', H).level, SAFE, 'an agent folder named Data is theirs');
   console.log('safety (data folder) tests: passed');
 }

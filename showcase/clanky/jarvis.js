@@ -4,7 +4,7 @@
 // Everything else (following, bubbles, tools, sizes) is the same sidekick; 10-dither.js calls into this when
 // the look is 'jarvis'. Pure drawing: it only writes LED cells through the kit it's given.
 (() => {
-  const R = window.Roamie;
+  const R = window.Clanky;
   const TAU = Math.PI * 2;
   const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
   const smooth = (x) => (x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x));

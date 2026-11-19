@@ -4,7 +4,7 @@
 // a tick), and lines that never close fade. The picture sent with what was said is the helper's own capture, with
 // the strokes drawn into it; this canvas is left out of captures like the rest of the overlay.
 (() => {
-  const R = window.Roamie;
+  const R = window.Clanky;
   if (!R || typeof document === 'undefined') return;
   // The pen's colours and size, the same as ink.js and voice/ink.swift.
   const ACC = '#78ffe2', EDGE = 'rgba(3,39,34,0.6)', RADIUS = 2.8;

@@ -1,5 +1,5 @@
 // Models served on this computer or the user's own servers: Ollama, LM Studio, and any OpenAI-compatible server they
-// add (llama.cpp, vLLM, oMLX…). gg-core finds the models and talks to them; this picks the ones Roamies can use and
+// add (llama.cpp, vLLM, oMLX…). gg-core finds the models and talks to them; this picks the ones Clanky can use and
 // keeps their context window honest.
 import {
   DEFAULT_LOCAL_ENDPOINTS, LOCAL_API_KEY_PLACEHOLDER, clearRuntimeModels, localAuthStorageKey, parseLocalModelId, probeEndpoint,
@@ -17,7 +17,7 @@ export const MIN_CONTEXT = 32_768;
 // The window gg-core gives a model of this size (room for the prompt on small windows).
 export const withWindow = (info, contextWindow) => ({ ...info, contextWindow, maxOutputTokens: Math.max(512, Math.min(4096, Math.floor(contextWindow / 4))) });
 
-/** Models Roamies can run: it reads screenshots and drives tools, so both are needed. `windows`: measured contexts by id. */
+/** Models Clanky can run: it reads screenshots and drives tools, so both are needed. `windows`: measured contexts by id. */
 export const localModels = (probes, windows = new Map()) => probes.filter((p) => p.reachable).flatMap((p) => p.models
   .filter((m) => m.supportsImages && m.supportsTools)
   .map((m) => { const info = toModelInfo(m, p.endpoint); return !m.contextWindowKnown && windows.has(info.id) ? withWindow(info, windows.get(info.id)) : info; }));
@@ -35,7 +35,7 @@ export const serverList = (saved) => [...BUILT_IN, ...(Array.isArray(saved) ? sa
 /** The server a local model id runs on, from the list. */
 export const serverFor = (servers, modelId) => servers.find((s) => s.id === parseLocalModelId(modelId ?? '')?.endpointId);
 
-/** The address as Roamies stores it: http(s), no key or query in it, and `/v1` when only the host was given. Else null. */
+/** The address as Clanky stores it: http(s), no key or query in it, and `/v1` when only the host was given. Else null. */
 export function serverUrl(text) {
   let u;
   try { u = new URL(String(text ?? '').trim()); } catch { return null; }

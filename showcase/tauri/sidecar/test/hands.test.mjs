@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 if (!['darwin', 'win32'].includes(process.platform)) { console.log('hands tests: skipped (macOS and Windows only)'); process.exit(0); }
-const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'roamies-hands-test-'));
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clanky-hands-test-'));
 // A .mjs helper runs on this Node (tools.mjs), so the same fake works on Windows.
 const log = path.join(dir, 'calls.jsonl'), fake = path.join(dir, 'hands.mjs');
 fs.writeFileSync(fake, `import fs from 'node:fs'; const a = process.argv.slice(2);
@@ -14,7 +14,7 @@ fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify(a) + '\\n');
 const swap = ${JSON.stringify(path.join(dir, 'front.json'))};
 const win = fs.existsSync(swap) ? JSON.parse(fs.readFileSync(swap, 'utf8')) : { id: 7, app: 'TextEdit', title: 'notes.txt', bounds: [0, 0, 800, 600] };
 let o = { ok: true, window: win };
-if (a[0] === 'act') { const p = JSON.parse(a[1]); o = p.app === 'NoSuchAppRoamiesTest' ? { ok: false, error: 'No matching window is open.' } : { ok: true, done: p.steps.map((s) => s.do), window: win }; }
+if (a[0] === 'act') { const p = JSON.parse(a[1]); o = p.app === 'NoSuchAppClankyTest' ? { ok: false, error: 'No matching window is open.' } : { ok: true, done: p.steps.map((s) => s.do), window: win }; }
 // Live progress on stderr, as the real helpers write it: where each step lands, what it types, when it takes the cursor.
 if (a[0] === 'act' && JSON.parse(a[1]).app === 'HopTest') {
   for (const d of [{ ev: 'start', window: win, steps: 3 }, { ev: 'step', i: 0, do: 'click', label: 'Save', bounds: [100, 200, 80, 24] }, { ev: 'step', i: 1, do: 'key', label: 'cmd+a' },
@@ -27,7 +27,7 @@ if (a[0] === 'front') { if (win.slowFront) { const t = Date.now(); while (Date.n
 if (a[0] === 'capture') { fs.writeFileSync(a[1], 'x'); o = { ok: true, file: a[1], window: win, pixels: [800, 600] }; }
 console.log(JSON.stringify(o));
 `);
-process.env.ROAMIES_HANDS = fake;
+process.env.CLANKY_HANDS = fake;
 const { createTools } = await import('../tools.mjs');
 const noop = async () => {};
 const { tools } = createTools({ allowActions: () => true, ui: () => {}, ask: async () => false, openUrl: noop, onCommitments: noop, showList: noop, fmtWhen: String, commitmentsText: () => '', userName: 'Test' });
@@ -71,12 +71,12 @@ assert.equal(calls().find((c) => c[0] === 'capture').length, 4, 'no preview thum
 }
 
 // An app that isn't installed: one clear answer instead of "No matching window".
-await assert.rejects(tool('act_in_app').execute({ target: 'NoSuchAppRoamiesTest', steps: [{ do: 'key', key: 'return' }] }, ctx), /no app called "NoSuchAppRoamiesTest"/);
-await assert.rejects(tool('open').execute({ target: 'NoSuchAppRoamiesTest' }, ctx), /no app called "NoSuchAppRoamiesTest"/);
+await assert.rejects(tool('act_in_app').execute({ target: 'NoSuchAppClankyTest', steps: [{ do: 'key', key: 'return' }] }, ctx), /no app called "NoSuchAppClankyTest"/);
+await assert.rejects(tool('open').execute({ target: 'NoSuchAppClankyTest' }, ctx), /no app called "NoSuchAppClankyTest"/);
 
 // A bare web address opens as a link (in the app asked for), not as an app called "example.com".
-const opened = await tool('open').execute({ target: 'example.invalid-tld-roamies.test', app: 'NoSuchAppRoamiesTest' }, ctx).catch((e) => String(e.message));
-assert.match(opened, /no app called "NoSuchAppRoamiesTest"/, 'treated as a link opened in the named app');
+const opened = await tool('open').execute({ target: 'example.invalid-tld-clanky.test', app: 'NoSuchAppClankyTest' }, ctx).catch((e) => String(e.message));
+assert.match(opened, /no app called "NoSuchAppClankyTest"/, 'treated as a link opened in the named app');
 
 // draw: a walkthrough waits for each click, and each next step is looked up only after it (the screen has changed).
 {
@@ -235,7 +235,7 @@ assert.match(opened, /no app called "NoSuchAppRoamiesTest"/, 'treated as a link 
   await t.find((x) => x.name === 'act_in_app').execute({ target: 'TextEdit', steps: [{ do: 'key', key: 'return' }] }, ctx);
   assert.deepEqual(seen, [{ on: true, acted: false }, { on: false, acted: true }], 'click-through on before acting, off after');
   seen.length = 0;
-  await t.find((x) => x.name === 'act_in_app').execute({ target: 'NoSuchAppRoamiesTest', steps: [{ do: 'key', key: 'return' }] }, ctx).catch(() => {});
+  await t.find((x) => x.name === 'act_in_app').execute({ target: 'NoSuchAppClankyTest', steps: [{ do: 'key', key: 'return' }] }, ctx).catch(() => {});
   assert.equal(seen.at(-1)?.on, false, 'click-through released after a failed act');
 }
 
@@ -274,7 +274,7 @@ assert.match(opened, /no app called "NoSuchAppRoamiesTest"/, 'treated as a link 
   await graph();
   // An app that doesn't exist, so the test never opens a real browser tab (it did, on every run): the drawing goes
   // as soon as the open is attempted.
-  await tool('open').execute({ target: 'https://example.invalid-tld-roamies.test', app: 'NoSuchAppRoamiesTest' }).catch(() => {});
+  await tool('open').execute({ target: 'https://example.invalid-tld-clanky.test', app: 'NoSuchAppClankyTest' }).catch(() => {});
   assert.equal(made.ink.describe(), '', 'so does opening a page');
   // A walkthrough waiting for a click: that click is the step, not the screen going away.
   made.nextTurn(); hold = true;

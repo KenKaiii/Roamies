@@ -1,7 +1,7 @@
 // The countries a map card can show: Natural Earth 110m admin-0 countries, public domain (naturalearthdata.com).
 // n: name, c: continent, b: the box a map of it fits [west, south, east, north] in degrees (east can pass 180), at: where
 // its name goes [longitude, latitude], a: other names it goes by (lower case, no accents). The order matches the
-// outlines in showcase/roamies/world.js. Generated, not edited by hand.
+// outlines in showcase/clanky/world.js. Generated, not edited by hand.
 export const COUNTRIES = [
   {"n":"Fiji","c":"oceania","b":[177.3,-18.3,180.2,-16.0],"at":[178.0,-17.8],"a":["fji","republic of fiji"]},
   {"n":"Tanzania","c":"africa","b":[29.3,-11.7,40.3,-1.0],"at":[35.0,-6.1],"a":["united republic of tanzania","tza"]},

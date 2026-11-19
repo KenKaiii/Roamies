@@ -1,14 +1,14 @@
-// The click shape of the overlay on Linux (showcase/roamies/core.js: Roamie.hitRects). Run: npm test
+// The click shape of the overlay on Linux (showcase/clanky/core.js: Clanky.hitRects). Run: npm test
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 
 const noop = () => {};
 const window = {};
-vm.runInNewContext(fs.readFileSync(new URL('../../../roamies/core.js', import.meta.url), 'utf8'), {
+vm.runInNewContext(fs.readFileSync(new URL('../../../clanky/core.js', import.meta.url), 'utf8'), {
   window, Math, Map, performance, matchMedia: () => ({ matches: false, addEventListener: noop }), addEventListener: noop, document: { addEventListener: noop },
 });
-const { hitRects } = window.Roamie;
+const { hitRects } = window.Clanky;
 const plain = (a) => Array.from(a);
 const inRect = (r) => (x, y) => x >= r[0] && x < r[0] + r[2] && y >= r[1] && y < r[1] + r[3];
 const covers = (rects, x, y) => { for (let i = 0; i < rects.length; i += 4) if (inRect(rects.slice(i, i + 4))(x, y)) return true; return false; };
@@ -23,7 +23,7 @@ assert.deepEqual(plain(hitRects(() => false, [0, 0, 400, 300])), []);
   assert.deepEqual(plain(hitRects(inRect([120, 60, 96, 48]), [0, 0, 400, 300], 12, 0)), [120, 60, 96, 48], 'no pad: exactly the block');
 }
 
-// A circle (the Roamie) is covered everywhere, and nothing far from it is.
+// A circle (the Clanky) is covered everywhere, and nothing far from it is.
 {
   const circle = (x, y) => Math.hypot(x - 200, y - 150) < 40;
   const r = plain(hitRects(circle, [100, 50, 200, 200]));

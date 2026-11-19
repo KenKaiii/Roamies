@@ -16,7 +16,7 @@ export const FISH_CHOICES = [
   { id: 'drama-3', name: 'Drama 3', perM: 50, promo: { perM: 10, until: '2026-12-01T08:00:00Z' } },
   { id: 's2.1-pro', name: 'S2.1 Pro', perM: 15 },
 ];
-// Roamie's own voice (the default look); JARVIS's is in sidekick.mjs LOOKS.
+// Clanky's own voice (the default look); JARVIS's is in sidekick.mjs LOOKS.
 export const DEFAULT_VOICE = '2680da81de8348a68e1f4dbaa79272f1';
 export const RATE = 44100;
 

@@ -63,7 +63,7 @@ assert.deepEqual(toolsFor('hacker', all), [], 'an unknown type gets nothing');
 
 // finish: short words, real files inside its own folder.
 {
-  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'roamies-agents-')));
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'clanky-agents-')));
   const dir = path.join(root, 'job'), out = path.join(root, 'Desktop');
   fs.mkdirSync(path.join(dir, 'files'), { recursive: true }); fs.mkdirSync(out);
   fs.writeFileSync(path.join(dir, 'files', 'index.html'), '<h1>hi</h1>');
@@ -227,8 +227,8 @@ assert.match(agentSystem('maker', { dir: '/x', returns: 'answer' }), /report is 
 }
 // The manager, with a fake fork: folders, states, limits, yes/no, finishing, stopping.
 {
-  const home = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'roamies-agentmgr-')));
-  const root = path.join(home, 'Roamies');
+  const home = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'clanky-agentmgr-')));
+  const root = path.join(home, 'Clanky');
   let T = new Date(2026, 10, 13, 14, 5).getTime();
   const children = [], events = [], opened = [], revealed = [];
   const fork = (runner, args, opts) => {
@@ -401,7 +401,7 @@ assert.match(agentSystem('maker', { dir: '/x', returns: 'answer' }), /report is 
   assert.equal(fs.readFileSync(path.join(desk, 'card 2.txt'), 'utf8'), 'made');
   assert.ok(await mgr.openFile(g.id, path.join(desk, 'card 2.txt')), 'its delivered copy opens too');
   await assert.rejects(mgr.start({ type: 'maker', title: 'x', brief: 'x', deliver_to: '~/.ssh' }), /Can't deliver/);
-  // Next launch: one still marked working was cut off when Roamies closed.
+  // Next launch: one still marked working was cut off when Clanky closed.
   const live = await mgr.start({ type: 'maker', title: 'Cut off', brief: 'x' });
   mgr.stopAll();
   await tick();
@@ -410,7 +410,7 @@ assert.match(agentSystem('maker', { dir: '/x', returns: 'answer' }), /report is 
   const again = mk();
   await again.loaded;
   assert.equal(again.get(live.id).state, 'stopped');
-  assert.equal(again.get(live.id).reason, 'Roamies closed');
+  assert.equal(again.get(live.id).reason, 'Clanky closed');
   assert.equal(again.get(a.id).title, 'Dog brand landing page', 'earlier agents are known again');
   again.stopAll();
   await tick();
@@ -435,7 +435,7 @@ assert.match(agentSystem('maker', { dir: '/x', returns: 'answer' }), /report is 
 
 // Handoffs carry the user's exact words: into the agent's brief, into steering, and back in the news.
 {
-  const home = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'roamies-agentwords-')));
+  const home = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'clanky-agentwords-')));
   const children = [];
   const fork = () => { const c = new EventEmitter(); Object.assign(c, { sent: [], connected: true, send(m) { c.sent.push(m); }, kill() {} }); children.push(c); return c; };
   let said = 'Build me a page for Woof Co. Keep "Woof & Co" in caps, blue, 3 sections';
@@ -444,7 +444,7 @@ assert.match(agentSystem('maker', { dir: '/x', returns: 'answer' }), /report is 
     image: () => null, open: async () => {}, reveal: async () => {},
   };
   const openRule = (p, h, o) => checkOpen(String(p).replace(home, '/Users/ken'), '/Users/ken', o);
-  const mgr = createAgents({ fork, ui: () => {}, config, root: path.join(home, 'Roamies'), userName: 'Ken', runner: '/x/agentrun.mjs', safety: { checkRead, checkWrite, checkOpen: openRule, checkLink }, home, now: () => 1 });
+  const mgr = createAgents({ fork, ui: () => {}, config, root: path.join(home, 'Clanky'), userName: 'Ken', runner: '/x/agentrun.mjs', safety: { checkRead, checkWrite, checkOpen: openRule, checkLink }, home, now: () => 1 });
   const a = await mgr.start({ type: 'maker', title: 'Woof page', brief: 'A landing page for a dog brand, uppercase name, blue theme.' });
   const text = children[0].sent[0].content;
   assert.match(text, /^Ken's exact words, quoted verbatim\./, 'their words open the brief');
@@ -478,7 +478,7 @@ assert.match(agentSystem('maker', { dir: '/x', returns: 'answer' }), /report is 
 
 // Subagents: a specialist's role, type and model go into the launch; a continued run stays with it.
 {
-  const home = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'roamies-subagent-')));
+  const home = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'clanky-subagent-')));
   const children = [], asked = [];
   const fork = () => { const c = new EventEmitter(); Object.assign(c, { sent: [], connected: true, send(m) { c.sent.push(m); }, kill() {} }); children.push(c); return c; };
   let crewOn = true;
@@ -488,7 +488,7 @@ assert.match(agentSystem('maker', { dir: '/x', returns: 'answer' }), /report is 
     image: () => null, open: async () => {}, reveal: async () => {},
   };
   const openRule = (p, h, o) => checkOpen(String(p).replace(home, '/Users/ken'), '/Users/ken', o);
-  const mgr = createAgents({ fork, ui: () => {}, config, root: path.join(home, 'Roamies'), userName: 'Ken', runner: '/x/agentrun.mjs', safety: { checkRead, checkWrite, checkOpen: openRule, checkLink }, home, now: () => 1 });
+  const mgr = createAgents({ fork, ui: () => {}, config, root: path.join(home, 'Clanky'), userName: 'Ken', runner: '/x/agentrun.mjs', safety: { checkRead, checkWrite, checkOpen: openRule, checkLink }, home, now: () => 1 });
   const a = await mgr.start({ subagent: 'scout', title: 'Chairs', brief: 'Compare three dentist chairs.' });
   assert.equal(a.type, 'researcher', 'its type, without the chat naming one');
   assert.deepEqual(asked[0], { spec: 'gemini:g1', slot: 'sub_scout' }, 'its own model and effort slot');

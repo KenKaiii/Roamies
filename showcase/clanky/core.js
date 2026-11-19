@@ -11,7 +11,7 @@
   };
   const reducedMQ = matchMedia('(prefers-reduced-motion: reduce)');
 
-  const R = (window.Roamie = { types: [], TAU, clamp, lerp, damp, rand, angDamp });
+  const R = (window.Clanky = { types: [], TAU, clamp, lerp, damp, rand, angDamp });
   R.register = (def) => R.types.push(def);
   R.unit = (env) => env.unit ?? Math.min(env.w, env.h);
   // Screen edges covered by the menu bar / Dock / taskbar, in CSS px. The desktop host keeps it current.
@@ -35,7 +35,7 @@
   }
   R.Spring = Spring;
 
-  // Wander / seek / drag / fling body shared by every roamie.
+  // Wander / seek / drag / fling body shared by every clanky.
   class Mover {
     constructor(env, o = {}) {
       this.o = Object.assign({ speed: 110, accel: 2.6, margin: 0.2, curiosity: 0.4, restMin: 0.8, restMax: 3, bounce: 0.6, friction: 1.6 }, o);
@@ -484,7 +484,7 @@
   R.rtl = (s) => RTL.test(String(s ?? ''));
   // A canvas font for right-to-left text: the Arabic font first, so its own narrow space is used between Arabic words
   // (Martian Mono's space is a whole monospace cell). Other text keeps the font it was given.
-  R.rtlFont = (s, font) => (R.rtl(s) ? String(font).replace('"Martian Mono"', '"Roamies Arabic RTL", "Martian Mono"') : font);
+  R.rtlFont = (s, font) => (R.rtl(s) ? String(font).replace('"Martian Mono"', '"Clanky Arabic RTL", "Martian Mono"') : font);
   R.hitRects = (test, box, cell = 12, pad = 8) => {
     const out = [];
     const x0 = Math.floor(box[0]), y0 = Math.floor(box[1]), cols = Math.ceil(box[2] / cell), rows = Math.ceil(box[3] / cell);
@@ -506,12 +506,12 @@
     return out;
   };
 
-  // Desktop overlay: every roamie shares one transparent canvas, cut down to (and moved with) what's drawn. The host app calls
-  // Roamie.ptr(x, y) each frame with the real cursor and makes the window click-through unless it returns true.
+  // Desktop overlay: every clanky shares one transparent canvas, cut down to (and moved with) what's drawn. The host app calls
+  // Clanky.ptr(x, y) each frame with the real cursor and makes the window click-through unless it returns true.
   R.bootDesktop = (canvas) => {
     const qs = new URLSearchParams(location.search);
-    const only = window.ROAMIE_ONLY || qs.get('only')?.split(',');
-    const unit = +(window.ROAMIE_UNIT || qs.get('unit') || 340);
+    const only = window.CLANKY_ONLY || qs.get('only')?.split(',');
+    const unit = +(window.CLANKY_UNIT || qs.get('unit') || 340);
     const ctx = canvas.getContext('2d');
     let W = innerWidth, H = innerHeight, dpr = 1, down = null;
     const defs = R.types.filter((d) => !only || only.includes(d.id));
@@ -670,7 +670,7 @@
         env.mouse.inside = env.mouse.active && pointer.x >= 0 && pointer.y >= 0 && pointer.x <= W && pointer.y <= H;
         if (env.mouse.inside && !m.dragging && !m.drive && idle < 0.05 && Math.hypot(pointer.vx, pointer.vy) > 2600 && Math.hypot(pointer.x - m.x, pointer.y - m.y) < m.radius * 2.2) {
           c.face?.set('surprised', 0.7);
-          // Anchored roamies (the sidekick) only flinch: a shove would dodge the click you were aiming.
+          // Anchored clanky (the sidekick) only flinch: a shove would dodge the click you were aiming.
           if (!m.anchor) {
             const dx = m.x - pointer.x, dy = m.y - pointer.y, d = Math.hypot(dx, dy) || 1;
             m.vx += (dx / d) * 260; m.vy += (dy / d) * 260;

@@ -74,16 +74,16 @@ jobs:
       - name: Test the macOS voice helper
         if: runner.os == 'macOS'
         run: |
-          src-tauri/binaries/roamies-voice-"$(rustc -vV | sed -n 's/^host: //p')" --test-gain
-          src-tauri/binaries/roamies-voice-"$(rustc -vV | sed -n 's/^host: //p')" --test-wake
-          src-tauri/binaries/roamies-voice-"$(rustc -vV | sed -n 's/^host: //p')" --test-snap
-          src-tauri/binaries/roamies-voice-"$(rustc -vV | sed -n 's/^host: //p')" --test-clicks
-          src-tauri/binaries/roamies-voice-"$(rustc -vV | sed -n 's/^host: //p')" --test-chord
+          src-tauri/binaries/clanky-voice-"$(rustc -vV | sed -n 's/^host: //p')" --test-gain
+          src-tauri/binaries/clanky-voice-"$(rustc -vV | sed -n 's/^host: //p')" --test-wake
+          src-tauri/binaries/clanky-voice-"$(rustc -vV | sed -n 's/^host: //p')" --test-snap
+          src-tauri/binaries/clanky-voice-"$(rustc -vV | sed -n 's/^host: //p')" --test-clicks
+          src-tauri/binaries/clanky-voice-"$(rustc -vV | sed -n 's/^host: //p')" --test-chord
 
       - name: Test the macOS hands helper
         if: runner.os == 'macOS'
         run: |
-          src-tauri/binaries/roamies-hands-"$(rustc -vV | sed -n 's/^host: //p')" --self-test
+          src-tauri/binaries/clanky-hands-"$(rustc -vV | sed -n 's/^host: //p')" --self-test
 
       # The shell's own checks (second-launch flags; on Linux the session, click areas, autostart and screenshots).
       - name: Test the app shell
@@ -107,39 +107,39 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           cargo test --release --locked --manifest-path src-tauri/hands-win/Cargo.toml --target x86_64-pc-windows-msvc
-          src-tauri/binaries/roamies-hands-x86_64-pc-windows-msvc.exe --self-test
+          src-tauri/binaries/clanky-hands-x86_64-pc-windows-msvc.exe --self-test
 
       # The real helper against a real app (Notepad): list, locate, capture, read, fill, read back, OCR (skipped with a
       # reason when the runner has no OCR language) and refusing a terminal.
       - name: Smoke test the Windows hands helper
         if: runner.os == 'Windows'
-        run: src-tauri/binaries/roamies-hands-x86_64-pc-windows-msvc.exe --smoke
+        run: src-tauri/binaries/clanky-hands-x86_64-pc-windows-msvc.exe --smoke
 
-      # The debug app starts under a virtual X screen, moves the old-layout sidekick.json into Roamies/Data, starts its
-      # sidecar (its "start" log line, in Roamies/Data/logs) and keeps running; a
+      # The debug app starts under a virtual X screen, moves the old-layout sidekick.json into Clanky/Data, starts its
+      # sidecar (its "start" log line, in Clanky/Data/logs) and keeps running; a
       # second launch with --summon reaches it (single instance over D-Bus) and the overlay reports its click areas.
       - name: Smoke test the Linux app
         if: runner.os == 'Linux'
         run: |
           cat > "$RUNNER_TEMP/smoke.sh" <<'SH'
           set -u
-          export ROAMIES_DATA_DIR="$RUNNER_TEMP/roamies-data" ROAMIES_TRACE=1
-          mkdir -p "$ROAMIES_DATA_DIR"
-          echo '{"onboarded":true,"setupVersion":2,"voice":false}' > "$ROAMIES_DATA_DIR/sidekick.json"
-          src-tauri/target/debug/roamies > "$RUNNER_TEMP/app.log" 2>&1 &
+          export CLANKY_DATA_DIR="$RUNNER_TEMP/clanky-data" CLANKY_TRACE=1
+          mkdir -p "$CLANKY_DATA_DIR"
+          echo '{"onboarded":true,"setupVersion":2,"voice":false}' > "$CLANKY_DATA_DIR/sidekick.json"
+          src-tauri/target/debug/clanky > "$RUNNER_TEMP/app.log" 2>&1 &
           pid=$!
           started=false
           for _ in $(seq 60); do
             sleep 1
             kill -0 $pid 2>/dev/null || break
-            if grep -qs ' start ' "$ROAMIES_DATA_DIR"/Roamies/Data/logs/*.log; then started=true; break; fi
+            if grep -qs ' start ' "$CLANKY_DATA_DIR"/Clanky/Data/logs/*.log; then started=true; break; fi
           done
           shaped=false
           if $started; then
             # A cold runner can take a while to draw the first frame: wait up to 30 s, asking again halfway.
             for i in $(seq 30); do
               grep -q 'hit rects: \[(' "$RUNNER_TEMP/app.log" && break
-              if [ "$i" = 1 ] || [ "$i" = 16 ]; then src-tauri/target/debug/roamies --summon; fi
+              if [ "$i" = 1 ] || [ "$i" = 16 ]; then src-tauri/target/debug/clanky --summon; fi
               sleep 1
             done
             grep -q 'hit rects: \[(' "$RUNNER_TEMP/app.log" && shaped=true
@@ -147,10 +147,10 @@ jobs:
           alive=false; kill -0 $pid 2>/dev/null && alive=true
           kill $pid 2>/dev/null
           if ! { $started && $alive && $shaped; }; then
-            tail -40 "$RUNNER_TEMP/app.log"; tail -40 "$HOME/Roamies/Data/logs/sidekick.log" "$ROAMIES_DATA_DIR"/Roamies/Data/logs/*.log 2>/dev/null
-            echo "Roamies didn't start properly (sidecar started: $started, still running: $alive, Roamie on screen: $shaped)"; exit 1
+            tail -40 "$RUNNER_TEMP/app.log"; tail -40 "$HOME/Clanky/Data/logs/sidekick.log" "$CLANKY_DATA_DIR"/Clanky/Data/logs/*.log 2>/dev/null
+            echo "Clanky didn't start properly (sidecar started: $started, still running: $alive, Clanky on screen: $shaped)"; exit 1
           fi
-          echo "Roamies started its sidecar and showed the Roamie (pid $pid)"
+          echo "Clanky started its sidecar and showed the Clanky (pid $pid)"
           SH
           dbus-run-session -- xvfb-run -a -s '-screen 0 1600x1000x24' bash "$RUNNER_TEMP/smoke.sh"
 
@@ -159,10 +159,10 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $data = Join-Path $env:RUNNER_TEMP 'roamies-data'
-          $env:ROAMIES_DATA_DIR = $data
-          $p = Start-Process -FilePath src-tauri/target/debug/roamies.exe -PassThru
-          $logs = Join-Path $data 'Roamies/Data/logs'
+          $data = Join-Path $env:RUNNER_TEMP 'clanky-data'
+          $env:CLANKY_DATA_DIR = $data
+          $p = Start-Process -FilePath src-tauri/target/debug/clanky.exe -PassThru
+          $logs = Join-Path $data 'Clanky/Data/logs'
           $started = $false
           for ($i = 0; $i -lt 60; $i++) {
             Start-Sleep -Seconds 1
@@ -172,7 +172,7 @@ jobs:
           $alive = -not $p.HasExited
           if ($alive) { taskkill /PID $p.Id /T /F | Out-Null }
           if (-not ($started -and $alive)) {
-            Get-Content (Join-Path $env:USERPROFILE 'Roamies/Data/logs/sidekick.log') -ErrorAction SilentlyContinue | Select-Object -Last 40
-            throw "Roamies didn't start its sidecar (started: $started, still running: $alive)"
+            Get-Content (Join-Path $env:USERPROFILE 'Clanky/Data/logs/sidekick.log') -ErrorAction SilentlyContinue | Select-Object -Last 40
+            throw "Clanky didn't start its sidecar (started: $started, still running: $alive)"
           }
-          "Roamies started its sidecar (pid $($p.Id))"
+          "Clanky started its sidecar (pid $($p.Id))"

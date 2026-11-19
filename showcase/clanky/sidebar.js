@@ -1,10 +1,10 @@
-// Game mode: while a game fills the screen, the cursor is hidden or held by it, so the Roamie can't follow it. It moves
-// to a fixed panel at the right edge of the screen instead: the Roamie sits at its top, cards stack below it, and
+// Game mode: while a game fills the screen, the cursor is hidden or held by it, so the Clanky can't follow it. It moves
+// to a fixed panel at the right edge of the screen instead: the Clanky sits at its top, cards stack below it, and
 // talking works as always. When the game leaves full screen, it's back to normal.
-// macOS: Roamies already knows when a fullscreen game is in front (fullscreen.rs sets Roamie.game; clicks then go to
+// macOS: Clanky already knows when a fullscreen game is in front (fullscreen.rs sets Clanky.game; clicks then go to
 // the game). Windows: the sidecar reports the front window's bounds every few seconds (host.js → front()).
 (() => {
-  const R = window.Roamie;
+  const R = window.Clanky;
   if (!R) return;
   const W_PANEL = 420, TOP = 230;
   const S = { on: false, seen: 0, enabled: true, game: false };
@@ -15,7 +15,7 @@
     background: 'linear-gradient(90deg, rgba(12,22,24,0) 0%, rgba(12,22,24,0.72) 14%, rgba(12,22,24,0.82) 100%)',
     borderLeft: '1px solid rgba(120,255,226,0.18)', opacity: '0', transition: 'opacity 0.35s ease',
   });
-  // First in the page, so the Roamie and the cards (drawn after it) are on top of it.
+  // First in the page, so the Clanky and the cards (drawn after it) are on top of it.
   const mount = () => document.body?.prepend(el);
   if (document.body) mount(); else addEventListener('DOMContentLoaded', mount);
   const safe = () => R.safe ?? {};
@@ -24,15 +24,15 @@
   function set(on) {
     if (on === S.on) return;
     S.on = on;
-    document.documentElement.classList.toggle('roamie-sidebar', on);
+    document.documentElement.classList.toggle('clanky-sidebar', on);
     R.ink?.sidebarChanged?.();
   }
   R.sidebar = {
     get on() { return S.on; },
     width: W_PANEL,
-    // Where cards start, from the top of the screen: below the Roamie.
+    // Where cards start, from the top of the screen: below the Clanky.
     top: TOP,
-    // Where the Roamie sits while it's on, or null.
+    // Where the Clanky sits while it's on, or null.
     dock: () => (S.on ? [innerWidth - (safe().right ?? 0) - W_PANEL / 2, (safe().top ?? 0) + 120] : null),
     // { rect: the front window's bounds in screen points, enabled }. Two readings in a row before it switches on, so
     // a window that only passes through full screen doesn't flip it; one to switch off.
@@ -45,7 +45,7 @@
     },
     set,
   };
-  // The panel shows only while there's something in it: the Roamie, or cards. Roamie.game (macOS) is watched here too.
+  // The panel shows only while there's something in it: the Clanky, or cards. Clanky.game (macOS) is watched here too.
   setInterval(() => {
     if (!!R.game !== S.game) { S.game = !!R.game; update(); }
     const agent = R.tiles?.find((t) => t.creature?.agent)?.creature.agent;

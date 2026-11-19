@@ -105,7 +105,7 @@ pub fn other_key(keymap: &[u8], modifiers: &[u8]) -> bool {
 }
 
 /// Whether the keyboard can be watched: only on an X11 session. On Wayland an X11 client (through XWayland) sees
-/// keys only while an X11 window has the keyboard, so there the talk shortcut is `roamies --talk` ({"cmd":"toggle"}).
+/// keys only while an X11 window has the keyboard, so there the talk shortcut is `clanky --talk` ({"cmd":"toggle"}).
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub fn x11_session(session_type: Option<&str>, wayland_display: Option<&str>, display: Option<&str>) -> bool {
     let wayland = session_type.is_some_and(|s| s.eq_ignore_ascii_case("wayland")) || wayland_display.is_some_and(|s| !s.is_empty());
@@ -132,7 +132,7 @@ mod imp {
         X11.get_or_init(|| {
             let env = |k: &str| std::env::var(k).ok();
             if !x11_session(env("XDG_SESSION_TYPE").as_deref(), env("WAYLAND_DISPLAY").as_deref(), env("DISPLAY").as_deref()) {
-                crate::log("not an X11 session: the talk keys can't be watched (use roamies --talk)");
+                crate::log("not an X11 session: the talk keys can't be watched (use clanky --talk)");
                 return None;
             }
             let (conn, screen) = x11rb::connect(None).map_err(|e| crate::log(&format!("X11: {e}"))).ok()?;

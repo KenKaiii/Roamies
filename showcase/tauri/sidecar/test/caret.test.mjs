@@ -1,10 +1,10 @@
-// The typing caret in the ask bubble (showcase/roamies/agent.js). Run: npm test
+// The typing caret in the ask bubble (showcase/clanky/agent.js). Run: npm test
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 
 const R = { clamp: (v, a, b) => Math.max(a, Math.min(b, v)), lerp: (a, b, t) => a + (b - a) * t };
-vm.runInNewContext(fs.readFileSync(new URL('../../../roamies/agent.js', import.meta.url), 'utf8'), { window: { Roamie: R }, Math });
+vm.runInNewContext(fs.readFileSync(new URL('../../../clanky/agent.js', import.meta.url), 'utf8'), { window: { Clanky: R }, Math });
 const lines = [{ start: 0, s: 'hello there' }, { start: 12, s: 'friend' }]; // "hello there friend", wrapped at the space
 const at = (c) => ({ ...R.caretAt(lines, c) });
 

@@ -1,9 +1,9 @@
 // The wake word end to end (#97): spoken lines go through the real helper and Parakeet model, each recording standing
-// in for the microphone. "Hey Roamies, what time is it?" has to start a take by itself and send only the request;
+// in for the microphone. "Hey Clanky, what time is it?" has to start a take by itself and send only the request;
 // other talk must not wake it. Needs the speech model and a voice to say the lines, so it's run by hand:
-//   ROAMIES_VOICE_MODEL=<model dir> cargo test --features e2e --test wake_e2e -- --ignored --nocapture
+//   CLANKY_VOICE_MODEL=<model dir> cargo test --features e2e --test wake_e2e -- --ignored --nocapture
 // (add --release on Windows and Linux; on macOS only the debug build links). The lines are spoken with macOS `say`;
-// elsewhere set ROAMIES_WAKE_WAV and ROAMIES_OTHER_WAV to 16 kHz mono WAVs of them.
+// elsewhere set CLANKY_WAKE_WAV and CLANKY_OTHER_WAV to 16 kHz mono WAVs of them.
 
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
@@ -14,11 +14,11 @@ use std::time::{Duration, Instant};
 /// The helper with the wake word on, hearing `line`: whether a take started by the phrase, and what was sent.
 /// None when there's no model or recording here (the test is skipped).
 fn hear(env: &str, line: &str, wait: Duration) -> Option<(bool, Vec<String>)> {
-    let Ok(model) = std::env::var("ROAMIES_VOICE_MODEL") else {
-        eprintln!("skipped: set ROAMIES_VOICE_MODEL to the Parakeet model folder");
+    let Ok(model) = std::env::var("CLANKY_VOICE_MODEL") else {
+        eprintln!("skipped: set CLANKY_VOICE_MODEL to the Parakeet model folder");
         return None;
     };
-    let dir = std::env::temp_dir().join(format!("roamies-wake-e2e-{}-{env}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("clanky-wake-e2e-{}-{env}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let wav = match std::env::var(env) {
         Ok(p) => PathBuf::from(p),
@@ -31,7 +31,7 @@ fn hear(env: &str, line: &str, wait: Duration) -> Option<(bool, Vec<String>)> {
             wav
         }
     };
-    let mut child = Command::new(env!("CARGO_BIN_EXE_roamies-voice"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_clanky-voice"))
         .args(["--model", &model, "--test-audio"])
         .arg(&wav)
         .arg("--wake")
@@ -72,18 +72,18 @@ fn hear(env: &str, line: &str, wait: Duration) -> Option<(bool, Vec<String>)> {
 }
 
 #[test]
-#[ignore = "needs the speech model (ROAMIES_VOICE_MODEL) and a spoken recording"]
-fn hey_roamies_starts_a_take_and_only_the_request_is_sent() {
-    let Some((woke, finals)) = hear("ROAMIES_WAKE_WAV", "Hey Roamies, what time is it?", Duration::from_secs(90)) else { return };
-    assert!(woke, "hearing \"Hey Roamies\" started a take");
+#[ignore = "needs the speech model (CLANKY_VOICE_MODEL) and a spoken recording"]
+fn hey_clanky_starts_a_take_and_only_the_request_is_sent() {
+    let Some((woke, finals)) = hear("CLANKY_WAKE_WAV", "Hey Clanky, what time is it?", Duration::from_secs(90)) else { return };
+    assert!(woke, "hearing \"Hey Clanky\" started a take");
     let text = finals.first().expect("what was said was sent").to_lowercase();
     assert!(text.contains("what time is it"), "the request was heard: {text:?}");
     assert!(!text.contains("hey"), "the wake phrase isn't part of the request: {text:?}");
 }
 
 #[test]
-#[ignore = "needs the speech model (ROAMIES_VOICE_MODEL) and a spoken recording"]
+#[ignore = "needs the speech model (CLANKY_VOICE_MODEL) and a spoken recording"]
 fn other_talk_does_not_wake_it() {
-    let Some((woke, finals)) = hear("ROAMIES_OTHER_WAV", "So I told him the meeting is at noon.", Duration::from_secs(15)) else { return };
+    let Some((woke, finals)) = hear("CLANKY_OTHER_WAV", "So I told him the meeting is at noon.", Duration::from_secs(15)) else { return };
     assert!(!woke && finals.is_empty(), "nothing starts and nothing is sent: {finals:?}");
 }

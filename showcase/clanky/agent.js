@@ -2,7 +2,7 @@
 // the card look (glass.js) over the LED body; talking, thinking and tools drive the pose, face and voice blips.
 // API: agent.say(text) / agent.think(text) return handles with append(), end() and a `closed` promise.
 (() => {
-  const R = window.Roamie;
+  const R = window.Clanky;
   const { clamp, lerp } = R;
 
   // ---------- dot-matrix glyphs: real font, supersampled, thresholded to two brightness levels ----------
@@ -715,7 +715,7 @@
         let f = fonts.get(st);
         if (!f) {
           const w = st & (md?.BOLD ?? 0) ? 700 : base, it = st & (md?.ITAL ?? 0) ? 'italic ' : '';
-          f = `${it}${w} ${fpx}px "Martian Mono", "Roamies Arabic", Menlo, ui-monospace, monospace`; fonts.set(st, f);
+          f = `${it}${w} ${fpx}px "Martian Mono", "Clanky Arabic", Menlo, ui-monospace, monospace`; fonts.set(st, f);
         }
         return f;
       };

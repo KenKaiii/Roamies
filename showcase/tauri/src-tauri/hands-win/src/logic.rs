@@ -1,6 +1,6 @@
 // The parts of the hands helper that don't touch Windows: which window to use, how text matches, what's risky to
 // click, key names, fitting a guessed box to the pixels. Ported from hands/main.swift; checked by `cargo test` on
-// any system and by `roamies-hands --self-test`.
+// any system and by `clanky-hands --self-test`.
 
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub struct Rect {

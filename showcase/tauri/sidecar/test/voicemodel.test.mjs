@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { downloadModel, isReady, totalBytes } from '../voicemodel.mjs';
 
-const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'roamies-model-test-'));
+const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'clanky-model-test-'));
 process.on('exit', () => fs.rmSync(TMP, { recursive: true, force: true }));
 const sha = (b) => createHash('sha256').update(b).digest('hex');
 const A = Buffer.alloc(300_000, 7), B = Buffer.from('hello vocab\n');

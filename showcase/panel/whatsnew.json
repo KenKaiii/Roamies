@@ -11,7 +11,7 @@
       "version": "0.1.43",
       "date": "2026-11-19",
       "items": [
-        { "kind": "new", "title": "Wake word on Windows and Linux", "text": "Say \"Hey Roamies\" to talk, no keys needed. Turn it on in Listening, Hands-free." },
+        { "kind": "new", "title": "Wake word on Windows and Linux", "text": "Say \"Hey Clanky\" to talk, no keys needed. Turn it on in Listening, Hands-free." },
         { "kind": "new", "title": "Lists you can tick", "text": "Lists I draw are checklists now. Tick, add and edit items, and I see what changed." },
         { "kind": "new", "title": "The capsule everywhere", "text": "Pick Capsule in Where I appear and I open from the top of the screen, on any computer." },
         { "kind": "improved", "title": "Cards stay when asked", "text": "Ask me to keep a card up and my next drawing leaves it there." },
@@ -30,7 +30,7 @@
         { "kind": "new", "title": "Scheduled jobs", "text": "Ask me to do work at set times, like a news summary every weekday at 8." },
         { "kind": "new", "title": "Skills", "text": "Give me a skill's GitHub or skills.sh link to install it, or teach me one yourself." },
         { "kind": "new", "title": "Connections", "text": "Ask me to connect Linear, Notion and more. I find the server and ask first." },
-        { "kind": "improved", "title": "One Roamies folder", "text": "Your settings, memory and chats now sit in the Roamies folder in your home folder." }
+        { "kind": "improved", "title": "One Clanky folder", "text": "Your settings, memory and chats now sit in the Clanky folder in your home folder." }
       ]
     },
     {
@@ -104,12 +104,12 @@
         { "kind": "new", "title": "Morning briefing", "text": "The first time you talk each day, I can start with what's due. Thanks LeoU29935!" },
         { "kind": "new", "title": "Focus mode", "text": "Say focus for 30 minutes and I'll nudge you if you drift off. Thanks LeoU29935!" },
         { "kind": "new", "title": "Sync between computers", "text": "Share reminders and memory through iCloud or OneDrive, encrypted. Thanks LeoU29935!" },
-        { "kind": "new", "title": "Stays out of your games", "text": "In a fullscreen game, I move your Roamie aside and every click goes to the game." },
+        { "kind": "new", "title": "Stays out of your games", "text": "In a fullscreen game, I move your Clanky aside and every click goes to the game." },
         { "kind": "improved", "title": "Cards open at the right size", "text": "I now open a card small, large or full screen to fit what I show. Thanks LeoU29935!" },
-        { "kind": "improved", "title": "Works over fullscreen apps", "text": "On a Mac, your Roamie now shows up over fullscreen apps and games instead of hiding." },
+        { "kind": "improved", "title": "Works over fullscreen apps", "text": "On a Mac, your Clanky now shows up over fullscreen apps and games instead of hiding." },
         { "kind": "improved", "title": "Full setting descriptions", "text": "Some setting descriptions got cut off. Point at one and you'll see the whole thing." },
         { "kind": "fixed", "title": "Wake word works with AirPods", "text": "With AirPods in, the wake word kept cutting into your audio. Fixed. Thanks MASEGE!" },
-        { "kind": "fixed", "title": "It knows you're waking it", "text": "Saying Hey Roamies sometimes made me think you'd called me the wrong name. Not anymore." },
+        { "kind": "fixed", "title": "It knows you're waking it", "text": "Saying Hey Clanky sometimes made me think you'd called me the wrong name. Not anymore." },
         { "kind": "fixed", "title": "No more sound blip", "text": "After I answered a wake word request, your sound dipped for a moment. Not anymore." },
         { "kind": "fixed", "title": "Wake word after Esc", "text": "After you cancelled with Esc, the wake word could stop hearing you for minutes. Fixed." },
         { "kind": "fixed", "title": "Listening pill is back", "text": "After a display change, the listening pill could stop showing. Thanks mattschwarz!" }
@@ -131,12 +131,12 @@
         { "kind": "new", "title": "See what agents made", "text": "When an agent's done, its files pop up in the corner. Click one to open it." },
         { "kind": "new", "title": "What's new", "text": "This page! After each update I'll show you what changed, right here." },
         { "kind": "new", "title": "OpenCode keys", "text": "Got OpenCode Go or OpenCode credits? Add your key on the Model page and use it." },
-        { "kind": "improved", "title": "Better web reading", "text": "I upgraded how Roamies searches the web and reads pages, so answers are cleaner." },
+        { "kind": "improved", "title": "Better web reading", "text": "I upgraded how Clanky searches the web and reads pages, so answers are cleaner." },
         { "kind": "new", "title": "Pin a card", "text": "Click the pin on a card and it stays put until you close it, even when you switch apps." },
         { "kind": "new", "title": "Resize cards", "text": "Drag a card's corner to make it bigger or smaller, or blow it up to full screen." },
         { "kind": "fixed", "title": "First click works", "text": "Clicking Allow or the panel while another app was in front did nothing. Now it works." },
-        { "kind": "fixed", "title": "Roamie shows up after sleep", "text": "If Roamies started while your screen slept, the Roamie never appeared. Fixed that." },
-        { "kind": "improved", "title": "Follows your screens", "text": "Plug in or unplug a screen and your Roamie moves over to where your screens are now." },
+        { "kind": "fixed", "title": "Clanky shows up after sleep", "text": "If Clanky started while your screen slept, the Clanky never appeared. Fixed that." },
+        { "kind": "improved", "title": "Follows your screens", "text": "Plug in or unplug a screen and your Clanky moves over to where your screens are now." },
         { "kind": "fixed", "title": "Talk key misfires", "text": "Holding the talk keys was sometimes taken for a shortcut. Talking works reliably now." },
         { "kind": "fixed", "title": "Buttons no longer hidden", "text": "The little task label could cover Allow and Don't allow. It moves out of the way now." },
         { "kind": "fixed", "title": "Commands on Windows", "text": "On Windows, commands with quotes in them failed. They run properly now." }
@@ -147,17 +147,17 @@
       "date": "2026-11-13",
       "items": [
         { "kind": "fixed", "title": "Tooltips fit the panel again", "text": "I shrank the help popups in the panel so they stop covering everything." },
-        { "kind": "fixed", "title": "No more stray Claude processes", "text": "If Roamies crashed, Claude Code kept running in the background. I close it properly now." },
+        { "kind": "fixed", "title": "No more stray Claude processes", "text": "If Clanky crashed, Claude Code kept running in the background. I close it properly now." },
         { "kind": "fixed", "title": "Logs don't grow forever", "text": "The helper logs kept getting bigger. I trim them now so they don't hog your disk." },
-        { "kind": "fixed", "title": "Old snaps get cleaned up", "text": "I made Roamies delete the area snaps you send once it's done with them." }
+        { "kind": "fixed", "title": "Old snaps get cleaned up", "text": "I made Clanky delete the area snaps you send once it's done with them." }
       ]
     },
     {
       "version": "0.1.35",
       "date": "2026-11-12",
       "items": [
-        { "kind": "new", "title": "Gemini voices", "text": "I added Google's Gemini voices for your Roamie to talk with. Pick one in Voice." },
-        { "kind": "new", "title": "VoiceStudio voices", "text": "Got the VoiceStudio app? Roamies can now use its voices, right on your computer." },
+        { "kind": "new", "title": "Gemini voices", "text": "I added Google's Gemini voices for your Clanky to talk with. Pick one in Voice." },
+        { "kind": "new", "title": "VoiceStudio voices", "text": "Got the VoiceStudio app? Clanky can now use its voices, right on your computer." },
         { "kind": "new", "title": "Meet Rita X", "text": "I added a new look called Rita X. Try her out in Appearance." },
         { "kind": "fixed", "title": "Windows 11 tray icon stays put", "text": "Windows 11 kept hiding the icon. I pin it next to the clock now." }
       ]
@@ -173,16 +173,16 @@
       "version": "0.1.35",
       "date": "2026-11-12",
       "items": [
-        { "kind": "new", "title": "Local models with Ollama", "text": "I added Ollama (beta), so Roamies can run on AI models on your own computer." },
-        { "kind": "fixed", "title": "Errors instead of crashes", "text": "When a request failed, Roamies used to crash. Now it just tells you what went wrong." },
-        { "kind": "improved", "title": "Quicker, cheaper replies", "text": "I trimmed Roamies' instructions, so it thinks a bit faster and costs a bit less." }
+        { "kind": "new", "title": "Local models with Ollama", "text": "I added Ollama (beta), so Clanky can run on AI models on your own computer." },
+        { "kind": "fixed", "title": "Errors instead of crashes", "text": "When a request failed, Clanky used to crash. Now it just tells you what went wrong." },
+        { "kind": "improved", "title": "Quicker, cheaper replies", "text": "I trimmed Clanky' instructions, so it thinks a bit faster and costs a bit less." }
       ]
     },
     {
       "version": "0.1.35",
       "date": "2026-11-12",
       "items": [
-        { "kind": "new", "title": "Repeating reminders", "text": "Ask for a reminder every day, week or month and Roamies keeps it going." }
+        { "kind": "new", "title": "Repeating reminders", "text": "Ask for a reminder every day, week or month and Clanky keeps it going." }
       ]
     },
     {
@@ -196,7 +196,7 @@
       "version": "0.1.35",
       "date": "2026-11-12",
       "items": [
-        { "kind": "new", "title": "Just say \"Hey Roamies\"", "text": "On a Mac you can now wake your Roamie with your voice. No keys needed." },
+        { "kind": "new", "title": "Just say \"Hey Clanky\"", "text": "On a Mac you can now wake your Clanky with your voice. No keys needed." },
         { "kind": "improved", "title": "Errors in plain English", "text": "I rewrote the error messages so they make sense, with a short code if you need help." }
       ]
     },
@@ -211,7 +211,7 @@
       "version": "0.1.34",
       "date": "2026-11-11",
       "items": [
-        { "kind": "new", "title": "Explanations you can see", "text": "Ask how something works and Roamies draws it: flows, tables, charts, maps and maths." },
+        { "kind": "new", "title": "Explanations you can see", "text": "Ask how something works and Clanky draws it: flows, tables, charts, maps and maths." },
         { "kind": "new", "title": "Quizzes and 3D models", "text": "It can quiz you, label photos and show moving parts in 3D, like an engine." }
       ]
     },
@@ -220,7 +220,7 @@
       "date": "2026-11-11",
       "items": [
         { "kind": "new", "title": "Save diagnostics", "text": "Something broken? Hit Save diagnostics in About and send me the file." },
-        { "kind": "improved", "title": "Clearer mic errors", "text": "When the mic isn't working, Roamies now says why and how to fix it." },
+        { "kind": "improved", "title": "Clearer mic errors", "text": "When the mic isn't working, Clanky now says why and how to fix it." },
         { "kind": "improved", "title": "A tidier panel", "text": "I split long lists into pages, put updates up top and added a Quit button." }
       ]
     },
@@ -228,19 +228,19 @@
       "version": "0.1.33",
       "date": "2026-11-10",
       "items": [
-        { "kind": "new", "title": "Roamies on Linux (beta)", "text": "I brought Roamies to Linux, voice and all. It works on X11 and Wayland." }
+        { "kind": "new", "title": "Clanky on Linux (beta)", "text": "I brought Clanky to Linux, voice and all. It works on X11 and Wayland." }
       ]
     },
     {
       "version": "0.1.32",
       "date": "2026-11-10",
       "items": [
-        { "kind": "new", "title": "Watch it work", "text": "Your Roamie now hops along with the cursor while it works in other apps." },
-        { "kind": "new", "title": "Allow buttons", "text": "Before Roamies does something risky, you get Allow and Don't allow buttons." },
-        { "kind": "new", "title": "Keep talking, hands-free", "text": "After a reply, Roamies keeps listening for a moment so you can just carry on." },
+        { "kind": "new", "title": "Watch it work", "text": "Your Clanky now hops along with the cursor while it works in other apps." },
+        { "kind": "new", "title": "Allow buttons", "text": "Before Clanky does something risky, you get Allow and Don't allow buttons." },
+        { "kind": "new", "title": "Keep talking, hands-free", "text": "After a reply, Clanky keeps listening for a moment so you can just carry on." },
         { "kind": "fixed", "title": "Esc clears drawings", "text": "Pressing Esc with drawings on screen now does what you'd expect." },
-        { "kind": "fixed", "title": "Keys go to the right app", "text": "Keys Roamies presses no longer land in some other app by mistake." },
-        { "kind": "fixed", "title": "Window outlines line up", "text": "The frame Roamies draws around a window now sits right on its edges." }
+        { "kind": "fixed", "title": "Keys go to the right app", "text": "Keys Clanky presses no longer land in some other app by mistake." },
+        { "kind": "fixed", "title": "Window outlines line up", "text": "The frame Clanky draws around a window now sits right on its edges." }
       ]
     },
     {
@@ -254,7 +254,7 @@
       "version": "0.1.31",
       "date": "2026-11-09",
       "items": [
-        { "kind": "fixed", "title": "No more silent stalls", "text": "Sometimes Roamies just went quiet. I found the cause and fixed it." },
+        { "kind": "fixed", "title": "No more silent stalls", "text": "Sometimes Clanky just went quiet. I found the cause and fixed it." },
         { "kind": "fixed", "title": "Chats survive updates", "text": "Your chats and Get to Know Me answers no longer vanish after an update." },
         { "kind": "fixed", "title": "Typing cursor is back", "text": "The blinking cursor in text boxes was hidden. You can see it again." },
         { "kind": "new", "title": "Updates in the panel", "text": "When an update is ready, you'll see it at the top of the panel." }
@@ -264,7 +264,7 @@
       "version": "0.1.30",
       "date": "2026-11-09",
       "items": [
-        { "kind": "new", "title": "Windows catches up", "text": "On Windows, Roamies can now click and type for you, snap an area and circle things." }
+        { "kind": "new", "title": "Windows catches up", "text": "On Windows, Clanky can now click and type for you, snap an area and circle things." }
       ]
     },
     {
@@ -278,8 +278,8 @@
       "version": "0.1.29",
       "date": "2026-11-08",
       "items": [
-        { "kind": "improved", "title": "Sharper pointing", "text": "Rings now fit what's on screen exactly, and Roamies finds even single letters." },
-        { "kind": "improved", "title": "Marks every match", "text": "Ask where something is and Roamies marks every spot it shows up, not just one." }
+        { "kind": "improved", "title": "Sharper pointing", "text": "Rings now fit what's on screen exactly, and Clanky finds even single letters." },
+        { "kind": "improved", "title": "Marks every match", "text": "Ask where something is and Clanky marks every spot it shows up, not just one." }
       ]
     },
     {
@@ -287,9 +287,9 @@
       "date": "2026-11-08",
       "items": [
         { "kind": "fixed", "title": "Tighter safety checks", "text": "I closed a few gaps where risky commands could slip past the safety checks." },
-        { "kind": "improved", "title": "Bounces back from crashes", "text": "If Roamies' brain crashes, it restarts by itself now." },
+        { "kind": "improved", "title": "Bounces back from crashes", "text": "If Clanky' brain crashes, it restarts by itself now." },
         { "kind": "improved", "title": "Trusted Mac install", "text": "The Mac download is notarized by Apple now, so it opens cleanly. Needs macOS 13.5+." },
-        { "kind": "new", "title": "Privacy notice", "text": "I wrote down exactly what Roamies does with your data. Short version: I collect nothing." }
+        { "kind": "new", "title": "Privacy notice", "text": "I wrote down exactly what Clanky does with your data. Short version: I collect nothing." }
       ]
     },
     {
@@ -310,7 +310,7 @@
       "version": "0.1.25",
       "date": "2026-11-08",
       "items": [
-        { "kind": "fixed", "title": "No more reading out code", "text": "After a restart, Roamies sometimes read its own tool calls aloud. Not anymore." },
+        { "kind": "fixed", "title": "No more reading out code", "text": "After a restart, Clanky sometimes read its own tool calls aloud. Not anymore." },
         { "kind": "fixed", "title": "Web answers in the right spot", "text": "Web answer cards open where the drawn cards go, and don't scroll sideways." }
       ]
     },
@@ -325,14 +325,14 @@
       "version": "0.1.23",
       "date": "2026-11-08",
       "items": [
-        { "kind": "fixed", "title": "Drawings follow the screen", "text": "When the page changes under a drawing, Roamies wipes it, in any app." }
+        { "kind": "fixed", "title": "Drawings follow the screen", "text": "When the page changes under a drawing, Clanky wipes it, in any app." }
       ]
     },
     {
       "version": "0.1.22",
       "date": "2026-11-08",
       "items": [
-        { "kind": "improved", "title": "Replies start sooner", "text": "I cut the wait before Roamies starts talking, and gave each voice more variety." },
+        { "kind": "improved", "title": "Replies start sooner", "text": "I cut the wait before Clanky starts talking, and gave each voice more variety." },
         { "kind": "improved", "title": "Photo cards fit", "text": "Photo cards now size themselves to the picture." }
       ]
     },

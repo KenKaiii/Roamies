@@ -8,8 +8,8 @@ With Rust, Node.js 22+, the [Tauri prerequisites](https://v2.tauri.app/start/pre
 the Xcode Command Line Tools installed:
 
 ```bash
-git clone https://github.com/KenKaiii/Roamies.git
-cd Roamies/showcase/tauri
+git clone https://github.com/Prathu3110/Clanky.git
+cd Clanky/showcase/tauri
 (cd sidecar && npm ci && npm test)
 ./build.sh dev        # debug build
 ./build.sh            # release bundle for this OS

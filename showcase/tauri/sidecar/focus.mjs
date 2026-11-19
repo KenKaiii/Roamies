@@ -1,4 +1,4 @@
-// Focus mode: a timed block of work. While it runs, Roamies glances at the window in front (app, title, web address,
+// Focus mode: a timed block of work. While it runs, Clanky glances at the window in front (app, title, web address,
 // from the hands helper on macOS and Windows) every so often, and nudges playfully when it stays on a distraction.
 export const CHECK_MS = 20_000;       // how often it looks
 export const DRIFT_CHECKS = 2;        // in a row on a distraction before a nudge: a quick glance is fine
@@ -21,9 +21,9 @@ export function parseDistractions(text) {
 const hostOf = (url) => { try { return new URL(/^[a-z]+:/i.test(url) ? url : `https://${url}`).hostname.replace(/^www\./, '').toLowerCase(); } catch { return ''; } };
 const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-/** The entry the front window matches ({ app, title, url }), or null. Roamies itself never counts. */
+/** The entry the front window matches ({ app, title, url }), or null. Clanky itself never counts. */
 export function distraction(front, list = DEFAULT_DISTRACTIONS) {
-  if (!front?.app || /^roamies$/i.test(front.app)) return null;
+  if (!front?.app || /^clanky$/i.test(front.app)) return null;
   const host = front.url ? hostOf(front.url) : '';
   const app = String(front.app).toLowerCase(), title = String(front.title ?? '');
   for (const entry of list) {

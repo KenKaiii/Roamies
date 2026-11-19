@@ -8,15 +8,15 @@
 // neck stretching and splitting off with a couple of droplets, floats just under the notch and plays with the cursor
 // (the lens watches it, a click folds the reply away or opens it again), then rises back and melts
 // into the notch the same way. 'spread' widens sideways out of the notch instead.
-// The lens shows whichever look is picked (JARVIS's globe, a person, or the Roamie blob). While it speaks, a true
+// The lens shows whichever look is picked (JARVIS's globe, a person, or the Clanky blob). While it speaks, a true
 // waveform of its own voice (voice-out.js samples) runs in the status slot; while it listens, one that follows the mic.
 // Screens without a notch get the same capsule hanging from the top edge, with nothing to hide in at rest.
-// The overlay is click-through, so the host asks Roamie.notchHit(x, y) whether the cursor is over it.
-// API: Roamie.notch.enabled (set by the host from the setting) .active .listen() .level(v) .heard(text) .think(text)
+// The overlay is click-through, so the host asks Clanky.notchHit(x, y) whether the cursor is over it.
+// API: Clanky.notch.enabled (set by the host from the setting) .active .listen() .level(v) .heard(text) .think(text)
 //      .tool(label) .text(chunk) .done({ speech }) .fail(message) .say(text) .prompt(question, choices, onChoose)
 //      .close() .rect()
 (() => {
-  const R = window.Roamie;
+  const R = window.Clanky;
   if (typeof document === 'undefined' || !R) return;
   const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 
@@ -42,7 +42,7 @@
   /* Centred by its left edge (the host sets it from var(--w)), never a percentage translate: WebKit freezes those at
      the size an animation started at, so it came out off-centre. Squash and hover scale are set by the frame loop for
      the same reason (no animation handed to the GPU). */ background: #000; color: var(--ink); border-radius: 0 0 var(--r) var(--r);
-  font: 400 12.5px/20px "Martian Mono", "Roamies Arabic", ui-monospace, Menlo, monospace;
+  font: 400 12.5px/20px "Martian Mono", "Clanky Arabic", ui-monospace, Menlo, monospace;
   pointer-events: none; visibility: hidden; contain: layout style;
   transition: --w .46s cubic-bezier(.22, 1, .36, 1), --h .4s cubic-bezier(.22, 1, .36, 1), --r .4s cubic-bezier(.22, 1, .36, 1),
     top .6s cubic-bezier(.3, 1.35, .5, 1), box-shadow .35s ease, --glow-a .6s ease, --glow-b .6s ease; }
@@ -127,7 +127,7 @@
 .nc[data-mode="error"] { --glow-a: #ffcf86; --glow-b: #ff6a2f; }
 @property --glow-a { syntax: '<color>'; inherits: true; initial-value: #6fd6ff; }
 @property --glow-b { syntax: '<color>'; inherits: true; initial-value: #2a6bff; }
-.nc-mark { flex: none; color: #fff; font: 800 15px/1 "Doto", "Martian Mono", "Roamies Arabic", ui-monospace, monospace;
+.nc-mark { flex: none; color: #fff; font: 800 15px/1 "Doto", "Martian Mono", "Clanky Arabic", ui-monospace, monospace;
   letter-spacing: .02em; text-shadow: 0 0 10px rgba(0, 30, 90, .55); white-space: nowrap; }
 .nc:not(.drop) .nc-globe { order: -1; }
 .nc:not(.drop) .nc-status { margin-left: auto; }
@@ -186,7 +186,7 @@
 .nc-text.short, .nc-text.top.end { -webkit-mask-image: none; }
 .nc-heard { color: var(--ink-3); }
 /* Each line is its own paragraph with its own direction (Arabic and Hebrew run right to left, in the Arabic font). */
-.nc-line:dir(rtl) { font-family: "Roamies Arabic RTL", "Martian Mono", "Roamies Arabic", ui-monospace, Menlo, monospace; }
+.nc-line:dir(rtl) { font-family: "Clanky Arabic RTL", "Martian Mono", "Clanky Arabic", ui-monospace, Menlo, monospace; }
 .nc-choices { display: flex; gap: 8px; margin-top: 12px; }
 .nc-choices button { font: inherit; letter-spacing: inherit; border-radius: 999px; padding: 4px 14px; cursor: pointer;
   border: 1px solid rgba(120,255,226,.45); background: transparent; color: var(--ink); }
@@ -499,7 +499,7 @@
     jst.brow = st.mode === 'think' || st.mode === 'tool' ? 'raised' : null;
     const k = { put, L, th: () => 0 };
     const person = R.people?.[st.look];
-    // The lens shows whoever was picked: JARVIS's globe, a person (head and shoulders), or the Roamie's blob.
+    // The lens shows whoever was picked: JARVIS's globe, a person (head and shoulders), or the Clanky's blob.
     if (person) person.body(k, CELLS / 2 - 0.5, CELLS / 2 + 3, 10, jst);
     else if (st.look === 'jarvis' || !st.look || !R.jarvis) R.jarvis?.body(k, CELLS / 2 - 0.5, CELLS / 2 - 0.5, 10.5, jst);
     else blob(put, jst);
@@ -509,7 +509,7 @@
     }
   };
 
-  // The original Roamie in the lens: a glowing goo blob that breathes and talks, two dark eyes that blink and look.
+  // The original Clanky in the lens: a glowing goo blob that breathes and talks, two dark eyes that blink and look.
   const blob = (put, s) => {
     const c = CELLS / 2 - 0.5, v = s.voice ?? (s.mode === 'listen' ? s.heard * 0.6 : 0);
     const rx = 9 + v * 1.4, ry = 8.2 - v * 0.6 + 0.3 * Math.sin(s.t * 2.2), cy = c + 1.5;
@@ -774,9 +774,9 @@
   R.notch = {
     enabled: false,
     get style() { return drop() ? 'drop' : 'spread'; },
-    // The name on the capsule: the look's own (JARVIS, Roamie, …).
+    // The name on the capsule: the look's own (JARVIS, Clanky, …).
     set name(v) { $('.nc-mark').textContent = String(v || 'JARVIS'); if (st.open) apply(shape); },
-    // The look in the lens: 'jarvis', a person ('anime', 'sarah', 'adrian', 'rita', 'ultren', 'glayos'), or 'classic' (the Roamie blob).
+    // The look in the lens: 'jarvis', a person ('anime', 'sarah', 'adrian', 'rita', 'ultren', 'glayos'), or 'classic' (the Clanky blob).
     set look(v) { st.look = String(v || 'jarvis'); jst.swing = null; },
     set style(v) {
       const d = v === 'drop';

@@ -1,4 +1,4 @@
-// Screenshots that leave Roamies out: ScreenCaptureKit with every Roamies process
+// Screenshots that leave Clanky out: ScreenCaptureKit with every Clanky process
 // excluded (the app that owns the overlays and these helpers, all run from the same folder). Windows in `keep` still
 // show (the pen strokes being asked about). macOS 14+; nil means the caller falls back to screencapture.
 import AppKit
@@ -10,10 +10,10 @@ import UniformTypeIdentifiers
 enum Shot {
     private static let ourDir = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath().deletingLastPathComponent().path
 
-    /// A Roamies process: run from the same folder as this helper, or the app itself.
+    /// A Clanky process: run from the same folder as this helper, or the app itself.
     static func isOurs(_ pid: pid_t) -> Bool {
         if pid == getpid() || pid == getppid() { return true }
-        if NSRunningApplication(processIdentifier: pid)?.bundleIdentifier == "com.kenkai.roamies" { return true }
+        if NSRunningApplication(processIdentifier: pid)?.bundleIdentifier == "com.prathu3110.clanky" { return true }
         var buf = [CChar](repeating: 0, count: 4096)
         guard proc_pidpath(pid, &buf, UInt32(buf.count)) > 0 else { return false }
         return URL(fileURLWithPath: String(cString: buf)).resolvingSymlinksInPath().deletingLastPathComponent().path == ourDir

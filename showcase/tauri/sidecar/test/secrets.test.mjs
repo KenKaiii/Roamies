@@ -14,7 +14,7 @@ import { createSecrets, retryLoad, runInput } from '../secrets.mjs';
     if (c === 'secret-get') return { code: 0, stdout: JSON.stringify(kc.has(name) ? { ok: true, found: true, value: kc.get(name) } : { ok: true, found: false }) };
     if (c === 'secret-delete') { kc.delete(name); return { code: 0, stdout: '{"ok":true}' }; }
   };
-  const s = createSecrets({ platform: 'darwin', hands: '/x/roamies-hands', exec });
+  const s = createSecrets({ platform: 'darwin', hands: '/x/clanky-hands', exec });
   assert.equal(s.kind, 'keychain');
   assert.equal(await s.get('fish-audio'), null);
   await s.set('fish-audio', 'sk-fish-SECRET');
@@ -76,7 +76,7 @@ import { createSecrets, retryLoad, runInput } from '../secrets.mjs';
   assert.ok(calls.every((c) => c.cmd === 'secret-tool' && !c.args.join(' ').includes('SECRET')), 'never in argv');
   const store = calls.find((c) => c.args[0] === 'store');
   assert.equal(store.input, 'sk-fish-SECRET', 'on stdin, with no newline added');
-  assert.deepEqual(store.args, ['store', '--label', 'Roamies: fish-audio', 'service', 'com.kenkai.roamies', 'account', 'fish-audio']);
+  assert.deepEqual(store.args, ['store', '--label', 'Clanky: fish-audio', 'service', 'com.prathu3110.clanky', 'account', 'fish-audio']);
   await s.delete('fish-audio');
   assert.equal(await s.get('fish-audio'), null);
   await assert.rejects(s.get('../etc'), /bad secret name/);
@@ -92,11 +92,11 @@ import { createSecrets, retryLoad, runInput } from '../secrets.mjs';
 
 // Anywhere else (no safe store): refuses to save rather than writing plain text.
 {
-  const prev = process.env.ROAMIES_DATA_DIR; delete process.env.ROAMIES_DATA_DIR;
+  const prev = process.env.CLANKY_DATA_DIR; delete process.env.CLANKY_DATA_DIR;
   const s = createSecrets({ platform: 'freebsd', dataDir: '/tmp' });
   assert.equal(s.kind, 'none');
   await assert.rejects(s.set('fish-audio', 'k'), /no safe place/);
-  if (prev) process.env.ROAMIES_DATA_DIR = prev;
+  if (prev) process.env.CLANKY_DATA_DIR = prev;
 }
 
 // runInput: stdin reaches the child; a missing command resolves with an error instead of throwing.

@@ -11,18 +11,18 @@ static SUMMON_ID: AtomicU32 = AtomicU32::new(0);
 /// Id of the registered "ask about an area" hotkey.
 static SNAP_ID: AtomicU32 = AtomicU32::new(0);
 static LIST_ID: AtomicU32 = AtomicU32::new(0);
-/// Id of the Esc hotkey, held only while the Roamie is on screen (0 when it isn't).
+/// Id of the Esc hotkey, held only while the Clanky is on screen (0 when it isn't).
 static ESC_ID: AtomicU32 = AtomicU32::new(0);
 
 thread_local! {
     // The hotkey manager must live on the main thread; it also owns the current show/hide hotkey.
     static HOTKEYS: RefCell<Option<(global_hotkey::GlobalHotKeyManager, [Option<global_hotkey::hotkey::HotKey>; 3])>> = const { RefCell::new(None) };
-    // The overlays that have the Roamie (or its card, or its ask field) on screen right now.
+    // The overlays that have the Clanky (or its card, or its ask field) on screen right now.
     static ESC_UP: RefCell<std::collections::HashSet<String>> = RefCell::new(std::collections::HashSet::new());
 }
 
 pub(crate) fn voice_binary() -> Option<PathBuf> {
-    helper_binary("roamies-voice")
+    helper_binary("clanky-voice")
 }
 
 pub(crate) fn start_voice(app: &AppHandle) {
@@ -40,9 +40,9 @@ pub(crate) fn start_voice(app: &AppHandle) {
     if let Some(dir) = app.state::<VoiceModel>().0.lock().unwrap().clone() {
         cmd.arg("--model").arg(dir);
     }
-    // Debug builds: ROAMIES_TEST_AUDIO=<wav> stands in for the microphone, to test talking with no mic (CI, Docker).
+    // Debug builds: CLANKY_TEST_AUDIO=<wav> stands in for the microphone, to test talking with no mic (CI, Docker).
     #[cfg(debug_assertions)]
-    if let Some(wav) = std::env::var_os("ROAMIES_TEST_AUDIO") {
+    if let Some(wav) = std::env::var_os("CLANKY_TEST_AUDIO") {
         cmd.arg("--test-audio").arg(wav);
     }
     let mut child = match hide_console(&mut cmd).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(log_stdio("sidekick-voice.log")).spawn() {
@@ -172,7 +172,7 @@ pub(crate) fn set_hotkey(slot: usize, accel: &str) -> Result<(), String> {
             return Ok(());
         }
         if keys.iter().enumerate().any(|(i, k)| i != slot && k.map(|c| c.id()) == Some(new.id())) {
-            return Err("already used by the other Roamies shortcut".to_string());
+            return Err("already used by the other Clanky shortcut".to_string());
         }
         if let Some(old) = current {
             let _ = manager.unregister(old);
@@ -193,9 +193,9 @@ pub(crate) fn set_hotkey(slot: usize, accel: &str) -> Result<(), String> {
     })
 }
 
-/// Esc stops the Roamie's answer, or sends it away when it's idle (overlay host.js decides which). Global, so it
-/// works without clicking the Roamie first; that means other apps don't get Esc meanwhile, so it's held only
-/// while some overlay has the Roamie on screen. Must run on the main thread.
+/// Esc stops the Clanky's answer, or sends it away when it's idle (overlay host.js decides which). Global, so it
+/// works without clicking the Clanky first; that means other apps don't get Esc meanwhile, so it's held only
+/// while some overlay has the Clanky on screen. Must run on the main thread.
 pub(crate) fn set_esc(app: &AppHandle, label: &str, on: bool) {
     use global_hotkey::hotkey::{Code, HotKey};
     let any = ESC_UP.with(|up| {
@@ -241,7 +241,7 @@ fn handle_voice(app: &AppHandle, msg: Value) {
         to_sidekick_buddy(app, &msg);
         return;
     }
-    // A click in another app while a drawing is up (see watch_clicks); not one on Roamies' own cards.
+    // A click in another app while a drawing is up (see watch_clicks); not one on Clanky' own cards.
     if msg.get("type").and_then(Value::as_str) == Some("click") {
         if !crate::OVERLAY_HOT.load(Ordering::Relaxed) {
             to_sidecar(app, &json!({ "type": "user_click", "x": msg.get("x"), "y": msg.get("y"), "role": msg.get("role"), "app": msg.get("app"), "acts": msg.get("acts") }));

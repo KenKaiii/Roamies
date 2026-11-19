@@ -7,7 +7,7 @@ import { getModel, getModelsForProvider, setProviderCatalog } from '@kenkaiiii/g
 import { CATALOG_PROVIDERS, REFRESH_MS, RETRY_MS, createCatalogs } from '../catalogs.mjs';
 import { flushWrites } from '../store.mjs';
 
-const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'roamies-catalogs-'));
+const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'clanky-catalogs-'));
 const row = (id, o = {}) => ({ id, name: id, description: 'x'.repeat(500), context_length: 200_000, supported_parameters: ['tools'], architecture: { input_modalities: ['text', 'image'] }, ...o });
 const routerBody = { data: [row('anthropic/claude-x'), row('google/gemini-y'), row('meta/no-tools', { supported_parameters: [] })] };
 const codeBody = (ids) => ({ object: 'list', data: ids.map((id) => ({ id, name: id, type: 'chat', api: { 'chat-completions': {} }, capabilities: { tools: { supported: true } }, limit: { context: 200_000 }, cost: { text: { input: { price: 1 } } } })) });

@@ -53,8 +53,8 @@ const FIRST = [
 const all = readdirSync(dir).filter((f) => f.endsWith('.test.mjs'));
 const order = [...FIRST.filter((f) => all.includes(f)), ...all.filter((f) => !FIRST.includes(f)).sort()];
 for (const f of order) {
-  // Each file gets its own home folder, so no test ever reads or migrates the real ~/.gg or ~/Roamies.
-  const data = mkdtempSync(path.join(os.tmpdir(), 'roamies-test-'));
+  // Each file gets its own home folder, so no test ever reads or migrates the real ~/.gg or ~/Clanky.
+  const data = mkdtempSync(path.join(os.tmpdir(), 'clanky-test-'));
   const r = spawnSync(process.execPath, [path.join(dir, f)], { stdio: 'inherit', env: { ...process.env, HOME: data, USERPROFILE: data } });
   rmSync(data, { recursive: true, force: true });
   if (r.status !== 0) { console.error(`\n${f} failed`); process.exit(r.status ?? 1); }

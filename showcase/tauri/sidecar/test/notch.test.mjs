@@ -1,5 +1,5 @@
 // The notch capsule (#86): off unless picked, only on a Mac with a notched screen (notch.mjs), and in the overlay
-// (showcase/roamies/notch.js) it takes clicks only with something to act on and tells screen readers the whole reply
+// (showcase/clanky/notch.js) it takes clicks only with something to act on and tells screen readers the whole reply
 // once, not every streamed word. Run: npm test
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -42,9 +42,9 @@ const ctx = {
   requestAnimationFrame: (f) => { rafs.push(f); return rafs.length; }, cancelAnimationFrame: noop, setTimeout: (f) => { timers.push(f); return 0; }, clearTimeout: noop,
   getComputedStyle: () => ({}),
 };
-ctx.window.Roamie = { safe: { top: 38, notch: { x: 666, w: 180, h: 38 } }, wake: noop };
-vm.runInNewContext(fs.readFileSync(new URL('../../../roamies/notch.js', import.meta.url), 'utf8'), ctx);
-const R = ctx.window.Roamie;
+ctx.window.Clanky = { safe: { top: 38, notch: { x: 666, w: 180, h: 38 } }, wake: noop };
+vm.runInNewContext(fs.readFileSync(new URL('../../../clanky/notch.js', import.meta.url), 'utf8'), ctx);
+const R = ctx.window.Clanky;
 const sr = els.find((e) => e.className === 'nc-sr');
 const flush = () => { while (timers.length) timers.shift()(); };
 const capsule = els.find((e) => e.className?.startsWith?.('nc '));

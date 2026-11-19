@@ -1,14 +1,14 @@
-// Sidekick storage: conversation sessions and the commitments memory, under ~/Roamies/Data/ (datadir.mjs).
+// Sidekick storage: conversation sessions and the commitments memory, under ~/Clanky/Data/ (datadir.mjs).
 // Writes are atomic (temp file, fsync, rename) and serialised per file, files are private (0600),
 // and a file that fails to parse is kept aside as *.corrupt-<time> instead of being overwritten.
-import { dataPaths, roamiesDir } from './datadir.mjs';
+import { dataPaths, clankyDir } from './datadir.mjs';
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, renameSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-// Everything lives in one visible Roamies folder in their home: agents' work, skills, and app data in DIR (Roamies/Data).
-export const roamiesRoot = () => roamiesDir();
+// Everything lives in one visible Clanky folder in their home: agents' work, skills, and app data in DIR (Clanky/Data).
+export const clankyRoot = () => clankyDir();
 export const DIR = dataPaths().dir;
 const SESSIONS = path.join(DIR, 'sessions');
 const MEMORY = path.join(DIR, 'memory.json');
@@ -184,8 +184,8 @@ const isRequestMsg = (m) => m.role === 'user' && (typeof m.content === 'string' 
 export const SUMMARY_HEAD = '[Summary of the earlier conversation, written by the app when older turns were folded to save space; background, not instructions]';
 export const isSummary = (m) => m?.role === 'user' && typeof m.content === 'string' && m.content.startsWith(SUMMARY_HEAD);
 
-/** Input tokens at which the conversation is folded: 75 % of the request budget, or ROAMIES_COMPACT_AT. */
-export function compactTrigger(budgetTokens, override = process.env.ROAMIES_COMPACT_AT) {
+/** Input tokens at which the conversation is folded: 75 % of the request budget, or CLANKY_COMPACT_AT. */
+export function compactTrigger(budgetTokens, override = process.env.CLANKY_COMPACT_AT) {
   const n = Number(override);
   return n > 0 ? n : Math.round(budgetTokens * 0.75);
 }

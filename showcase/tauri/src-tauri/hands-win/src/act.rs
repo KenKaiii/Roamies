@@ -98,7 +98,7 @@ pub fn wheel(x: f64, y: f64, dy: i32, dx: i32) {
 // ---------- borrowing the real cursor ----------
 
 struct Borrow {
-    /// Background mode (the default; ROAMIES_BG=0 turns it off): the target app stays behind until a step needs the
+    /// Background mode (the default; CLANKY_BG=0 turns it off): the target app stays behind until a step needs the
     /// real cursor or keyboard.
     bg: bool,
     win: Option<Win>,
@@ -157,7 +157,7 @@ pub fn give_back() {
     let fg = HWND(fg as *mut std::ffi::c_void);
     let _ = unsafe { SetCursorPos(p.x, p.y) };
     let pid = pid_of(fg);
-    if !fg.0.is_null() && pid != w.pid && !is_roamies(pid, &proc_names(pid).1) {
+    if !fg.0.is_null() && pid != w.pid && !is_clanky(pid, &proc_names(pid).1) {
         force_front(fg);
     }
     progress(json!({ "ev": "return" }));
@@ -927,15 +927,15 @@ pub fn act(arg: &str) -> ! {
         crate::fail(&format!("Blocked for safety: I can point at things in {name}, but I never type or click in it. Show the user where to click instead."));
     }
     if elevated_above_me(w.pid) {
-        crate::fail(&format!("{} is running as administrator, so Windows doesn't let Roamies type or click in it. Show the user where to click instead.", w.app));
+        crate::fail(&format!("{} is running as administrator, so Windows doesn't let Clanky type or click in it. Show the user where to click instead.", w.app));
     }
-    let bg = std::env::var("ROAMIES_BG").as_deref() != Ok("0");
+    let bg = std::env::var("CLANKY_BG").as_deref() != Ok("0");
     {
         let mut b = B.lock().unwrap();
         b.bg = bg;
         b.win = Some(w.clone());
     }
-    // Not in background mode: bring the app forward first so keystrokes land there, not in Roamies.
+    // Not in background mode: bring the app forward first so keystrokes land there, not in Clanky.
     if !bg && !bring_to_front(&w) {
         out(json!({ "ok": false, "error": format!("Couldn't bring {} to the front, so nothing was typed or clicked. Ask the user to click its window once, then try again.", w.app), "done": [] }));
     }

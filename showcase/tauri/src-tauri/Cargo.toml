@@ -1,11 +1,11 @@
 [package]
-name = "roamies"
+name = "clanky"
 version = "0.1.44"
 edition = "2021"
 license = "AGPL-3.0-only"
-description = "Roamies: AI desktop companions"
-repository = "https://github.com/KenKaiii/Roamies"
-homepage = "https://github.com/KenKaiii/Roamies"
+description = "Clanky: AI desktop companions"
+repository = "https://github.com/Prathu3110/Clanky"
+homepage = "https://github.com/Prathu3110/Clanky"
 
 [build-dependencies]
 tauri-build = { version = "=2.7.4", features = [] }

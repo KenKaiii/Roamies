@@ -15,7 +15,7 @@ const verdict = (level, reason = '') => ({ level, reason });
 const SECRET = [
   /(^|\/)\.ssh(\/|$)/, /(^|\/)\.gnupg(\/|$)/, /(^|\/)\.aws(\/|$)/, /(^|\/)\.azure(\/|$)/, /(^|\/)\.kube\/config$/,
   /(^|\/)\.docker\/config\.json$/, /(^|\/)\.netrc$/, /(^|\/)\.npmrc$/, /(^|\/)\.pypirc$/, /(^|\/)\.git-credentials$/,
-  /(^|\/)\.config\/gh(\/|$)/, /(^|\/)\.config\/gcloud(\/|$)/, /(^|\/)\.gg\/auth\.json$/, /(^|\/)Roamies\/Data\/secrets\.json$/i, /(^|\/)\.tauri(\/|$)/,
+  /(^|\/)\.config\/gh(\/|$)/, /(^|\/)\.config\/gcloud(\/|$)/, /(^|\/)\.gg\/auth\.json$/, /(^|\/)Clanky\/Data\/secrets\.json$/i, /(^|\/)\.tauri(\/|$)/,
   /(^|\/)Library\/Keychains(\/|$)/, /(^|\/)Library\/Cookies(\/|$)/, /\/(Cookies|Login Data|Web Data)(-journal)?$/,
   /(^|\/)\.env(\.[\w-]+)?$/, /\.(pem|p12|pfx|key|keystore|jks)$/i, /(^|\/)id_(rsa|ed25519|ecdsa|dsa)(\.pub)?$/,
   /(^|\/)\.(bash|zsh|fish)_history$/, /(^|\/)\.zsh_sessions(\/|$)/,
@@ -34,7 +34,7 @@ const PRIVATE = [
 const NO_WRITE = [
   /(^|\/)\.(zshrc|zprofile|zshenv|zlogin|bashrc|bash_profile|profile|login|inputrc)$/, /(^|\/)\.config\/fish(\/|$)/,
   /(^|\/)Library\/(LaunchAgents|LaunchDaemons|StartupItems|Preferences|Keychains|Application Support\/com\.apple)(\/|$)/,
-  /(^|\/)\.gitconfig$/, /(^|\/)\.ssh(\/|$)/, /(^|\/)\.gg(\/|$)/, /(^|\/)Roamies\/(Skills|Data)(\/|$)/i, /(^|\/)\.tauri(\/|$)/, /\.app(\/|$)/, /(^|\/)crontab$/,
+  /(^|\/)\.gitconfig$/, /(^|\/)\.ssh(\/|$)/, /(^|\/)\.gg(\/|$)/, /(^|\/)Clanky\/(Skills|Data)(\/|$)/i, /(^|\/)\.tauri(\/|$)/, /\.app(\/|$)/, /(^|\/)crontab$/,
   /\/Start Menu\/Programs\/Startup(\/|$)/i, /(^|\/)Documents\/(Windows)?PowerShell\/.*profile\.ps1$/i, /^[a-z]:\/(Windows|Program Files( \(x86\))?|ProgramData)(\/|$)/i,
   // Linux: what starts at login (autostart entries, systemd user units, session environment), app launchers and
   // D-Bus services (each names a program the desktop runs), and the X session's startup files.
@@ -510,7 +510,7 @@ export function checkDrawAction({ kind, url, text, action } = {}, { allowActions
 
 // ---------- learned skills ----------
 
-// A skill is steps the Roamie follows later, so text that would turn it against the user never gets saved: reading
+// A skill is steps the Clanky follows later, so text that would turn it against the user never gets saved: reading
 // secrets, keeping things from them, skipping their yes, or words dressed up as instructions from the app.
 const SKILL_RULES = [
   [/(?:^|[\s"'`(/~])(?:\.ssh|\.gnupg|\.aws\/credentials|\.netrc|\.npmrc|\.git-credentials|\.password-store|\.env(?:\.[\w-]+)?|auth\.json|id_(?:rsa|ed25519|ecdsa|dsa)|cookies\.sqlite|key4\.db|login data)(?![\w.-])/i, 'it reads passwords, keys or sign-in files'],

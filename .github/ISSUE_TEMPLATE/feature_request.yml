@@ -1,11 +1,11 @@
 name: Feature request
-description: Suggest an idea for Roamies.
+description: Suggest an idea for Clanky.
 labels: [enhancement]
 body:
   - type: textarea
     id: problem
     attributes:
-      label: What would you like Roamies to do?
+      label: What would you like Clanky to do?
     validations:
       required: true
   - type: textarea

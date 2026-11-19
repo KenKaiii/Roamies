@@ -71,7 +71,7 @@ html, body { height: 100%; background: transparent; }
 /* ---------- header: who, and what it's doing right now ---------- */
 .head { display: flex; align-items: center; gap: 8px; padding: 6px var(--gut) 6px 4px; }
 .head-text { min-width: 0; flex: 1; display: grid; }
-/* The Roamie stands on a small LED pad, like the setup guide's. */
+/* The Clanky stands on a small LED pad, like the setup guide's. */
 .avatar { flex: none; width: 100px; height: 74px; margin-inline-end: -10px; background: radial-gradient(closest-side, rgba(120, 255, 226, 0.10), transparent) 50% 92% / 70% 22% no-repeat; }
 /* Something it says (a new look, an update; not the setup guide's .quip bubble): in the status line's place for a moment, typed in its own font. */
 .head-text .by, .head-text .saying { grid-area: 2 / 1; }
@@ -374,4 +374,4 @@ html, body { height: 100%; background: transparent; }
 }
 
 /* Arabic and Hebrew in a list (dir=auto on the text): the Arabic font first, for its own word spacing. */
-.item .text:dir(rtl) { font-family: "Roamies Arabic RTL", var(--mono); }
+.item .text:dir(rtl) { font-family: "Clanky Arabic RTL", var(--mono); }

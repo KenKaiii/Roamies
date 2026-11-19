@@ -187,5 +187,5 @@
     return null;
   }
   const api = { blocks, inline, flat, text: flatText, BOLD, CODE, ITAL, LINK };
-  (globalThis.Roamie ??= {}).md = api;
+  (globalThis.Clanky ??= {}).md = api;
 })();

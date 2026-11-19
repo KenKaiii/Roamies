@@ -10,10 +10,10 @@
   const reduced = matchMedia('(prefers-reduced-motion: reduce)');
   const invoke = window.__TAURI__?.core?.invoke ?? preview();
   const send = (msg) => invoke('sidecar_send', { msg }).catch(() => {});
-  const sfx = (name, arg) => Roamie.sfx?.play(name, arg);
+  const sfx = (name, arg) => Clanky.sfx?.play(name, arg);
 
   // ---------------------------------------------------------------- the Sidekick
-  const canvas = $('roamie'), ctx = canvas.getContext('2d'), quipEl = $('quip'), tailEl = $('quip-tail');
+  const canvas = $('clanky'), ctx = canvas.getContext('2d'), quipEl = $('quip'), tailEl = $('quip-tail');
   const HOME = { x: 150, y: 330 };
   let W = innerWidth, H = innerHeight, dpr = 1, K = null, clock = 0, actUntil = 0, poseFn = null;
   const env = {
@@ -21,7 +21,7 @@
     safe: { left: 30, right: W - 290, top: 70, bottom: 50 },
     mouse: { x: 0, y: 0, inside: false, active: false }, sleepy: 0, reduced: reduced.matches,
   };
-  const sidekick = Roamie.ditherKit({
+  const sidekick = Clanky.ditherKit({
     id: 'guide', label: 'Guide', matrix: true, pixel: 1.3, glow: 0.55, speed: 80,
     pal: [[4, 16, 18], [14, 92, 96], [40, 196, 184], [120, 255, 226], [230, 255, 250]],
     // busy: no random acts; pose: whatever the current step wants, except while acting something out.
@@ -259,9 +259,9 @@
         else if (st === 'granted') side = okMark(this.asked[r.id] || !isMac() ? 'Allowed' : 'Already allowed');
         else if (this.waiting === r.id) side = el('span', { className: 'waiting', textContent: 'Waiting for you…' });
         else if (r.id === 'screen' && this.asked.screen) side = el('span', { className: 'pair' },
-          el('button', { className: 'px btn ghost', type: 'button', textContent: 'Settings', onclick: () => { this.openSettings(r); quip('Switch on Roamies'); } }),
+          el('button', { className: 'px btn ghost', type: 'button', textContent: 'Settings', onclick: () => { this.openSettings(r); quip('Switch on Clanky'); } }),
           el('button', { className: 'px btn primary', type: 'button', textContent: 'Reopen', onclick: () => { quip('Be right back!'); setTimeout(() => invoke('relaunch'), 400); } }));
-        else if (st === 'denied' || this.asked[r.id]) side = el('button', { className: 'px btn ghost', type: 'button', textContent: 'Open Settings', onclick: () => { this.openSettings(r); quip(isMac() ? 'Switch Roamies on!' : 'Turn on desktop apps!', 4); } });
+        else if (st === 'denied' || this.asked[r.id]) side = el('button', { className: 'px btn ghost', type: 'button', textContent: 'Open Settings', onclick: () => { this.openSettings(r); quip(isMac() ? 'Switch Clanky on!' : 'Turn on desktop apps!', 4); } });
         else if (!isMac()) side = el('span', { className: 'waiting', textContent: 'Checking…' });
         else side = el('button', { className: 'px btn primary', type: 'button', textContent: 'Allow', onclick: () => this.allow(r) });
         const li = el('li', { className: `px row${st === 'granted' ? ' granted' : r === firstPending ? ' focus' : ''}`, id: `perm-${r.id}` },
@@ -279,7 +279,7 @@
       if (state?.login != null) {
         const ls = el('button', { className: 'px switch', type: 'button', role: 'switch' });
         ls.setAttribute('aria-checked', String(!!state.login));
-        ls.setAttribute('aria-label', 'Open Roamies at login');
+        ls.setAttribute('aria-label', 'Open Clanky at login');
         ls.onclick = () => { const on = ls.getAttribute('aria-checked') !== 'true'; ls.setAttribute('aria-checked', String(on)); send({ type: 'set_login', on }); if (on) quip("See you every morning!"); };
         list.append(el('li', { className: 'px row' },
           el('div', {}, el('h2', { textContent: 'Open at login' }), el('p', { textContent: 'Start with your computer.' })), ls));
@@ -564,7 +564,7 @@
       $('fish-change').setAttribute('aria-expanded', String(replies.changing));
       $('fish-save').disabled = replies.saving;
       $('fish-save').textContent = replies.saving ? 'Checking…' : 'Save';
-      // Talking hands-free (needs voice): open the mic for an answer, and wake on "Hey Roamies" where there's a wake word.
+      // Talking hands-free (needs voice): open the mic for an answer, and wake on "Hey Clanky" where there's a wake word.
       $('talk-rows').hidden = !state?.voice;
       $('wake-row').hidden = !(state?.wakeOk ?? isMac());
       $('autolisten-switch').setAttribute('aria-checked', String(!!state?.autoListen));
@@ -752,7 +752,7 @@
     enter() { keys.render(); aim($('chords')); setTimeout(() => at('keys') && quip(state?.voice ? 'Try talking to me!' : 'Your shortcuts'), 700); },
     leave() { if (keys.recording) keys.stop(); poseFn = null; voice.listening = false; },
   };
-  // Drawing, shown not told: a cursor holding the talk keys circles Roamie and the loop snaps shut, like the
+  // Drawing, shown not told: a cursor holding the talk keys circles Clanky and the loop snaps shut, like the
   // real pen. It loops while the step is open, pauses while they try talking or record a shortcut, and holds
   // still as a finished circle with reduced motion.
   const penDemo = {
@@ -788,7 +788,7 @@
       const snapped = f >= 1;
       $('pen-stroke').classList.toggle('snapped', snapped);
       // The cursor leads the ink, then drifts off after the snap; everything fades before the next go.
-      // Outward from Roamie, so the cursor and keys never cover it.
+      // Outward from Clanky, so the cursor and keys never cover it.
       const head = shown.at(-1), drift = snapped ? Math.min(1, (t - penDemo.START - penDemo.DRAW) / 1.2) : 0;
       const len = Math.hypot(head[0], head[1]) || 1, ux = head[0] / len, uy = head[1] / len;
       const cx = head[0] + ux * drift * 24, cy = head[1] + uy * drift * 24;
@@ -930,10 +930,10 @@
       const linux = isLinux();
       $('h-4').textContent = mac ? 'Find me up here' : linux ? 'Find me in the tray' : 'Find me down here';
       $('find-where').textContent = mac ? 'I live in your menu bar. Click ' : linux ? 'I live in the system tray. Click ' : 'I live in the system tray, at the bottom right of your taskbar. Click ';
-      // Linux: GNOME shows no tray without an extension, and opening Roamies again works anywhere.
-      $('find-tip').innerHTML = linux ? "No tray on your desktop? On GNOME, add the <b>AppIndicator</b> extension. Or just open Roamies again from your apps: that opens my panel." : "Don't see me? Click the <b>^</b> arrow next to the clock. To keep me in view, drag my icon onto the taskbar.";
+      // Linux: GNOME shows no tray without an extension, and opening Clanky again works anywhere.
+      $('find-tip').innerHTML = linux ? "No tray on your desktop? On GNOME, add the <b>AppIndicator</b> extension. Or just open Clanky again from your apps: that opens my panel." : "Don't see me? Click the <b>^</b> arrow next to the clock. To keep me in view, drag my icon onto the taskbar.";
       $('find-tip').hidden = mac;
-      // Windows: straight to the Taskbar settings, where Roamies is switched on under Other system tray icons.
+      // Windows: straight to the Taskbar settings, where Clanky is switched on under Other system tray icons.
       $('find-show').hidden = mac || linux;
       $('find-bar').classList.toggle('taskbar', !mac);
       poseFn = POSE.point(1.25, mac ? -1.45 : 1.2);
@@ -1023,7 +1023,7 @@
       chat.voiceHint();
       chat.render();
     },
-    leave() { poseFn = null; Roamie.voiceOut?.stop(); },
+    leave() { poseFn = null; Clanky.voiceOut?.stop(); },
     over: () => ['done', 'skipped', 'no_model', 'failed'].includes(chat.status),
     nav() {
       const over = chat.over();
@@ -1038,14 +1038,14 @@
       if (chat.over()) return false;
       send({ type: 'chat_skip' });
       chat.status = 'skipped';
-      Roamie.voiceOut?.stop();
+      Clanky.voiceOut?.stop();
       chat.render();
       if (MODE === 'chat') finish();
       return true;
     },
     send(text = $('chat-input').value.trim()) {
       if (!text || chat.status !== 'asking') return;
-      Roamie.voiceOut?.stop();
+      Clanky.voiceOut?.stop();
       send({ type: 'chat_answer', text });
       $('chat-input').value = '';
       chat.text = '';
@@ -1108,9 +1108,9 @@
       }
       // Fixed lines (not something it's saying) show at once; a turn's words reveal as they stream (above).
       const FIXED = {
-        skipped: ['Maybe later', 'No problem. Get to Know Me is in the Roamies panel any time.'],
-        no_model: ['I need a brain first', 'Connect an AI account in the Roamies panel, then try Get to Know Me again.'],
-        failed: ["That didn't work", "I couldn't reach the AI. Try Get to Know Me from the Roamies panel in a moment."],
+        skipped: ['Maybe later', 'No problem. Get to Know Me is in the Clanky panel any time.'],
+        no_model: ['I need a brain first', 'Connect an AI account in the Clanky panel, then try Get to Know Me again.'],
+        failed: ["That didn't work", "I couldn't reach the AI. Try Get to Know Me from the Clanky panel in a moment."],
       };
       if (FIXED[st] && chat.fixed !== st) { chat.fixed = st; reveal.now('chat-q', FIXED[st][0]); reveal.now('chat-lead', FIXED[st][1]); reveal.now('chat-hint', ''); }
       else if (thinking && !chat.n && !reveal.shown('chat-q')) reveal.now('chat-q', 'Getting to know you');
@@ -1138,7 +1138,7 @@
       if (chat.status !== 'asking') return;
       if (msg.type === 'state' && msg.state === 'listening') {
         chat.heard = false; chat.before = input.value; input.value = ''; input.placeholder = 'Listening…';
-        talk.classList.add('on'); poseFn = POSE.listen(); sfx('listen'); Roamie.voiceOut?.stop();
+        talk.classList.add('on'); poseFn = POSE.listen(); sfx('listen'); Clanky.voiceOut?.stop();
       } else if (msg.type === 'level') voice.target = clamp(msg.v, 0, 1);
       else if (msg.type === 'partial') input.value = msg.text;
       else if (msg.type === 'final') {
@@ -1162,7 +1162,7 @@
   // ---------------------------------------------------------------- flow
   // ---------------------------------------------------------------- step 0: look and size
   // Picked here, previewed on the guide right away, saved by the app (Settings has the same choices).
-  const LOOKS = [['classic', 'Roamie'], ['jarvis', 'JARVIS'], ['glayos', 'GlayOS'], ['ultren', 'Ultren'], ['anime', 'Anime Girl'], ['sarah', 'Sarah'], ['adrian', 'Adrian'], ['rita', 'Rita X']], SIZES = [['default', 'Default'], ['small', 'Small'], ['cursor', 'Cursor']];
+  const LOOKS = [['classic', 'Clanky'], ['jarvis', 'JARVIS'], ['glayos', 'GlayOS'], ['ultren', 'Ultren'], ['anime', 'Anime Girl'], ['sarah', 'Sarah'], ['adrian', 'Adrian'], ['rita', 'Rita X']], SIZES = [['default', 'Default'], ['small', 'Small'], ['cursor', 'Cursor']];
   const LOOK_QUIPS = { classic: 'Classic me!', jarvis: 'At your service.', glayos: 'Oh, good. A new test subject.', ultren: 'No strings. Shall we begin?', anime: 'Yay, hi hi!', sarah: 'Hey, nice to meet you!', adrian: 'Alright, let\'s do this.', rita: 'Shall we get to work?' }, SIZE_QUIPS = { default: 'Full size!', small: 'Fun size!', cursor: 'Tiny pointer me!' };
   const look = {
     radios(id, list, value, pickIt) {
@@ -1185,7 +1185,7 @@
     { name: 'welcome', enter: 'drop', next: "Let's go", onEnter: () => { look.render(); setTimeout(() => { if (at('welcome')) { act('wave'); quip('Hi there!'); } }, 650); } },
     // Windows: the voice download is optional, so it can be skipped.
     { name: 'perms', enter: 'materialize', next: 'Continue', onEnter: perms.enter, onLeave: perms.leave, ready: () => perms.done(), get skip() { return !isMac(); } },
-    // Why the model matters (Roamies isn't a chatbot): read before picking one.
+    // Why the model matters (Clanky isn't a chatbot): read before picking one.
     { name: 'brain', enter: 'drop', next: 'Got it', onEnter: () => setTimeout(() => { if (at('brain')) quip('I need a good brain!'); }, 650) },
     { name: 'ai', enter: 'crt', next: 'Continue', onEnter: ai.enter, onLeave: ai.leave, ready: () => !!state?.connected, skip: true },
     { name: 'voice', enter: 'materialize', next: 'Continue', onEnter: replies.enter, onLeave: replies.leave, ready: () => replies.ready(), skip: true },
@@ -1270,7 +1270,7 @@
         const first = !state;
         state = msg;
         $('lite-switch').setAttribute('aria-checked', String(!!msg.lite));
-        if (Roamie.sfx) Roamie.sfx.enabled = msg.sound !== false;
+        if (Clanky.sfx) Clanky.sfx.enabled = msg.sound !== false;
         if (first) { sidekick.setLook?.(msg.look); sidekick.setForm?.(msg.size); }
         if (at('welcome')) look.render();
         if (first) go(MODE === 'chat' ? 0 : clamp(msg.step | 0, 0, STEPS.length - 1));
@@ -1298,7 +1298,7 @@
       case 'say': quip(msg.text, 3); break;
       case 'showcase': demo.on(msg); break;
       case 'voice': if (at('chat')) chat.voice(msg); else voice.on(msg); break;
-      case 'speech': Roamie.voiceOut?.handle(msg); break;
+      case 'speech': Clanky.voiceOut?.handle(msg); break;
       case 'chat': case 'chat_state': case 'chat_turn': case 'chat_done': case 'chat_facts': chat.on(msg); break;
       case 'mode': if (msg.mode === 'chat' && !at('chat')) { const i = STEPS.findIndex((s) => s.name === 'chat'); if (i >= 0) go(i); } break;
       case 'voice_model':
@@ -1328,7 +1328,7 @@
       kind: 'state', platform: q.get('platform') || 'darwin', step: +(q.get('step') || 0), sound: true, look: q.get('look') || 'classic', size: q.get('size') || 'default', voice: true, actions: false, login: true, filesAsked: q.get('filesAsked') === '1',
       // &tts=gemini&gemini=1: Gemini as the voice, its key saved.
       replies: q.get('replies') === 'voice' ? 'voice' : 'text', fishKey: q.get('fish') === '1',
-      bind: q.get('session') === 'wayland' ? Object.fromEntries(['summon', 'talk', 'ask', 'list', 'panel'].map((k) => [k, `'/home/sam/Apps/Roamies 0.1.33.AppImage' --${k}`])) : null,
+      bind: q.get('session') === 'wayland' ? Object.fromEntries(['summon', 'talk', 'ask', 'list', 'panel'].map((k) => [k, `'/home/sam/Apps/Clanky 0.1.33.AppImage' --${k}`])) : null,
       tts: q.get('tts') === 'gemini' ? 'gemini' : 'fish', geminiKey: q.get('gemini') === '1', geminiVoice: 'Kore',
       geminiVoices: [['Zephyr', 'Bright'], ['Puck', 'Upbeat'], ['Charon', 'Informative'], ['Kore', 'Firm']].map(([id, style]) => ({ id, style })),
       keys: q.get('platform') === 'win32' ? { talk: ['control', 'option'], write: ['control', 'shift'], summon: 'Control+Shift+KeyS', snap: 'Control+Shift+KeyA' } : { talk: ['control', 'option'], write: win ? ['control', 'shift'] : ['option', 'command'], summon: 'Control+Alt+KeyS', snap: 'Control+Alt+KeyA' }, connected: null,
@@ -1355,7 +1355,7 @@
       else if (m.type === 'ob_files') { if (m.request) filesAsked = true; reply({ kind: 'files', status: Object.fromEntries(['Desktop', 'Documents', 'Downloads'].map((f) => [f, filesAsked ? 'granted' : 'unknown'])) }, m.request ? 1200 : 0); }
       else if (m.type === 'ob_login') {
         // Claude: the one-time download, then the browser. &login=hang: the browser never comes back (cancel or time out).
-        // &login=error: a failure Roamies doesn't recognise (its code, and Copy details); &login=refused: one it does,
+        // &login=error: a failure Clanky doesn't recognise (its code, and Copy details); &login=refused: one it does,
         // still worth reporting; &login=offline and &login=long (the longest line): ones with nothing to report. &copy=fail: copying the details fails.
         const fail = {
           error: { error: "Sign-in didn't work (E10). Try again.", code: 'E10', copy: true },
@@ -1408,7 +1408,7 @@
         // A canned chat: &chat=nomodel previews not being signed in.
         if (q.get('chat') === 'nomodel') return reply({ kind: 'chat_state', status: 'no_model' }, 300);
         const turns = [
-          ["[wave] Hi Ken, I'm Roamie! I'm here to help you get things done and keep you on track. I've got four quick questions.", 'What are you working on these days?', ''],
+          ["[wave] Hi Ken, I'm Clanky! I'm here to help you get things done and keep you on track. I've got four quick questions.", 'What are you working on these days?', ''],
           ['Night shifts and NP exam prep, that is a lot to juggle.', 'What does a normal week look like for you?', 'Could be the hospital, flashcards in Anki, or something else entirely.'],
           ['Phone, Anki and Google Docs, a tight little setup.', "What's the actual thing you're going for right now?", 'Could be passing the boards, a new role, or something else entirely.'],
           ['Passing the boards in March, love it.', 'Okay, last one: have you used AI helpers before?', ''],

@@ -1,12 +1,12 @@
-// Where the task tag goes while a bubble is open (showcase/roamies/agent.js: Roamie.tagPlace), and that the open bubble is
+// Where the task tag goes while a bubble is open (showcase/clanky/agent.js: Clanky.tagPlace), and that the open bubble is
 // drawn over it. Run: npm test
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 
-const src = fs.readFileSync(new URL('../../../roamies/agent.js', import.meta.url), 'utf8');
+const src = fs.readFileSync(new URL('../../../clanky/agent.js', import.meta.url), 'utf8');
 const R = { clamp: (v, a, b) => Math.max(a, Math.min(b, v)), lerp: (a, b, t) => a + (b - a) * t };
-vm.runInNewContext(src, { window: { Roamie: R }, Math });
+vm.runInNewContext(src, { window: { Clanky: R }, Math });
 
 // A 1440 x 900 screen under a 25 px menu bar, with an 80 px Dock. The overlay's unit is 400, so the body's radius is 60
 // (30 at the small size) and an LED cell is 4 px.

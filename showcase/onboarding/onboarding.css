@@ -8,7 +8,7 @@
   font-display: block;
 }
 @font-face {
-  font-family: "Roamies Arabic";
+  font-family: "Clanky Arabic";
   src: url("fonts/readex-pro-arabic.woff2") format("woff2");
   font-weight: 160 700;
   font-display: swap;
@@ -16,7 +16,7 @@
   unicode-range: U+0600-06FF, U+0750-077F, U+08A0-08FF, U+FB50-FDFF, U+FE70-FEFF, U+200C-200F, U+2010-2011, U+204F;
 }
 @font-face {
-  font-family: "Roamies Arabic RTL";
+  font-family: "Clanky Arabic RTL";
   src: url("fonts/readex-pro-arabic.woff2") format("woff2");
   font-weight: 160 700;
   font-display: swap;
@@ -48,7 +48,7 @@
   --danger: #ffb4a8;
   --ease: cubic-bezier(.2, .8, .2, 1);
   --display: "Doto", ui-monospace, monospace;
-  --mono: "Martian Mono", "Roamies Arabic", ui-monospace, "SF Mono", Menlo, monospace;
+  --mono: "Martian Mono", "Clanky Arabic", ui-monospace, "SF Mono", Menlo, monospace;
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
@@ -404,7 +404,7 @@ input:focus-visible { outline: none; }
 .spacer { flex: 1; }
 
 /* ---------- Sidekick layer ---------- */
-.roamie { position: fixed; inset: 0; width: 100vw; height: 100vh; pointer-events: none; z-index: 5; }
+.clanky { position: fixed; inset: 0; width: 100vw; height: 100vh; pointer-events: none; z-index: 5; }
 /* The Sidekick's speech: a dot-matrix bubble like the ones it uses on the desktop. */
 .quip {
   position: fixed; left: 0; top: 0; z-index: 6; margin: 0; width: max-content; max-width: 236px; padding: 8px 12px 9px;

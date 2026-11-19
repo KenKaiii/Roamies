@@ -6,9 +6,9 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v)), lerp = (a, b, u) => a + (b - a) * u;
-const window = { Roamie: { clamp, lerp } };
-vm.runInNewContext(fs.readFileSync(new URL('../../../roamies/agent-tools.js', import.meta.url), 'utf8'), { window, Math });
-const T = window.Roamie.agentTools;
+const window = { Clanky: { clamp, lerp } };
+vm.runInNewContext(fs.readFileSync(new URL('../../../clanky/agent-tools.js', import.meta.url), 'utf8'), { window, Math });
+const T = window.Clanky.agentTools;
 const c = { R: 70, P: 5, W: 1600, H: 1000, bx: 300, by: 700, S() {}, sq: { kick() {} }, face: { set() {} }, look() {} };
 
 for (const [name, def] of Object.entries(T)) {

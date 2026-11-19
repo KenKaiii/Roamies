@@ -1,4 +1,4 @@
-// What the Roamie is doing and has done, in plain words, for the panel: "Reading notes.md" while a tool runs,
+// What the Clanky is doing and has done, in plain words, for the panel: "Reading notes.md" while a tool runs,
 // then "Read notes.md" in the recent list. Only names a file, app or site,
 // never a path, a command or what was typed.
 // Either slash, whatever the OS: a Windows path must never show in full on a Mac, or the other way round.

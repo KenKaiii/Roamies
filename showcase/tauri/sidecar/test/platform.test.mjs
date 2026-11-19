@@ -27,12 +27,12 @@ assert.match(wl, /never waits for a click or hover/, 'Wayland: no waiting on wha
 assert.match(platformLine('linux', {}), /^Platform: Linux on x64, a desktop on Wayland\./, 'not told the session: the careful answer');
 
 // The session: what the app says, else the same signs it reads.
-assert.equal(linuxSession({ ROAMIES_SESSION: 'x11', WAYLAND_DISPLAY: 'wayland-0' }), 'x11', 'the app knows best');
-assert.equal(linuxSession({ ROAMIES_SESSION: 'wayland' }), 'wayland');
+assert.equal(linuxSession({ CLANKY_SESSION: 'x11', WAYLAND_DISPLAY: 'wayland-0' }), 'x11', 'the app knows best');
+assert.equal(linuxSession({ CLANKY_SESSION: 'wayland' }), 'wayland');
 assert.equal(linuxSession({ XDG_SESSION_TYPE: 'wayland' }), 'wayland');
 assert.equal(linuxSession({ WAYLAND_DISPLAY: 'wayland-0', DISPLAY: ':0' }), 'wayland');
 assert.equal(linuxSession({ XDG_SESSION_TYPE: 'x11', DISPLAY: ':0' }), 'x11');
-assert.equal(linuxSession({ ROAMIES_SESSION: 'nonsense' }), 'x11');
+assert.equal(linuxSession({ CLANKY_SESSION: 'nonsense' }), 'x11');
 
 // The pointer over other apps and global shortcuts: everywhere but Wayland.
 assert.ok(seesPointer('darwin') && seesPointer('win32') && seesPointer('linux', 'x11') && !seesPointer('linux', 'wayland') && !seesPointer('linux', ''));
@@ -46,8 +46,8 @@ assert.ok(hasWakeWord('darwin') && hasWakeWord('win32') && hasWakeWord('linux') 
 assert.ok(!hasHands('linux', '') && !canSnap('linux', '') && !canCircle('linux'));
 
 // Ask About an Area needs the helper's area selection: macOS, and Windows with the helper there.
-assert.ok(canSnap('darwin', '') && canSnap('win32', 'C:\\Roamies\\roamies-hands.exe'));
-assert.ok(!canSnap('win32', '') && !canSnap('linux', '/x/roamies-hands'));
+assert.ok(canSnap('darwin', '') && canSnap('win32', 'C:\\Clanky\\clanky-hands.exe'));
+assert.ok(!canSnap('win32', '') && !canSnap('linux', '/x/clanky-hands'));
 assert.ok(hasHands('darwin', '') && hasHands('win32', 'x') && !hasHands('win32', ''));
 assert.ok(canCircle('darwin') && canCircle('win32') && !canCircle('linux'));
 
@@ -57,7 +57,7 @@ const names = execFileSync(process.execPath, ['--input-type=module', '-e', `
   const { createTools } = await import(${JSON.stringify(tools)});
   const noop = async () => {};
   const { tools } = createTools({ allowActions: () => false, ui: () => {}, ask: noop, openUrl: noop, onCommitments: noop, showList: noop, fmtWhen: String, commitmentsText: () => '', userName: 'T' });
-  console.log(tools.map((t) => t.name).join(','));`], { env: { ...process.env, ROAMIES_HANDS: 'fake-hands.mjs' }, encoding: 'utf8' }).trim().split(',');
+  console.log(tools.map((t) => t.name).join(','));`], { env: { ...process.env, CLANKY_HANDS: 'fake-hands.mjs' }, encoding: 'utf8' }).trim().split(',');
 for (const n of ['list_windows', 'read_window', 'act_in_app']) assert.ok(names.includes(n), `${n} is offered with the helper`);
 // The microphone: each reason the voice helper gives gets its own advice, not "I can't find a microphone".
 assert.match(micTrouble('darwin'), /^I can't find a microphone\. Plug one in and try again\.$/, 'the Mac helper sends no reason');

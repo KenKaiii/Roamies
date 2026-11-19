@@ -2,7 +2,7 @@
 // it looks). What it's doing shows on the task tag under it (agent.js), so nothing else is drawn. The agent layer runs
 // them via agent.tool().
 (() => {
-  const R = window.Roamie;
+  const R = window.Clanky;
   const { clamp, lerp } = R;
   const T = (R.agentTools = {});
   const hash = (n) => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };

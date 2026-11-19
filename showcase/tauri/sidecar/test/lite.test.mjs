@@ -9,9 +9,9 @@ const noop = async () => {};
 const { tools } = createTools({ allowActions: false, ui: () => {}, ask: async () => false, openUrl: noop, onCommitments: noop, showList: noop, fmtWhen: String, commitmentsText: () => '', userName: 'Test', focus: { start: () => 'ok', stop: () => 'ok' } });
 const size = (list) => list.reduce((n, t) => n + JSON.stringify({ name: t.name, description: t.description, parameters: resolveToolSchema(t) }).length, 0);
 
-// Every Lite tool is a real one (about_roamies is added by sidekick.mjs), and none of them sees, acts in apps or draws.
+// Every Lite tool is a real one (about_clanky is added by sidekick.mjs), and none of them sees, acts in apps or draws.
 const lite = tools.filter((t) => LITE_TOOLS.has(t.name));
-assert.deepEqual(lite.map((t) => t.name).sort(), [...LITE_TOOLS].filter((n) => n !== 'about_roamies').sort());
+assert.deepEqual(lite.map((t) => t.name).sort(), [...LITE_TOOLS].filter((n) => n !== 'about_clanky').sort());
 for (const n of ['draw', 'take_screenshot', 'act_in_app', 'read_window', 'run_command', 'write_file', 'read_file', 'start_focus']) assert.ok(!LITE_TOOLS.has(n), n);
 // A fraction of what the full tool list costs on every request.
 assert.ok(size(lite) < size(tools) / 4, `lite tools ${size(lite)} chars vs ${size(tools)}`);

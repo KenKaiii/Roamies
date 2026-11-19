@@ -5,8 +5,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 process.env.TZ = 'America/New_York'; // has daylight saving, so wall-clock times are tested across a change
-const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'roamies-repeat-test-'));
-process.env.HOME = TMP; process.env.USERPROFILE = TMP; delete process.env.ROAMIES_DATA_DIR;
+const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'clanky-repeat-test-'));
+process.env.HOME = TMP; process.env.USERPROFILE = TMP; delete process.env.CLANKY_DATA_DIR;
 process.on('exit', () => fs.rmSync(TMP, { recursive: true, force: true }));
 const S = await import('../store.mjs');
 assert.ok(S.DIR.startsWith(TMP), 'store must live under the test HOME');

@@ -1,12 +1,12 @@
 // The card look shared by the Sidekick's own UI (bubbles, the thinking tag, task tags, the step list): the same
 // stepped corners, dark glass, teal edge, glint and Martian Mono as the drawings' cards (ink.js) and the reminders.
 (() => {
-  const R = window.Roamie;
+  const R = window.Clanky;
   if (!R || typeof document === 'undefined') return;
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const ACC = '#78ffe2', HOT = '#e6fffa', MID = '#28c4b8', DEEP = '#0e5c60', EDGE = 'rgba(3,39,34,0.6)';
   const GLASS = 'rgba(6,22,24,0.94)', TEXT = '#dcfff6', DIM = '#8ab8b0', CORAL = '#ff8a7a', NOTE = '#e9a196';
-  const MONO = '"Martian Mono", "Roamies Arabic", ui-monospace, monospace';
+  const MONO = '"Martian Mono", "Clanky Arabic", ui-monospace, monospace';
   const hex = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
   const rgba = (h, a) => `rgba(${hex(h).join(',')},${a})`;
 

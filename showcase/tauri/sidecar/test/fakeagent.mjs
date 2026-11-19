@@ -1,4 +1,4 @@
-// A stand-in model for test/agentrun.test.mjs (loaded by agentrun.mjs through ROAMIES_FAKE_AGENT): it calls the
+// A stand-in model for test/agentrun.test.mjs (loaded by agentrun.mjs through CLANKY_FAKE_AGENT): it calls the
 // worker's real tools in a fixed order, like a model would, and logs each result to FAKE_LOG.
 import fs from 'node:fs';
 

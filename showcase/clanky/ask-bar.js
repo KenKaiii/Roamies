@@ -1,12 +1,12 @@
 // Type to ask: a slim text field beside the cursor, opened by a tap of the typing shortcut, the Ask button, the tray
-// or `roamies --ask`. It rides with the cursor like the listening pill does (voice/wave.swift), so it's always where
+// or `clanky --ask`. It rides with the cursor like the listening pill does (voice/wave.swift), so it's always where
 // you're looking and never in the way, and it's a real textarea: caret, selection, paste and IME just work.
 // The research card's look (agent-panel.js): the stepped pixel frame, dark glass, Martian Mono.
 // Click away and it closes; anything typed comes back, selected, the next time it opens (Esc or sending drops it).
-// The overlay is click-through, so the host asks Roamie.askBarHit(x, y) whether the cursor is over it.
-// API: Roamie.askBar.open({ placeholder, value, label, cursor, onKey, onPress, onLeft }) .ptr(x, y) .focus() .close() .value .isOpen
+// The overlay is click-through, so the host asks Clanky.askBarHit(x, y) whether the cursor is over it.
+// API: Clanky.askBar.open({ placeholder, value, label, cursor, onKey, onPress, onLeft }) .ptr(x, y) .focus() .close() .value .isOpen
 (() => {
-  const R = window.Roamie;
+  const R = window.Clanky;
   // Clear of the arrow: right of it and just below its tip, or left of it and above near the screen's edges.
   const AHEAD = 18, BELOW = 8, BEHIND = 8;
   // Where its top-left goes for a cursor [x, y], its size [w, h] and the room it may use { l, t, r, b }.
@@ -39,12 +39,12 @@
   resize: none; overflow-x: hidden; overflow-y: hidden; overflow-wrap: anywhere; overscroll-behavior: contain;
   scrollbar-width: thin; scrollbar-color: var(--line-hi) transparent; appearance: none; -webkit-appearance: none;
   background-color: transparent; color: var(--ink); caret-color: var(--accent);
-  font: 500 13.5px/18px "Martian Mono", "Roamies Arabic", ui-monospace, Menlo, monospace; cursor: text; }
+  font: 500 13.5px/18px "Martian Mono", "Clanky Arabic", ui-monospace, Menlo, monospace; cursor: text; }
 /* Focus shows as the caret. The see-through outline is the ring forced-colours modes draw instead. */
 .ab-in .ab-text:focus-visible { outline: 2px solid transparent; outline-offset: 0; }
 .ab-in .ab-text::placeholder { color: var(--ink-3); opacity: 1; }
 /* 12.5px, as in the capsule: at 13.5px the dots under a final ي fall outside the 18px line and are cut off. */
-.ab-in .ab-text:dir(rtl) { font-size: 12.5px; font-family: "Roamies Arabic RTL", "Martian Mono", "Roamies Arabic", ui-monospace, Menlo, monospace; }
+.ab-in .ab-text:dir(rtl) { font-size: 12.5px; font-family: "Clanky Arabic RTL", "Martian Mono", "Clanky Arabic", ui-monospace, Menlo, monospace; }
 .ab-in .ab-text::selection { background: #1f5f58; color: #e8fffa; }
 @media (prefers-reduced-motion: reduce) { .ab, .ab.on { transition: none; } }
 @media (forced-colors: active) { .ab { clip-path: none; padding: 0; border: 2px solid CanvasText; } .ab-in { clip-path: none; } .ab-mark { background: CanvasText; box-shadow: none; } }

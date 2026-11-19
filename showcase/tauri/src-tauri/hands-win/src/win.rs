@@ -208,14 +208,14 @@ pub fn elevated_above_me(pid: u32) -> bool {
     el == Some(true)
 }
 
-/// Never point at Roamies itself (its overlay windows cover every screen).
-pub fn is_roamies(pid: u32, exe: &str) -> bool {
+/// Never point at Clanky itself (its overlay windows cover every screen).
+pub fn is_clanky(pid: u32, exe: &str) -> bool {
     static ME: OnceLock<(u32, Option<u32>)> = OnceLock::new();
     let (me, parent) = *ME.get_or_init(|| {
         let me = std::process::id();
         (me, parent_pid(me))
     });
-    pid == me || Some(pid) == parent || ["roamies", "roamies-voice", "roamies-hands"].contains(&exe.to_lowercase().as_str())
+    pid == me || Some(pid) == parent || ["clanky", "clanky-voice", "clanky-hands"].contains(&exe.to_lowercase().as_str())
 }
 
 // ---------- windows ----------
@@ -309,7 +309,7 @@ fn win_of(h: HWND, min: bool) -> Option<Win> {
         pid = real_pid(h, pid);
     }
     let (mut app, exe) = proc_names(pid);
-    if is_roamies(pid, &exe) {
+    if is_clanky(pid, &exe) {
         return None;
     }
     if exe.eq_ignore_ascii_case("ApplicationFrameHost") && !title.is_empty() {
@@ -332,7 +332,7 @@ pub fn front_hwnd() -> HWND {
     unsafe { GetForegroundWindow() }
 }
 
-/// The app in front (its process), unless that's Roamies.
+/// The app in front (its process), unless that's Clanky.
 pub fn front_pid() -> Option<u32> {
     let h = front_hwnd();
     if h.0.is_null() {
@@ -343,7 +343,7 @@ pub fn front_pid() -> Option<u32> {
         pid = real_pid(h, pid);
     }
     let (_, exe) = proc_names(pid);
-    (!is_roamies(pid, &exe)).then_some(pid)
+    (!is_clanky(pid, &exe)).then_some(pid)
 }
 
 pub fn front_hands_off() -> Option<&'static str> {
@@ -366,7 +366,7 @@ pub fn no_window(target: &str) -> String {
     format!("No matching window is open{}.", target.strip_prefix("app:").map(|n| format!(" for {n}")).unwrap_or_default())
 }
 
-/// A target to a window. "front" = the frontmost app that isn't Roamies.
+/// A target to a window. "front" = the frontmost app that isn't Clanky.
 pub fn resolve(target: &str) -> Option<Win> {
     let all = windows();
     if target == "front" {
@@ -445,7 +445,7 @@ pub fn bring_to_front(w: &Win) -> bool {
     front_pid() == Some(w.pid)
 }
 
-/// The topmost window (not Roamies) under a screen point.
+/// The topmost window (not Clanky) under a screen point.
 pub fn window_at(x: f64, y: f64) -> Option<Win> {
     windows().into_iter().find(|w| w.r.contains(x, y))
 }

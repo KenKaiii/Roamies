@@ -1,5 +1,5 @@
 #!/bin/bash
-# Puts a Node.js runtime at src-tauri/binaries/roamies-node-<target triple>[.exe] so the app ships its own Node
+# Puts a Node.js runtime at src-tauri/binaries/clanky-node-<target triple>[.exe] so the app ships its own Node
 # (users don't need Node installed). Not plain "node": a .deb installs it in /usr/bin, where nodejs has one. The download is checked against Node's published SHA-256 sums.
 # ./fetch-node.sh [target-triple]   (default: this machine's)
 set -euo pipefail
@@ -16,7 +16,7 @@ case "$TRIPLE" in
   *) echo "fetch-node: no Node build for $TRIPLE" >&2; exit 1 ;;
 esac
 BIN_DIR="../src-tauri/binaries"
-OUT="$BIN_DIR/roamies-node-$TRIPLE"; [[ "$PKG" == win-* ]] && OUT="$OUT.exe"
+OUT="$BIN_DIR/clanky-node-$TRIPLE"; [[ "$PKG" == win-* ]] && OUT="$OUT.exe"
 STAMP="$OUT.version"
 if [ -f "$OUT" ] && [ "$(cat "$STAMP" 2>/dev/null)" = "$NODE_VERSION" ]; then exit 0; fi
 mkdir -p "$BIN_DIR"

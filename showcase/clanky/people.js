@@ -13,7 +13,7 @@
 // over is drawn over the face (Rita's glasses): [row, column, levels, mirrored too]. mouths replaces the shared
 // mouths for that size.
 (() => {
-  const R = window.Roamie;
+  const R = window.Clanky;
   const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
   const LV = { h: 1, H: 2, s: 3, S: 4, z: 2, c: 2, C: 1, k: 3, w: 4, t: 1, T: 2, 0: 0, 1: 1, 2: 2, 3: 3, 4: 4 };
   const SWING = new Set(['t', 'T']);
@@ -174,7 +174,7 @@
         rows: ['....Hh', '...zzz', '..zsSS', '..zs11', '..zs10', '..zs10', '..zs11', '..zsss', '...zzz'],
       },
     },
-    // Ken Kai, who made Roamies (shown on the About page, not a look): a textured dark fringe over faded sides,
+    // Ken Kai, who made Clanky (shown on the About page, not a look): a textured dark fringe over faded sides,
     // and a hoodie with its drawstrings.
     ken: {
       L: {

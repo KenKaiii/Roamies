@@ -1,9 +1,9 @@
 {
   "bundle": {
     "externalBin": [
-      "binaries/roamies-voice",
-      "binaries/roamies-hands",
-      "binaries/roamies-node"
+      "binaries/clanky-voice",
+      "binaries/clanky-hands",
+      "binaries/clanky-node"
     ],
     "macOS": {
       "dmg": {
@@ -22,7 +22,7 @@
         }
       },
       "hardenedRuntime": true,
-      "entitlements": "Roamies.entitlements"
+      "entitlements": "Clanky.entitlements"
     }
   }
 }

@@ -4,14 +4,14 @@
 
 import { apiKeyStorageKeys, getModelsForProvider, providerStorageKeys } from '@kenkaiiii/gg-core';
 
-/** Roamies reads screenshots, so a model that can't see images is never offered, picked or kept. */
+/** Clanky reads screenshots, so a model that can't see images is never offered, picked or kept. */
 export const seesImages = (provider, id) => !!getModelsForProvider(provider).find((m) => m.id === id)?.supportsImages;
 
 /** The first of `prefer` that can run, else the first runnable model. prefer starts with the one last picked on the
  * provider, so signing out and back in (or a model that's briefly unavailable) doesn't drop it for the fast one (#94). */
 export const fallbackModel = (prefer, canRun, runnable) => prefer.find((id) => id && canRun(id)) ?? runnable[0]?.id;
 
-/** Everywhere a provider's sign-in and keys are saved, so removing it from Roamies leaves none behind. */
+/** Everywhere a provider's sign-in and keys are saved, so removing it from Clanky leaves none behind. */
 export const accountKeys = (provider) => [...new Set([...providerStorageKeys(provider), ...apiKeyStorageKeys(provider)])];
 
 // Checked by hand: each opens the provider's own key page (or its console, where keys are made).

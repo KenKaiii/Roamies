@@ -1,4 +1,4 @@
-// Voice helper for Roamies on Windows and Linux: the twin of voice/main.swift, with the same JSON lines in and out.
+// Voice helper for Clanky on Windows and Linux: the twin of voice/main.swift, with the same JSON lines in and out.
 // Watches the talk chord (GetAsyncKeyState on Windows, the X server on Linux X11 sessions; neither needs a
 // permission), records the default microphone and
 // transcribes on this PC with NVIDIA Parakeet TDT 0.6B v3 (int8 ONNX via parakeet-rs). Parakeet isn't a
@@ -6,16 +6,16 @@
 // Hold the chord = push-to-talk (release sends). Quick tap = hands-free (ends on a pause or another tap).
 // While the chord is held, moving the cursor round something circles it (ink.rs); the circled area goes out with
 // what was said, as on macOS (Windows only). On Wayland no app can watch the keyboard, so there {"cmd":"toggle"}
-// (sent for `roamies --talk`, which people bind to a key) starts a take, and sends it when it comes again or on a
+// (sent for `clanky --talk`, which people bind to a key) starts a take, and sends it when it comes again or on a
 // pause. With the wake word on, the mic stays open between takes and each thing said is read once, on this PC, for
-// "Hey Roamies" (wake.rs); hearing it starts a hands-free take. Exits when stdin closes.
+// "Hey Clanky" (wake.rs); hearing it starts a hands-free take. Exits when stdin closes.
 //
-// roamies-voice --model <dir> [--chord control,option]   normal use (Roamies starts it)
-// roamies-voice --perms                                   prints {"type":"perms","mic":…}
-// roamies-voice --devices                                 prints {"type":"devices",…}: every mic, the default, formats
-// roamies-voice --model <dir> --transcribe <wav>          dev: transcribe a file and exit
-// roamies-voice --model <dir> --test-audio <wav>          dev: a file stands in for the mic ({"cmd":"listen"} starts)
-// roamies-voice --model <dir> --test-audio <wav> --wake   dev: the same with the wake word on, so "Hey Roamies" starts
+// clanky-voice --model <dir> [--chord control,option]   normal use (Clanky starts it)
+// clanky-voice --perms                                   prints {"type":"perms","mic":…}
+// clanky-voice --devices                                 prints {"type":"devices",…}: every mic, the default, formats
+// clanky-voice --model <dir> --transcribe <wav>          dev: transcribe a file and exit
+// clanky-voice --model <dir> --test-audio <wav>          dev: a file stands in for the mic ({"cmd":"listen"} starts)
+// clanky-voice --model <dir> --test-audio <wav> --wake   dev: the same with the wake word on, so "Hey Clanky" starts
 //                                                         a take (tests/wake_e2e.rs runs it on a spoken recording)
 
 mod audio;
@@ -45,7 +45,7 @@ pub fn log(s: &str) {
     eprintln!("[voice] {s}");
 }
 
-/// The error the app shows when the microphone can't be used; `reason` picks what the Roamie says.
+/// The error the app shows when the microphone can't be used; `reason` picks what the Clanky says.
 fn mic_error(e: &MicError) -> Value {
     json!({ "type": "error", "code": "no_input", "reason": e.reason, "message": e.detail })
 }
@@ -77,7 +77,7 @@ fn load_model(dir: &Path) -> Result<ParakeetTDT, String> {
     // Half the cores: quick enough to read a minute of speech in a second or two, without starving the PC.
     let threads = thread::available_parallelism().map(|n| n.get() / 2).unwrap_or(2).clamp(1, 8);
     let t0 = Instant::now();
-    let env = parakeet_rs::ort::init().with_name("roamies-voice").build().map_err(|e| e.to_string())?;
+    let env = parakeet_rs::ort::init().with_name("clanky-voice").build().map_err(|e| e.to_string())?;
     let config = ExecutionConfig::new().with_environment(env).with_intra_threads(threads);
     let mut asr = ParakeetTDT::from_pretrained(dir, Some(config)).map_err(|e| e.to_string())?;
     // One short warm-up run, so the first real request doesn't pay for ONNX Runtime's setup.
@@ -232,7 +232,7 @@ struct Voice {
     final_until: Option<f64>,
     test_audio: Option<PathBuf>,
     ink: ink::Ink,
-    // Wake word: on in settings; held off while Roamies answers and speaks; resting just after a take.
+    // Wake word: on in settings; held off while Clanky answers and speaks; resting just after a take.
     wake_on: bool,
     wake_hold: bool,
     wake: wake::WakeWord,
@@ -647,7 +647,7 @@ impl Voice {
         self.show_listening("handsfree", now);
     }
 
-    /// The talk shortcut where the keys can't be watched (`roamies --talk`): the first one starts listening
+    /// The talk shortcut where the keys can't be watched (`clanky --talk`): the first one starts listening
     /// hands-free, the next one sends what was said (so does a pause).
     fn toggle(&mut self) {
         match self.phase {
@@ -661,7 +661,7 @@ impl Voice {
         }
     }
 
-    /// Roamies saw its show/hide shortcut: that chord press was a shortcut, not a request to talk.
+    /// Clanky saw its show/hide shortcut: that chord press was a shortcut, not a request to talk.
     fn external_cancel(&mut self) {
         if matches!(self.phase, Phase::Armed | Phase::Holding | Phase::HandsFree) {
             self.cancel();
@@ -688,7 +688,7 @@ impl Voice {
 
     fn set_wake_hold(&mut self, on: bool) {
         if self.wake_on && on != self.wake_hold {
-            log(if on { "wake: paused while Roamies answers" } else { "wake: resumed" });
+            log(if on { "wake: paused while Clanky answers" } else { "wake: resumed" });
         }
         self.wake_hold = on;
         if on {
@@ -817,7 +817,7 @@ impl Voice {
         self.show_listening("wake", now);
     }
 
-    /// Returns true when Roamies has gone (stdin closed) and the helper should exit.
+    /// Returns true when Clanky has gone (stdin closed) and the helper should exit.
     fn handle(&mut self, ev: Ev) -> bool {
         match ev {
             Ev::Cmd(msg) => match msg.get("cmd").and_then(Value::as_str) {
@@ -836,9 +836,9 @@ impl Voice {
                 Some("wake") => self.set_wake(msg.get("on").and_then(Value::as_bool) == Some(true)),
                 Some("wake_name") => {
                     let ok = self.wake.set_name(msg.get("word").and_then(Value::as_str));
-                    log(if !ok { "wake name refused" } else if self.wake.custom().is_some() { "wake name: custom" } else { "wake name: Roamies" });
+                    log(if !ok { "wake name refused" } else if self.wake.custom().is_some() { "wake name: custom" } else { "wake name: Clanky" });
                 }
-                // Roamies is answering or speaking: don't listen for the phrase (it mustn't wake itself).
+                // Clanky is answering or speaking: don't listen for the phrase (it mustn't wake itself).
                 Some("wake_hold") => self.set_wake_hold(msg.get("on").and_then(Value::as_bool) == Some(true)),
                 Some("chord") => {
                     let mods: Vec<String> = msg.get("mods").and_then(Value::as_array).map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect()).unwrap_or_default();
@@ -968,7 +968,7 @@ mod tests {
     // A Voice with a stand-in engine (the test reads its jobs) and a short WAV in place of the microphone.
     fn voice() -> (Voice, Receiver<Job>, PathBuf) {
         static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-        let wav = std::env::temp_dir().join(format!("roamies-voice-test-{}-{}.wav", std::process::id(), N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
+        let wav = std::env::temp_dir().join(format!("clanky-voice-test-{}-{}.wav", std::process::id(), N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
         let spec = hound::WavSpec { channels: 1, sample_rate: RATE, bits_per_sample: 16, sample_format: hound::SampleFormat::Int };
         let mut w = hound::WavWriter::create(&wav, spec).expect("test wav");
         for i in 0..RATE / 2 {
@@ -1123,13 +1123,13 @@ mod tests {
         assert_eq!(v.phase, Phase::Wake);
         assert!(v.source.is_some(), "the mic is open for the phrase");
         let job = heard_something(&mut v, &jobs);
-        v.handle(Ev::Text { take: job.take, text: "Hey Roamies, what time".into(), last: false, wake: true });
+        v.handle(Ev::Text { take: job.take, text: "Hey Clanky, what time".into(), last: false, wake: true });
         assert_eq!(v.phase, Phase::HandsFree);
         assert!(v.woke);
         assert_eq!(v.best, "what time");
         assert!(v.source.is_some(), "the same mic carries on into the take");
         // Live reads cover the phrase too; it comes off, also when a later reading of it no longer matches.
-        v.on_text(v.take, "Hey Roamies, what time is it".into(), false);
+        v.on_text(v.take, "Hey Clanky, what time is it".into(), false);
         assert_eq!(v.best, "what time is it");
         v.toggle();
         v.tail_until = Some(0.0);
@@ -1154,7 +1154,7 @@ mod tests {
         wake_cmd(&mut v, "wake", true);
         v.tick();
         let job = heard_something(&mut v, &jobs);
-        v.handle(Ev::Text { take: job.take, text: "so I told him hey Roamies".into(), last: false, wake: true });
+        v.handle(Ev::Text { take: job.take, text: "so I told him hey Clanky".into(), last: false, wake: true });
         assert_eq!(v.phase, Phase::Wake, "not at the start: no take");
         assert!(!v.wake_reading);
         // Once it's quiet, the next thing said gets its own read; meanwhile only the last moment of sound is kept.
@@ -1175,8 +1175,8 @@ mod tests {
         let job = heard_something(&mut v, &jobs);
         wake_cmd(&mut v, "wake_hold", true);
         assert_eq!(v.phase, Phase::Idle);
-        assert!(v.source.is_none(), "the mic is off while Roamies answers");
-        v.handle(Ev::Text { take: job.take, text: "Hey Roamies".into(), last: false, wake: true });
+        assert!(v.source.is_none(), "the mic is off while Clanky answers");
+        v.handle(Ev::Text { take: job.take, text: "Hey Clanky".into(), last: false, wake: true });
         v.tick();
         assert_eq!(v.phase, Phase::Idle, "the read that was under way doesn't wake it");
         wake_cmd(&mut v, "wake_hold", false);

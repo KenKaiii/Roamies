@@ -214,7 +214,7 @@ console.log('speech early and cap tests: passed');
   assert.equal(cueFeel('It is [emphasis] today, [excited] wow.'), 'joy', 'the first cue with a feeling');
   assert.equal(cueFeel('No cue here.'), null);
   assert.equal(cueFeel('[narrator] Once.'), null);
-  const agent = (await import('node:fs')).readFileSync(new URL('../../../roamies/agent.js', import.meta.url), 'utf8');
+  const agent = (await import('node:fs')).readFileSync(new URL('../../../clanky/agent.js', import.meta.url), 'utf8');
   const drawn = agent.slice(agent.indexOf('const FEEL = {'), agent.indexOf('};', agent.indexOf('const FEEL = {')));
   for (const f of Object.keys(FEELS)) assert.match(drawn, new RegExp(`\\n\\s+${f}: \\{`), `the face draws ${f}`);
   console.log('cue feeling tests: passed');

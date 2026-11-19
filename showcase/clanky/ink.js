@@ -1,14 +1,14 @@
-// Roamies drawing on screen: the Sidekick turns into its cursor and draws hand-drawn teal marks with its tip (the
+// Clanky drawing on screen: the Sidekick turns into its cursor and draws hand-drawn teal marks with its tip (the
 // same pen as the user's ⌃⌥ ink: teal, a dark edge so it reads on white, a soft glow), paced to its voice with a
 // caption at the bottom. Screen marks follow each thing's real shape; cards and diagrams go on calm space beside the
 // window and stay until closed. The sidecar (draw.mjs, tools.mjs) sends beats already checked and placed in global
 // screen points; this overlay draws what falls on its own monitor. No model-written code runs here.
 (() => {
-  const R = window.Roamie;
+  const R = window.Clanky;
   if (!R || typeof document === 'undefined') return;
 
   // ---------------------------------------------------------------- look
-  const P = 4, MONO = '"Martian Mono", "Roamies Arabic", ui-monospace, monospace', DOTO = '"Doto", "Martian Mono", "Roamies Arabic", ui-monospace, monospace';
+  const P = 4, MONO = '"Martian Mono", "Clanky Arabic", ui-monospace, monospace', DOTO = '"Doto", "Martian Mono", "Clanky Arabic", ui-monospace, monospace';
   const ACC = '#78ffe2', HOT = '#e6fffa', MID = '#28c4b8', DEEP = '#0e5c60', EDGE = 'rgba(3,39,34,0.6)';
   const GLASS = 'rgba(6,22,24,0.94)', TEXT = '#dcfff6', DIM = '#8ab8b0', INKDARK = '#032722';
   const TONES = { accent: ACC, teal: '#78ffe2', amber: '#ffcf5c', coral: '#ff8a7a', lilac: '#b9a4ff', sky: '#7cc8ff', lime: '#b6f36b', red: '#ff6b6b', white: '#e8fffa' };
@@ -574,7 +574,7 @@
   // to right); never on another card or a screen mark.
   let winRect = null;
   function place(w, h, part, strict = false) {
-    // Game mode (sidebar.js): cards stack in the panel at the screen's right edge, below the Roamie.
+    // Game mode (sidebar.js): cards stack in the panel at the screen's right edge, below the Clanky.
     const side = R.sidebar?.on ? R.sidebar : null;
     const S = scr(), top = S[1] + (side ? side.top : 12), bot = S[3] - 64; // room for the caption
     // Cards keep a small gap from each other (their boxes already include the shadow), marks a bigger one. A card
@@ -2368,7 +2368,7 @@
     // 0 only updates it if it's open; toggle closes it if it's open.
     reminders,
     get reminding() { return remOpen(); },
-    // Pinned cards stay put on purpose: they don't count, so Esc still sends the Roamie away with one up.
+    // Pinned cards stay put on purpose: they don't count, so Esc still sends the Clanky away with one up.
     get busy() { return G.playing || marks.some((m) => m.alive && !m.pinned); },
     get playing() { return G.playing; },
     // Marks still on the real screen (frames, loops, arrows, labels): unlike cards they have no close button.

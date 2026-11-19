@@ -58,7 +58,7 @@ const readFile = { name: 'read_file', description: 'Read a file', parameters: z.
 const { query, calls } = fakeQuery(toolRun);
 let saved = null;
 const agent = new ClaudeCodeAgent({
-  model: 'claude-haiku-5-5', system: 'You are Roamie.', tools: [readFile], maxTurns: 24, thinking: 'low',
+  model: 'claude-haiku-5-5', system: 'You are Clanky.', tools: [readFile], maxTurns: 24, thinking: 'low',
   priorMessages: [{ role: 'user', content: 'hi' }, { role: 'assistant', content: [{ type: 'text', text: 'hello!' }] }],
   transformContext: (msgs) => msgs.map((m, i) => (i === msgs.length - 1 ? { ...m, content: `<live-state>now</live-state>\n\n${m.content}` } : m)),
   executable: '/bin/claude', cwd: '/home/me', env: { A: '1' }, query, onRateLimit: () => {}, onResume: (s) => { saved = s; },
@@ -70,7 +70,7 @@ assert.deepEqual(types, ['text_delta', 'turn_end', 'tool_call_start', 'tool_call
 assert.deepEqual(ran, ['~/a.txt'], 'the bridged tool ran once');
 
 const o = calls.options;
-assert.equal(o.systemPrompt.prompt, 'You are Roamie.');
+assert.equal(o.systemPrompt.prompt, 'You are Clanky.');
 assert.deepEqual(o.tools, [], 'none of Claude Code\'s own tools');
 assert.deepEqual(o.allowedTools, ['mcp__gg__read_file']);
 assert.equal(o.cwd, '/home/me'); assert.equal(o.pathToClaudeCodeExecutable, '/bin/claude'); assert.deepEqual(o.env, { A: '1' });
@@ -129,7 +129,7 @@ assert.equal(stopped.getMessages().at(-1).content[0].isError, true, 'the open to
   const cold = fakeQuery(toolRun), warmed = fakeQuery(toolRun), starts = [];
   let closes = 0;
   const startup = async ({ options }) => { starts.push(options); return { query: (prompt) => warmed.query({ prompt, options }), close: () => { closes++; } }; };
-  const opts = { model: 'claude-haiku-5-5', system: 'You are Roamie.', tools: [readFile], executable: '/bin/claude', cwd: '/', env: {}, onRateLimit: () => {}, keepWarm: true, query: cold.query, startup };
+  const opts = { model: 'claude-haiku-5-5', system: 'You are Clanky.', tools: [readFile], executable: '/bin/claude', cwd: '/', env: {}, onRateLimit: () => {}, keepWarm: true, query: cold.query, startup };
   const a = new ClaudeCodeAgent(opts);
   ran.length = 0;
   for await (const _ of agentEvents(a.prompt('one'))) {}

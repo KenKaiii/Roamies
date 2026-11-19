@@ -50,7 +50,7 @@ function runCommandWith({ skipAllow, answer }) {
 
 console.log('skipallow: ok');
 
-// The working folder (~/Roamies for the chat): commands run there, and the tool says so instead of "home folder".
+// The working folder (~/Clanky for the chat): commands run there, and the tool says so instead of "home folder".
 {
   const workdir = fs.mkdtempSync(path.join(os.tmpdir(), 'workdir-'));
   const { tools } = createTools({ ...base, ask: async () => null, workdir });

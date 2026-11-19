@@ -1,5 +1,5 @@
 // A background agent end to end: the real worker (agentrun.mjs) in its own process, driven by a scripted model
-// (test/fakeagent.mjs), managed by agents.mjs in a temp ROAMIES_DATA_DIR. Run: npm test
+// (test/fakeagent.mjs), managed by agents.mjs in a temp CLANKY_DATA_DIR. Run: npm test
 import assert from 'node:assert/strict';
 import { fork } from 'node:child_process';
 import fs from 'node:fs';
@@ -7,11 +7,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const tmp = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'roamies-agentrun-')));
+const tmp = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'clanky-agentrun-')));
 // The worker's home is the temp folder too, so nothing it does can reach the real one.
 process.env.HOME = process.env.USERPROFILE = tmp;
-process.env.ROAMIES_DATA_DIR = path.join(tmp, 'data');
-process.env.ROAMIES_FAKE_AGENT = fileURLToPath(new URL('./fakeagent.mjs', import.meta.url));
+process.env.CLANKY_DATA_DIR = path.join(tmp, 'data');
+process.env.CLANKY_FAKE_AGENT = fileURLToPath(new URL('./fakeagent.mjs', import.meta.url));
 process.env.FAKE_LOG = path.join(tmp, 'fake.log');
 const { agentsRoot, createAgents } = await import('../agents.mjs');
 const { checkOpen, checkRead, checkWrite } = await import('../safety.mjs');
@@ -40,7 +40,7 @@ const log = fs.readFileSync(process.env.FAKE_LOG, 'utf8').trim().split('\n').map
 
 assert.equal(end.type, 'done', `${end.agent.reason}\n${JSON.stringify(log, null, 1)}`);
 assert.deepEqual(log.filter((l) => l.isError), [], 'every tool call worked');
-assert.equal(a.dir, path.join(tmp, 'data', 'Roamies', 'Agents', a.folder), 'its folder is under ROAMIES_DATA_DIR');
+assert.equal(a.dir, path.join(tmp, 'data', 'Clanky', 'Agents', a.folder), 'its folder is under CLANKY_DATA_DIR');
 // What the model was given: its brief, only its tools, a prompt about its folder.
 assert.match(log[0].prompt, /Brief from Ken:\nMake a landing page for Woof Co\./);
 assert.deepEqual([...log[0].tools].sort(), ['finish', 'list_files', 'plan', 'read_file', 'run_command', 'search_files', 'web_fetch', 'web_search', 'write_file']);

@@ -1,5 +1,5 @@
-// Tauri host bridge. The shell calls __roamiePtr(x, y) with the real cursor each frame and
-// __roamieHost(msg) with messages from the sidekick's brain (the gg-agent sidecar).
+// Tauri host bridge. The shell calls __clankyPtr(x, y) with the real cursor each frame and
+// __clankyHost(msg) with messages from the sidekick's brain (the gg-agent sidecar).
 // The page answers through set_hot (click-through; set_hit_rects on Linux), set_typing (keyboard focus) and sidecar_send.
 // A no-op outside Tauri.
 (() => {
@@ -8,64 +8,64 @@
   const send = (msg) => invoke('sidecar_send', { msg }).catch(() => {});
   const typing = (on) => invoke('set_typing', { on }).catch(() => {});
   // Drawings (ink.js) talk to the sidecar (started, waits done, buttons, closed cards) and arm the shell's click watch.
-  if (Roamie.ink) { Roamie.ink.send = send; Roamie.ink.invoke = (cmd, args) => invoke(cmd, args).catch(() => {}); }
+  if (Clanky.ink) { Clanky.ink.send = send; Clanky.ink.invoke = (cmd, args) => invoke(cmd, args).catch(() => {}); }
   // The agents' corner (agent-home.js): Stop, Allow, file tiles and Open folder go to the sidecar.
-  if (Roamie.agentHome) Roamie.agentHome.send = send;
-  window.__roamieClick = (x, y) => Roamie.ink?.click(x, y);
+  if (Clanky.agentHome) Clanky.agentHome.send = send;
+  window.__clankyClick = (x, y) => Clanky.ink?.click(x, y);
 
-  window.__roamieSafe = (s) => Roamie.setSafe?.(s);
+  window.__clankySafe = (s) => Clanky.setSafe?.(s);
   // macOS: the voice helper can draw the cursor-form sidekick while it just follows the cursor (agent.js nativeStep,
   // voice/buddy.swift). Not available (Windows, helper not running): the page keeps drawing it.
   let buddyOff = /Mac/.test(navigator.platform) ? 0 : Infinity;
-  const buddyGone = (ms) => { buddyOff = performance.now() + ms; Roamie.buddy.onEvent?.({ state: 'gone' }); };
-  Roamie.buddy = {
+  const buddyGone = (ms) => { buddyOff = performance.now() + ms; Clanky.buddy.onEvent?.({ state: 'gone' }); };
+  Clanky.buddy = {
     onEvent: null,
     available: () => performance.now() > buddyOff,
     show: (msg) => invoke('buddy', { msg: { ...msg, on: true } }).then((ok) => { if (!ok) buddyGone(10000); }, () => buddyGone(60000)),
     hide: () => invoke('buddy', { msg: { on: false } }).catch(() => {}),
   };
-  window.__roamieBuddy = (m) => { Roamie.wake?.(); Roamie.buddy.onEvent?.(m); };
-  // handsBusy: Roamies is acting in another app (it may take the real cursor), so clicks always go through.
+  window.__clankyBuddy = (m) => { Clanky.wake?.(); Clanky.buddy.onEvent?.(m); };
+  // handsBusy: Clanky is acting in another app (it may take the real cursor), so clicks always go through.
   let hot = null, cursor = null, handsBusy = false;
   // Linux ("x11" or "wayland", set by the shell): clicks are let through by region instead (below).
-  const LINUX = !!window.ROAMIE_LINUX;
+  const LINUX = !!window.CLANKY_LINUX;
   const setHot = (h) => { if (!LINUX && h !== hot) { hot = h; invoke('set_hot', { hot: h }).catch(() => { hot = null; }); } };
-  window.__roamiePtr = (x, y, t) => {
-    if (!window.Roamie?.ptr) return;
+  window.__clankyPtr = (x, y, t) => {
+    if (!window.Clanky?.ptr) return;
     cursor = [x, y];
-    Roamie.ink?.ptr(x, y);
-    Roamie.askBar?.ptr(x, y);
-    const h = Roamie.ptr(x, y, t);
-    setHot(h && !handsBusy && !Roamie.game);
+    Clanky.ink?.ptr(x, y);
+    Clanky.askBar?.ptr(x, y);
+    const h = Clanky.ptr(x, y, t);
+    setHot(h && !handsBusy && !Clanky.game);
   };
   // The shell only sends the cursor when it moves, but what's under a resting cursor can change (an Allow button
   // grows into place there while a reply is spoken): look again a few times a second, or a click on it goes to the
   // app below until the mouse moves. Linux sends its click areas on a timer of its own (below).
-  if (!LINUX) setInterval(() => { if (cursor && window.Roamie?.ptr) setHot(Roamie.ptr(cursor[0], cursor[1]) && !handsBusy && !Roamie.game); }, 120);
+  if (!LINUX) setInterval(() => { if (cursor && window.Clanky?.ptr) setHot(Clanky.ptr(cursor[0], cursor[1]) && !handsBusy && !Clanky.game); }, 120);
   // macOS: a fullscreen game is in front (fullscreen.rs). It holds the cursor, so every click is its own and the
   // Sidekick stops following the cursor (agent.js).
-  window.__roamieGame = (on) => { if (!window.Roamie) return; Roamie.game = !!on; if (on) setHot(false); };
+  window.__clankyGame = (on) => { if (!window.Clanky) return; Clanky.game = !!on; if (on) setHot(false); };
 
   // Linux: click-through by region. On Wayland the cursor can't be followed over other apps, so instead of flipping
-  // the whole window as the cursor comes and goes, the page says which rectangles take clicks (the Roamie, its
+  // the whole window as the cursor comes and goes, the page says which rectangles take clicks (the Clanky, its
   // bubbles, cards and buttons) and the shell makes them the window's input shape. X11 sessions work the same way.
   if (LINUX) {
     let sent = '', sentAt = 0;
     setInterval(() => {
-      if (!window.Roamie?.hitTest) return;
+      if (!window.Clanky?.hitTest) return;
       const rects = [];
       const grown = (r) => rects.push(Math.floor(r[0]) - 8, Math.floor(r[1]) - 8, Math.ceil(r[2]) + 16, Math.ceil(r[3]) + 16);
-      for (const r of Roamie.inkRects?.() ?? []) grown(r);
-      const card = Roamie.panelRect?.();
+      for (const r of Clanky.inkRects?.() ?? []) grown(r);
+      const card = Clanky.panelRect?.();
       if (card) grown(card);
-      const bar = Roamie.askBarRect?.();
+      const bar = Clanky.askBarRect?.();
       if (bar) grown(bar);
-      for (const r of Roamie.homeRects?.() ?? []) grown(r);
-      const capsule = Roamie.notchTakes?.() ? Roamie.notchRect?.() : null;
+      for (const r of Clanky.homeRects?.() ?? []) grown(r);
+      const capsule = Clanky.notchTakes?.() ? Clanky.notchRect?.() : null;
       if (capsule) grown(capsule);
       // Sampled a little past the canvas: hit areas can reach beyond what's drawn.
-      const box = Roamie.hitBox();
-      if (box) rects.push(...Roamie.hitRects(Roamie.hitTest, [box[0] - 48, box[1] - 48, box[2] + 96, box[3] + 96]));
+      const box = Clanky.hitBox();
+      if (box) rects.push(...Clanky.hitRects(Clanky.hitTest, [box[0] - 48, box[1] - 48, box[2] + 96, box[3] + 96]));
       const key = rects.join(','), now = performance.now();
       // Sent when it changes, and again every couple of seconds in case the window's shape was reset under it.
       if (key === sent && now - sentAt < 2000) return;
@@ -75,7 +75,7 @@
   }
 
   let agent = null;
-  const getAgent = () => (agent ??= Roamie.tiles?.find((t) => t.creature?.agent)?.creature.agent ?? null);
+  const getAgent = () => (agent ??= Clanky.tiles?.find((t) => t.creature?.agent)?.creature.agent ?? null);
 
   // ---------- typing: an input bubble, or the field beside the cursor ----------
   // The bubble (API keys, Allow/Decline, the area follow-up): a real (invisible) input collects keys, so paste, IME
@@ -83,14 +83,14 @@
   const field = document.createElement('input');
   Object.assign(field.style, { position: 'fixed', left: '0', top: '0', width: '1px', height: '1px', opacity: '0', pointerEvents: 'none' });
   // Its name is its look's (the sidecar's LOOKS).
-  const NAMES = { classic: 'Roamie', jarvis: 'JARVIS', glayos: 'GlayOS', ultren: 'Ultren', anime: 'Anime Girl', sarah: 'Sarah', adrian: 'Adrian', rita: 'Rita X' };
-  field.setAttribute('aria-label', 'Message for Roamie');
+  const NAMES = { classic: 'Clanky', jarvis: 'JARVIS', glayos: 'GlayOS', ultren: 'Ultren', anime: 'Anime Girl', sarah: 'Sarah', adrian: 'Adrian', rita: 'Rita X' };
+  field.setAttribute('aria-label', 'Message for Clanky');
   field.autocomplete = 'off'; field.spellcheck = false;
   document.addEventListener('DOMContentLoaded', () => document.body.appendChild(field));
   if (document.body) document.body.appendChild(field);
 
   let ask = null;
-  const bar = Roamie.askBar;
+  const bar = Clanky.askBar;
   const focusField = () => { typing(true); setTimeout(() => (ask?.bar ? bar.focus() : field.focus()), 30); ask?.h.focus(true); };
   // Enter sends and Esc closes, in the bubble's hidden input and in the field (where Shift+Enter adds a line).
   const askKey = (e, text, lines = false) => {
@@ -174,7 +174,7 @@
   // An answer that turns into points (or cites sources) reads better on the card than in a bubble.
   const LISTY = /\n\s*(?:[-*•]|\d+[.)])\s+\S|\n\s*sources?\s*:/i;
   const panel = () => {
-    const p = Roamie.panel;
+    const p = Clanky.panel;
     if (p && !p.onLink) p.onLink = (url) => send({ type: 'open_link', url });
     return p;
   };
@@ -185,11 +185,11 @@
   let current = null;
   const MOODS = { hype: 'happy', wave: 'happy', upset: 'annoyed', remind: 'concerned', motivate: 'determined' };
   // Notch mode (notch.js): the turn plays in the capsule at the notch instead of beside the cursor.
-  const notchOn = () => !!Roamie.notch?.enabled;
+  const notchOn = () => !!Clanky.notch?.enabled;
   // One place per setting: in notch mode everything (state and replies) is in the capsule.
   const capR = notchOn;
-  const N = () => Roamie.notch;
-  if (Roamie.notch) Roamie.notch._busy = () => responding;
+  const N = () => Clanky.notch;
+  if (Clanky.notch) Clanky.notch._busy = () => responding;
   const toolWords = (anim) => {
     if (anim.tool === 'web') return webStatus(anim);
     const w = [anim.label, anim.detail].filter(Boolean).join(' ');
@@ -206,7 +206,7 @@
     me.t = setInterval(() => {
       if (autoListen !== me) return;
       if (Date.now() - t0 > 90_000 || ask) return dropAutoListen();
-      const done = !getAgent()?.typing() && (Roamie.voiceOut ? Roamie.voiceOut.finished(l.speech) : true);
+      const done = !getAgent()?.typing() && (Clanky.voiceOut ? Clanky.voiceOut.finished(l.speech) : true);
       if (!done) { me.quietAt = 0; return; }
       me.quietAt ||= Date.now();
       if (Date.now() - me.quietAt < 400) return;
@@ -216,13 +216,13 @@
     autoListen = me;
   }
 
-  // Wake word: once a reply has been typed out and said, the sidecar may listen for "Hey Roamies" again.
+  // Wake word: once a reply has been typed out and said, the sidecar may listen for "Hey Clanky" again.
   let saidWatch = null;
   function reportSaid(rid) {
     clearInterval(saidWatch);
     const t0 = Date.now();
     saidWatch = setInterval(() => {
-      const done = !getAgent()?.typing() && (Roamie.voiceOut ? Roamie.voiceOut.finished(rid) : true);
+      const done = !getAgent()?.typing() && (Clanky.voiceOut ? Clanky.voiceOut.finished(rid) : true);
       if (!done && Date.now() - t0 < 90_000) return;
       clearInterval(saidWatch); saidWatch = null;
       send({ type: 'reply_said' });
@@ -244,7 +244,7 @@
       current = null;
     }
     // Every queued tool has finished but the turn is still going: keep a quiet thinking tag up until the next thing.
-    if (responding && !notchOn() && !speech && !thought && !listen?.open && !research && !agentish && !Roamie.ink?.playing) {
+    if (responding && !notchOn() && !speech && !thought && !listen?.open && !research && !agentish && !Clanky.ink?.playing) {
       thought = getAgent()?.think('', { stream: true, quiet: true }) ?? null;
     }
   }
@@ -264,10 +264,10 @@
     // Notch mode: the words and the end of the turn go to the capsule, never held behind a drawing.
     if (capR() && (e.type === 'text' || e.type === 'done') && !deferred) { agentEvent(e); return; }
     if (deferred && !PASS.has(e.type)) { deferred.push(e); return; }
-    if (!PASS.has(e.type) && ['text', 'done', 'emote', 'trail'].includes(e.type) && Roamie.ink?.playing) {
+    if (!PASS.has(e.type) && ['text', 'done', 'emote', 'trail'].includes(e.type) && Clanky.ink?.playing) {
       deferred = [e];
       // Never held for good, even if a drawing gets stuck.
-      Promise.race([Roamie.ink.whenIdle(), new Promise((r) => setTimeout(r, 150_000))]).then(flushDeferred);
+      Promise.race([Clanky.ink.whenIdle(), new Promise((r) => setTimeout(r, 150_000))]).then(flushDeferred);
       return;
     }
     agentEvent(e);
@@ -286,13 +286,13 @@
         a.hand?.end();
         responding = true;
         a.working?.(true);
-        Roamie.voiceOut?.warm?.();
+        Clanky.voiceOut?.warm?.();
         heard = null;
         research = false; fromWeb = false; spoken = '';
         agentish = !!e.agentish;
         if (agentish) {
           const p = a.visible ? [a.pos.x, a.pos.y - a.pos.r - 28] : cursor ? [cursor[0] + 30, cursor[1] + 26] : [innerWidth / 2, innerHeight / 3];
-          Roamie.agentHome?.hatch(p);
+          Clanky.agentHome?.hatch(p);
         } else if (notchOn()) N().begin();
         else if (!listen?.open && !waveTurn) thought = a.think('', { stream: true });
         break;
@@ -370,17 +370,17 @@
       case 'draw':
         endTalk();
         if (notchOn()) N().yieldTo('Showing you');
-        Roamie.ink?.play(e);
+        Clanky.ink?.play(e);
         break;
-      case 'ink_clear': Roamie.ink?.clear(e); break;
-      case 'ink_stale': Roamie.ink?.stale(); break;
+      case 'ink_clear': Clanky.ink?.clear(e); break;
+      case 'ink_stale': Clanky.ink?.stale(); break;
       // A drawn list's items after the user added or edited one on the card.
-      case 'list_items': Roamie.ink?.listItems?.(e.part, e.items); break;
+      case 'list_items': Clanky.ink?.listItems?.(e.part, e.items); break;
       case 'tool_target': {
         // The real window being captured, in global screen points → this overlay's coordinates.
         const job = current?.id === e.id ? current : jobs.find((j) => j.id === e.id);
         if (!job || !e.window?.bounds) break;
-        const [x, y, w, h] = e.window.bounds, o = Roamie.origin ?? { x: 0, y: 0 };
+        const [x, y, w, h] = e.window.bounds, o = Clanky.origin ?? { x: 0, y: 0 };
         const rect = [x - o.x, y - o.y, x - o.x + w, y - o.y + h];
         job.target = rect; job.targetName = e.window.app;
         job.h?.target(rect, e.window.app);
@@ -404,7 +404,7 @@
       case 'done':
         responding = false;
         a.working?.(false);
-        if (agentish) { agentish = false; Roamie.agentHome?.hatchOff(); }
+        if (agentish) { agentish = false; Clanky.agentHome?.hatchOff(); }
         if (research) panel()?.end(fromWeb ? 'From the web' : 'Answer');
         research = waveTurn = false;
         endTalk();
@@ -416,7 +416,7 @@
         dropAutoListen();
         responding = false;
         a.working?.(false);
-        if (agentish) { agentish = false; Roamie.agentHome?.hatchOff(); }
+        if (agentish) { agentish = false; Clanky.agentHome?.hatchOff(); }
         if (research) panel()?.fail(e.message);
         research = waveTurn = false;
         endTalk();
@@ -432,7 +432,7 @@
   // ---------- voice (⌃⌥) ----------
   function onVoice(m) {
     // Windows: the pen trail while the talk keys are held (pen.js).
-    if (m.type === 'ink') { Roamie.pen?.(m); return; }
+    if (m.type === 'ink') { Clanky.pen?.(m); return; }
     const a = getAgent();
     if (!a) return;
     if ((m.type === 'state' && m.state !== 'listening') || m.type === 'final') hearing = false;
@@ -450,7 +450,7 @@
         thought?.end(); thought = null;
         if (a.visible) a.hide();
         N().listen();
-        Roamie.sfx?.play('listen');
+        Clanky.sfx?.play('listen');
         return;
       }
       // macOS: the listening shows as voice bars beside the cursor, so the sidekick steps away until it answers.
@@ -458,7 +458,7 @@
         waveTurn = true;
         thought?.end(); thought = null;
         if (a.visible) a.hide();
-        Roamie.sfx?.play('listen');
+        Clanky.sfx?.play('listen');
         return;
       }
       listen = a.listen({ placeholder: m.mode === 'handsfree' ? 'Listening… tap again to send' : 'Listening…' });
@@ -470,13 +470,13 @@
       if (notchOn()) { N().heard(m.text); N().think(); }
       // Keep what was heard on screen until the agent starts thinking.
       if (listen) { listen.set(m.text).processing(); heard = listen; listen = null; }
-      Roamie.sfx?.play('heard');
+      Clanky.sfx?.play('heard');
     } else if (m.type === 'state' && m.state === 'idle') {
       // Nothing was heard (or it was cancelled): no answer is coming for that talk.
       if (m.cancelled || !heardText) { waveTurn = false; if (notchOn() && !responding) N().close(); }
       // Heard, but no turn ever started (or it never ended): don't leave 'Thinking' up for good.
       // Only for this take: a newer one (talking again within the 20 s) keeps its capsule.
-      else if (notchOn()) { const take = listenTake; setTimeout(() => { if (take === listenTake && !responding && Roamie.notch?.active) N().close(); }, 20000); }
+      else if (notchOn()) { const take = listenTake; setTimeout(() => { if (take === listenTake && !responding && Clanky.notch?.active) N().close(); }, 20000); }
       heardText = false;
       listen?.close(); listen = null;
       if (heard) { const h = heard; setTimeout(() => { if (heard === h) { h.close(); heard = null; } }, 4000); }
@@ -490,38 +490,38 @@
     if (!held) return;
     const q = held.q; clearTimeout(held.t); held = null;
     dispatchEvent(new Event('resize')); // the screen's scale may differ even when its size doesn't
-    for (const m of q) window.__roamieHost(m);
+    for (const m of q) window.__clankyHost(m);
   };
-  window.__roamieMoved = () => {
+  window.__clankyMoved = () => {
     dropAutoListen();
     const a = getAgent();
     if (ask) finishAsk(null);
     endTalk(); listen?.close(); listen = null;
     if (a?.visible) a.hide({ instant: true });
-    Roamie.notch?.close();
+    Clanky.notch?.close();
     if (held) return;
     held = { q: [], t: setTimeout(flush, 150) };
     addEventListener('resize', () => requestAnimationFrame(() => requestAnimationFrame(flush)), { once: true });
   };
 
-  window.__roamieHost = (m) => {
-    Roamie.wake?.(); // the frame loop naps while the sidekick is hidden
-    if (m.kind === 'speech') { Roamie.voiceOut?.handle(m); return; } // plays on, even while it changes screens
+  window.__clankyHost = (m) => {
+    Clanky.wake?.(); // the frame loop naps while the sidekick is hidden
+    if (m.kind === 'speech') { Clanky.voiceOut?.handle(m); return; } // plays on, even while it changes screens
     if (held) { held.q.push(m); return; }
-    if (m.kind === 'notch') { if (Roamie.notch) { Roamie.notch.enabled = !!m.on; if (m.style) Roamie.notch.style = m.style; if (!m.on) Roamie.notch.close(); } return; }
-    if (m.kind === 'sound') { if (Roamie.sfx) Roamie.sfx.enabled = m.on; return; }
-    if (m.kind === 'size') { for (const t of Roamie.tiles ?? []) t.creature.setForm?.(m.size); return; }
+    if (m.kind === 'notch') { if (Clanky.notch) { Clanky.notch.enabled = !!m.on; if (m.style) Clanky.notch.style = m.style; if (!m.on) Clanky.notch.close(); } return; }
+    if (m.kind === 'sound') { if (Clanky.sfx) Clanky.sfx.enabled = m.on; return; }
+    if (m.kind === 'size') { for (const t of Clanky.tiles ?? []) t.creature.setForm?.(m.size); return; }
     if (m.kind === 'look') {
-      for (const t of Roamie.tiles ?? []) t.creature.setLook?.(m.look);
+      for (const t of Clanky.tiles ?? []) t.creature.setLook?.(m.look);
       field.setAttribute('aria-label', `Message for ${NAMES[m.look] ?? NAMES.classic}`);
-      if (Roamie.notch) { Roamie.notch.name = NAMES[m.look] ?? NAMES.classic; Roamie.notch.look = m.look; }
+      if (Clanky.notch) { Clanky.notch.name = NAMES[m.look] ?? NAMES.classic; Clanky.notch.look = m.look; }
       return;
     }
     if (!getAgent()) return;
     if (m.kind === 'agents') {
-      // A launch flies out of the visible Roamie (or from the cursor); the hatch, when there is one, wins.
+      // A launch flies out of the visible Clanky (or from the cursor); the hatch, when there is one, wins.
       const a = getAgent();
-      Roamie.agentHome?.event(m.e, { from: a.visible ? [a.pos.x, a.pos.y] : cursor });
+      Clanky.agentHome?.event(m.e, { from: a.visible ? [a.pos.x, a.pos.y] : cursor });
       return;
     }
     if (m.kind === 'hands') {
@@ -529,7 +529,7 @@
       // step takes the real cursor; the Sidekick hops there in its cursor form instead of chasing the cursor.
       const hand = getAgent().hand;
       if (m.step) {
-        const [x, y, w, h] = m.step.bounds, o = Roamie.origin ?? { x: 0, y: 0 }, px = x + w / 2 - o.x, py = y + h / 2 - o.y;
+        const [x, y, w, h] = m.step.bounds, o = Clanky.origin ?? { x: 0, y: 0 }, px = x + w / 2 - o.x, py = y + h / 2 - o.y;
         // A spot on another display isn't this overlay's to show.
         if (px >= 0 && py >= 0 && px <= innerWidth && py <= innerHeight) { hand?.begin(); hand?.at(px, py); }
       } else if (m.borrow) hand?.begin();
@@ -545,7 +545,7 @@
       if (m.show || !a.visible) { if (a.show({ summoned: true })) a.act('wave'); }
       else {
         // Sent away mid-answer: it stops talking too, like Esc (#108).
-        if (responding || Roamie.voiceOut?.playing()) { send({ type: 'menu', id: 'stop', via: 'hide' }); Roamie.voiceOut?.stop(); }
+        if (responding || Clanky.voiceOut?.playing()) { send({ type: 'menu', id: 'stop', via: 'hide' }); Clanky.voiceOut?.stop(); }
         a.hide();
       }
       return;
@@ -555,30 +555,30 @@
     else if (m.kind === 'cancel_ask') { if (ask?.id === m.id) { ask.id = null; finishAsk(null); } }
     else if (m.kind === 'agent') onAgent(m.e);
     else if (m.kind === 'voice') onVoice(m);
-    else if (m.kind === 'list') Roamie.ink?.reminders(m);
-    else if (m.kind === 'front_window') Roamie.sidebar?.front(m);
+    else if (m.kind === 'list') Clanky.ink?.reminders(m);
+    else if (m.kind === 'front_window') Clanky.sidebar?.front(m);
   };
 
   // ---------- Esc ----------
   // While it's on screen, Esc stops an answer (and the voice), or sends it away when it's idle. The shell holds a
   // global Esc only meanwhile (other apps don't get Esc while it does), so this overlay says when it's up.
   // A drawing counts while it plays and while its marks are still on the screen (frames, loops: Esc is their only
-  // way out once the Roamie has gone). Cards left on screen have their own close button and don't hold Esc. The
+  // way out once the Clanky has gone). Cards left on screen have their own close button and don't hold Esc. The
   // reminders card does while it shows (it goes by itself in a few seconds).
   // A voice turn counts too: on macOS the sidekick steps away while the mic is on and until the answer shows.
-  const up = () => !!(getAgent()?.visible || Roamie.notch?.active || ask || Roamie.panel?.isOpen || Roamie.ink?.playing || Roamie.ink?.loose || Roamie.ink?.reminding || hearing || waveTurn || Roamie.voiceOut?.playing());
+  const up = () => !!(getAgent()?.visible || Clanky.notch?.active || ask || Clanky.panel?.isOpen || Clanky.ink?.playing || Clanky.ink?.loose || Clanky.ink?.reminding || hearing || waveTurn || Clanky.voiceOut?.playing());
   function onEsc() {
     dropAutoListen();
     const a = getAgent();
     if (!a || !up()) return;
     if (ask) { finishAsk(null); return; }
     if (hearing) { hearing = false; send({ type: 'listen_cancel' }); return; }
-    if (responding || Roamie.voiceOut?.playing()) { send({ type: 'menu', id: 'stop', via: 'esc' }); Roamie.voiceOut?.stop(); return; }
+    if (responding || Clanky.voiceOut?.playing()) { send({ type: 'menu', id: 'stop', via: 'esc' }); Clanky.voiceOut?.stop(); return; }
     // A drawing on screen: Esc takes it all away (and the sidecar forgets its parts).
-    if (Roamie.ink?.busy) { Roamie.ink.clear({ all: true }); send({ type: 'ink_cleared' }); return; }
-    if (Roamie.panel?.isOpen) Roamie.panel.close();
+    if (Clanky.ink?.busy) { Clanky.ink.clear({ all: true }); send({ type: 'ink_cleared' }); return; }
+    if (Clanky.panel?.isOpen) Clanky.panel.close();
     endTalk(); listen?.close(); listen = null;
-    Roamie.notch?.close();
+    Clanky.notch?.close();
     if (a.visible) a.hide();
   }
   let escUp = null;

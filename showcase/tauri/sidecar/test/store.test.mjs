@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'roamies-store-test-'));
+const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'clanky-store-test-'));
 process.env.HOME = TMP; process.env.USERPROFILE = TMP;
 const STORE = new URL('../store.mjs', import.meta.url).href;
 process.on('exit', () => fs.rmSync(TMP, { recursive: true, force: true }));
@@ -207,18 +207,18 @@ console.log('store tests: all passed');
   const fsx = await import('node:fs');
   const os2 = await import('node:os');
   const path2 = await import('node:path');
-  const dir = fsx.mkdtempSync(path2.join(os2.tmpdir(), 'roamies-flush-'));
+  const dir = fsx.mkdtempSync(path2.join(os2.tmpdir(), 'clanky-flush-'));
   const store = new URL('../store.mjs', import.meta.url).href;
   // Queue a big save, then exit the way the sidecar does on close: after flushWrites.
   const code = `const S = await import(${JSON.stringify(store)});
     const s = S.newSession('p', 'm'); s.messages = Array.from({ length: 4000 }, (_, i) => ({ role: 'user', content: 'message ' + i }));
     S.saveSession(s); S.writeJson(${JSON.stringify(path2.join(dir, 'x.json'))}, { ok: 1 });
     await S.flushWrites(); process.exit(0);`;
-  const r = spawnSync(process.execPath, ['--input-type=module', '-e', code], { env: { ...process.env, ROAMIES_DATA_DIR: dir } });
+  const r = spawnSync(process.execPath, ['--input-type=module', '-e', code], { env: { ...process.env, CLANKY_DATA_DIR: dir } });
   assert.equal(r.status, 0, String(r.stderr));
-  const saved = fsx.readdirSync(path2.join(dir, 'Roamies', 'Data', 'sessions'));
+  const saved = fsx.readdirSync(path2.join(dir, 'Clanky', 'Data', 'sessions'));
   assert.equal(saved.length, 1, 'session saved before exit');
-  assert.equal(JSON.parse(fsx.readFileSync(path2.join(dir, 'Roamies', 'Data', 'sessions', saved[0]), 'utf8')).messages.length, 4000);
+  assert.equal(JSON.parse(fsx.readFileSync(path2.join(dir, 'Clanky', 'Data', 'sessions', saved[0]), 'utf8')).messages.length, 4000);
   assert.ok(fsx.existsSync(path2.join(dir, 'x.json')), 'every queued write landed');
   fsx.rmSync(dir, { recursive: true, force: true });
   console.log('flush on exit tests: passed');
@@ -275,7 +275,7 @@ console.log('store tests: all passed');
 {
   const S8 = await import('../store.mjs?fold');
   assert.equal(S8.compactTrigger(100_000, undefined), 75_000, '75 % of the request budget');
-  assert.equal(S8.compactTrigger(100_000, '3000'), 3000, 'ROAMIES_COMPACT_AT overrides');
+  assert.equal(S8.compactTrigger(100_000, '3000'), 3000, 'CLANKY_COMPACT_AT overrides');
   const req = (i, n = 3600) => [
     { role: 'user', content: `[Sat 7 Nov] q${i} ` + 'y'.repeat(n) },
     { role: 'assistant', content: [{ type: 'tool_call', id: `c${i}`, name: 'read_file', args: { path: 'x' } }] },
@@ -322,10 +322,10 @@ console.log('store tests: all passed');
 // A memory.json written by a newer app (version 2) is never overwritten by this one.
 {
   const data = fs.mkdtempSync(path.join(TMP, 'newer-'));
-  const prev = process.env.ROAMIES_DATA_DIR;
-  process.env.ROAMIES_DATA_DIR = data;
+  const prev = process.env.CLANKY_DATA_DIR;
+  process.env.CLANKY_DATA_DIR = data;
   const N = await import(STORE + '?newer');
-  if (prev === undefined) delete process.env.ROAMIES_DATA_DIR; else process.env.ROAMIES_DATA_DIR = prev;
+  if (prev === undefined) delete process.env.CLANKY_DATA_DIR; else process.env.CLANKY_DATA_DIR = prev;
   const mem = path.join(N.DIR, 'memory.json');
   fs.mkdirSync(N.DIR, { recursive: true });
   const newer = JSON.stringify({ version: 2, things: ['from the future'] });

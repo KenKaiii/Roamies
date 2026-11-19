@@ -1,5 +1,5 @@
 // Dither blobs: a shaded metaball pushed through an ordered-dither threshold into a small fixed palette.
-// Roamie.ditherKit(options) returns a roamie definition, so each variant only changes its look and extras.
+// Clanky.ditherKit(options) returns a clanky definition, so each variant only changes its look and extras.
 (() => {
   const bayer = (n) => {
     let M = [[0]];
@@ -18,13 +18,13 @@
     lines: fixed(4, [[0, 0, 0, 0], [8, 8, 8, 8], [4, 4, 4, 4], [12, 12, 12, 12]].map((r, i) => r.map((v) => v + i))),
   };
 
-  Roamie.ditherKit = (o) => ({
+  Clanky.ditherKit = (o) => ({
     id: o.id,
     label: o.label,
     bg: o.bg ?? `rgb(${o.pal[0].join(',')})`,
     create(env) {
-      const { clamp, rand } = Roamie;
-      const S = (n) => Roamie.sfx?.play(n);
+      const { clamp, rand } = Clanky;
+      const S = (n) => Clanky.sfx?.play(n);
       const PAL = o.pal, L = PAL.length - 1;
       const { n: PN, t: PT } = PATTERNS[o.pattern ?? 'bayer4'], PM = PN - 1;
       // The dither pattern is pinned to the screen, or to the body while it follows the cursor (tox, toy: its cell),
@@ -34,9 +34,9 @@
       const K = o.matrix ? 4 : 1;
       const GAP = PAL[0].map((c) => (c * 0.7) | 0);
       const SCAN = o.scan ?? 1;
-      const m = new Roamie.Mover(env, { speed: o.speed ?? 95, accel: 2.4 });
-      const face = new Roamie.Face();
-      const sq = new Roamie.Spring(170, 8);
+      const m = new Clanky.Mover(env, { speed: o.speed ?? 95, accel: 2.4 });
+      const face = new Clanky.Face();
+      const sq = new Clanky.Spring(170, 8);
       const tail = Array.from({ length: 3 }, () => ({ x: m.x, y: m.y, vx: 0, vy: 0 }));
       const ears = o.ears ? [-1, 1].map((s) => ({ s, x: m.x, y: m.y, vx: 0, vy: 0 })) : [];
       const ant = o.antenna ? Array.from({ length: 6 }, () => ({ x: m.x, y: m.y, vx: 0, vy: 0 })) : null;
@@ -47,10 +47,10 @@
       // Size: 'default', 'small' (half the body) or 'cursor' (a pixel arrow pointer). Text keeps its size either way.
       let form = (typeof location !== 'undefined' && new URLSearchParams(location.search).get('form')) || 'default', lastEnv = null;
       let userForm = form;
-      // Look: 'classic' (the goo blob, and the arrow at cursor size), 'jarvis' (roamies/jarvis.js: a globe of
-      // points with a lit heart, and a HUD reticle at cursor size) or a character from roamies/people.js
+      // Look: 'classic' (the goo blob, and the arrow at cursor size), 'jarvis' (clanky/jarvis.js: a globe of
+      // points with a lit heart, and a HUD reticle at cursor size) or a character from clanky/people.js
       // ('anime', 'sarah', 'adrian', 'rita', 'ultren', 'glayos'). Moves, sizes and everything else are shared.
-      const drawn = (l) => (l === 'jarvis' ? Roamie.jarvis : Roamie.people?.[l]);
+      const drawn = (l) => (l === 'jarvis' ? Clanky.jarvis : Clanky.people?.[l]);
       const pickLook = (l) => (drawn(l) ? l : 'classic');
       let look = pickLook(typeof location !== 'undefined' ? new URLSearchParams(location.search).get('look') : null);
       const jst = { spin: 0, dt: 0.016 };
@@ -227,7 +227,7 @@
         const hr = Math.max(2, Math.round(((R * 0.25) / P) * Math.min(1, arms * 1.25)));
         for (const h of hands) {
           const sx = bx + h.s * R * 0.62, sy = by + R * 0.18;
-          const gx = Math.round(Roamie.lerp(sx, bx + h.o.x, arms) / P), gy = Math.round(Roamie.lerp(sy, by + h.o.y, arms) / P);
+          const gx = Math.round(Clanky.lerp(sx, bx + h.o.x, arms) / P), gy = Math.round(Clanky.lerp(sy, by + h.o.y, arms) / P);
           disc(gx, gy, hr + 1, hr + 1, 0);
           disc(gx, gy, hr, hr, Math.max(1, L - 1));
           for (let i = -hr + 1; i < hr; i++) put(gx + i, gy + hr - 1, Math.max(1, L - 2));
@@ -360,7 +360,7 @@
             if (Math.random() < dt * 50) spawn(m.x + rand(-0.4, 0.4) * R, m.y + R * 1.1, rand(-20, 20), rand(10, 60), 0, L - 1, 0, 2.6);
           }
         } else {
-          m.stretch = Roamie.damp(m.stretch, 0, 8, dt);
+          m.stretch = Clanky.damp(m.stretch, 0, 8, dt);
           if (p.v === 'materialize' && p.state === 'in' && u < 0.7) {
             // sparks converge on the body from a ring around it
             for (let i = 0; i < Math.ceil(dt * 90); i++) {
@@ -425,7 +425,7 @@
       // frame is scaled, squashed and turned around the body point (like the CRT effect), and the form swaps at the
       // smallest moment. Each morph picks a style other than the last and jitters its timing, so no two look the same;
       // LED sparks gather in (shrinking) or burst out (growing).
-      const MORPHS = ['swirl', 'squash', 'shake'], lerp = Roamie.lerp;
+      const MORPHS = ['swirl', 'squash', 'shake'], lerp = Clanky.lerp;
       let mo = null, lastMorph = null;
       const mEase = (u) => (u < 0.5 ? 4 * u * u * u : 1 - (-2 * u + 2) ** 3 / 2);
       const mBack = (u) => 1 + 2.2 * (u - 1) ** 3 + 1.2 * (u - 1) ** 2;
@@ -484,7 +484,7 @@
         if (!J) return;
         const A = act?.name;
         Object.assign(jst, {
-          t, mode: pose?.mode ?? null, heard: pose?.heard, voice: window.Roamie.voiceOut?.playing() ? window.Roamie.voiceOut.level() : null, act: A ?? null, actA: act?.a ?? 0,
+          t, mode: pose?.mode ?? null, heard: pose?.heard, voice: window.Clanky.voiceOut?.playing() ? window.Clanky.voiceOut.level() : null, act: A ?? null, actA: act?.a ?? 0,
           open: face.open, look: [face.lookX, face.lookY], speed: m.speed, vx: m.vx, sq: sq.x,
           wide: face.wide, dizzy: face.dizzy, happy: face.happy, sleepy: Math.max(env.sleepy ?? 0, face.sleepy ?? 0),
           mouth: pose?.mouth ?? (act && { wave: null, hype: 'shout', remind: 'o', upset: 'frown', motivate: 'grin' }[A]),
@@ -594,7 +594,7 @@
         setLook(l) { look = pickLook(l); jst.spin = 0; jst.tail = null; },
         resize(env) {
           lastEnv = env;
-          const S = Roamie.unit(env);
+          const S = Clanky.unit(env);
           const base = (S / 110) * (o.pixel ?? 1);
           P = K > 1 ? K * Math.max(1, Math.round(base / K)) : Math.max(o.pixel < 1 ? 2 : 3, Math.round(base));
           gw = Math.ceil(env.w / P); gh = Math.ceil(env.h / P);
@@ -674,7 +674,7 @@
             if (pose.tr) tr = pose.tr;
             ox = pose.ox ?? 0; oy = pose.oy ?? 0;
           }
-          arms = Roamie.damp(arms, act ? 1 : pose?.arms ?? 0, act || pose?.arms ? 10 : 6, dt);
+          arms = Clanky.damp(arms, act ? 1 : pose?.arms ?? 0, act || pose?.arms ? 10 : 6, dt);
           // The gesture offsets (ox, oy: a hop, a shake) move the body, and the hands with it.
           for (const h of hands) { const tg = h.s < 0 ? tl : tr; spring(h.o, tg[0] * R, tg[1] * R, 150, 13, dt); h.x = m.x + ox + h.o.x; h.y = m.y + oy + h.o.y; }
           for (let i = parts.length - 1; i >= 0; i--) {
@@ -841,7 +841,7 @@
             const sf = env.safe ?? {}, top = Math.ceil(((sf.top ?? 0) + R * 0.9) / P);
             const gx = clamp(Math.round((bx + side * R * 0.95) / P), Math.ceil(((sf.left ?? 0) + R * 0.4) / P), Math.floor((env.w - (sf.right ?? 0) - R * 0.4) / P));
             const gy = Math.max(top, Math.round((by - R * 1.3) / P) - Math.round(Math.abs(Math.sin(act.a * 6))));
-            if (look === 'jarvis') Roamie.jarvis?.readout({ put, L }, gx, gy, icon, act.a, act.dur, !(P < 6 && form === 'default'));
+            if (look === 'jarvis') Clanky.jarvis?.readout({ put, L }, gx, gy, icon, act.a, act.dur, !(P < 6 && form === 'default'));
             else bubble(gx, gy, icon);
           }
           plug?.gridOver?.(env);
@@ -955,7 +955,7 @@
     },
   });
 
-  Roamie.register(Roamie.ditherKit({
+  Clanky.register(Clanky.ditherKit({
     id: 'dither', label: 'Dither blob', bg: '#0f380f',
     pal: [[15, 56, 15], [48, 98, 48], [139, 172, 15], [155, 188, 15]],
     grid: 'rgba(15,56,15,0.18)',

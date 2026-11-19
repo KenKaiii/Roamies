@@ -17,7 +17,7 @@ await draw.execute(list('large'), { toolCallId: 'size1' });
 assert.equal(events[0].beats[0].marks[0].card_size, 'large', 'the size reaches the overlay');
 
 // The overlay opens at that size and still lets the user resize it or make it full screen.
-const ink = readFileSync(new URL('../../../roamies/ink.js', import.meta.url), 'utf8');
+const ink = readFileSync(new URL('../../../clanky/ink.js', import.meta.url), 'utf8');
 assert.match(ink, /m\.card_size === 'small' \? 0\.8 : m\.card_size === 'large' \? 1\.5 : 1/);
 assert.match(ink, /if \(m\.card_size === 'full' && !c\.full\) await toggleFull\(c\);/);
 assert.match(ink, /kind: 'resize'/, 'the resize corner is still there');

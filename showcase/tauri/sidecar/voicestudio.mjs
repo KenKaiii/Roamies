@@ -6,7 +6,7 @@
 //   chunks, then { type: 'done' } (or { type: 'error', detail }).
 // - VoiceStudio has no cancel request: stopping closes the socket, which ends the stream (and the rest of the reply).
 // - It never falls back to anything else: a failure is reported (onError, with a reason) and the reply stays text.
-// Loopback calls need no key. The address: ROAMIES_VOICESTUDIO_URL (loopback only), else 127.0.0.1:3900.
+// Loopback calls need no key. The address: CLANKY_VOICESTUDIO_URL (loopback only), else 127.0.0.1:3900.
 
 export const STUDIO_DEFAULT_URL = 'http://127.0.0.1:3900';
 export const STUDIO_RATE = 24000;
@@ -17,7 +17,7 @@ export const FIRST_SENTENCE_TIMEOUT = 150_000;
 
 /** VoiceStudio's base URL; anything that isn't a loopback http URL falls back to the default. */
 export function studioUrl(env = process.env) {
-  const raw = env.ROAMIES_VOICESTUDIO_URL;
+  const raw = env.CLANKY_VOICESTUDIO_URL;
   if (!raw) return STUDIO_DEFAULT_URL;
   try {
     const u = new URL(raw);

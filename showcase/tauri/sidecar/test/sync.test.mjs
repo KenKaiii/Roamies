@@ -4,8 +4,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'roamies-sync-test-'));
-process.env.HOME = TMP; process.env.USERPROFILE = TMP; delete process.env.ROAMIES_DATA_DIR;
+const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'clanky-sync-test-'));
+process.env.HOME = TMP; process.env.USERPROFILE = TMP; delete process.env.CLANKY_DATA_DIR;
 process.on('exit', () => fs.rmSync(TMP, { recursive: true, force: true }));
 const { merge, cleanRemote, checkFolder, readRemotes, writeOwn, prepareFolder, seal, unseal, deriveKey, SUBDIR, HEADER, TOMB_DAYS } = await import('../sync.mjs');
 
@@ -171,11 +171,11 @@ assert.deepEqual(checkFolder('~/Cloud', TMP), { ok: true, dir: path.join(TMP, 'C
   assert.ok(!tooMuchGone(back) && Object.keys(back.out.tombs).length === 0, 'and nothing is deleted anywhere');
 }
 
-// The store says when memory couldn't be read (trusted: false) or came from a newer Roamies (readOnly).
+// The store says when memory couldn't be read (trusted: false) or came from a newer Clanky (readOnly).
 {
   const fresh = async (name, files = {}) => {
-    process.env.ROAMIES_DATA_DIR = path.join(TMP, name);
-    const dir = path.join(TMP, name, 'Roamies', 'Data');
+    process.env.CLANKY_DATA_DIR = path.join(TMP, name);
+    const dir = path.join(TMP, name, 'Clanky', 'Data');
     fs.mkdirSync(dir, { recursive: true });
     for (const [n, text] of Object.entries(files)) fs.writeFileSync(path.join(dir, n), text);
     return (await import(`../store.mjs?${name}`)).syncSnapshot();
@@ -188,7 +188,7 @@ assert.deepEqual(checkFolder('~/Cloud', TMP), { ok: true, dir: path.join(TMP, 'C
   assert.equal(broken.trusted, false, 'unreadable, backup too');
   assert.equal(broken.commitments.length, 0);
   const newer = await fresh('newer', { 'memory.json': JSON.stringify({ version: 2, commitments: [] }) });
-  assert.ok(newer.readOnly && !newer.trusted, 'memory from a newer Roamies');
-  delete process.env.ROAMIES_DATA_DIR;
+  assert.ok(newer.readOnly && !newer.trusted, 'memory from a newer Clanky');
+  delete process.env.CLANKY_DATA_DIR;
 }
 console.log('sync tests: passed');

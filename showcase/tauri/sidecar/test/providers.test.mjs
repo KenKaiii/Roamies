@@ -42,7 +42,7 @@ console.log('providers ok');
   const fs = await import('node:fs/promises');
   const os = await import('node:os');
   const path = await import('node:path');
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'roamies-auth-'));
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'clanky-auth-'));
   const auth = new AuthStorage(path.join(dir, 'auth.json'));
   const creds = { accessToken: 'k', refreshToken: '', expiresAt: Date.now() + 864e5 };
   const apiProviders = AUTH_PROVIDERS.filter((x) => x.methods.includes('apikey'));
@@ -58,7 +58,7 @@ console.log('providers ok');
   await fs.rm(dir, { recursive: true, force: true });
 }
 
-// Roamies reads screenshots: models that can't see images are left out, and every provider keeps one that can.
+// Clanky reads screenshots: models that can't see images are left out, and every provider keeps one that can.
 assert.equal(seesImages('glm', 'glm-5.3'), false, 'GLM 5.3 reads text only');
 assert.equal(seesImages('deepseek', 'deepseek-v4-pro'), false);
 assert.equal(seesImages('opencode', 'opencode/glm-5.3'), false);

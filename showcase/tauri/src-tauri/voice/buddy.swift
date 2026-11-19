@@ -1,4 +1,4 @@
-// The Roamie's cursor form while it just follows the cursor, drawn here instead of in the web overlay. The page
+// The Clanky's cursor form while it just follows the cursor, drawn here instead of in the web overlay. The page
 // hands over a picture of itself (eyes open and shut) and its follow rules; this moves it on the display's own clock,
 // which costs a small fraction of repainting a web view at 120 Hz. The page
 // takes it back for anything else (talking, cards, being clicked or dragged) and keeps the same follow maths, so the
@@ -36,7 +36,7 @@ final class Buddy: NSObject {
         // Above games' own fullscreen windows, which sit at the status bar level.
         panel.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
-        panel.setAccessibilityLabel("Roamies sidekick")
+        panel.setAccessibilityLabel("Clanky sidekick")
         let view = NSView(frame: NSRect(origin: .zero, size: panel.frame.size))
         view.wantsLayer = true
         view.autoresizingMask = [.width, .height]

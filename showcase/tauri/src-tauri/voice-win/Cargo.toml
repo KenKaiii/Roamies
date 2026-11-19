@@ -1,8 +1,8 @@
-# Voice helper for Roamies on Windows and Linux (the twin of voice/main.swift on macOS). Built by build.sh and
-# bundled as binaries/roamies-voice-<target>[.exe]. Compiles on macOS too (no mic or hotkey there), so the
+# Voice helper for Clanky on Windows and Linux (the twin of voice/main.swift on macOS). Built by build.sh and
+# bundled as binaries/clanky-voice-<target>[.exe]. Compiles on macOS too (no mic or hotkey there), so the
 # transcription and the session logic can be tested anywhere.
 [package]
-name = "roamies-voice"
+name = "clanky-voice"
 version = "0.1.0"
 edition = "2021"
 license = "AGPL-3.0-only"

@@ -49,14 +49,14 @@ pub(crate) fn init() {
         if env("DISPLAY").is_some_and(|d| !d.is_empty()) {
             std::env::set_var("GDK_BACKEND", "x11");
         } else {
-            eprintln!("Roamies needs XWayland on a Wayland session (no DISPLAY is set): windows can't be placed or kept on top without it");
+            eprintln!("Clanky needs XWayland on a Wayland session (no DISPLAY is set): windows can't be placed or kept on top without it");
         }
     }
 }
 
 fn trace() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("ROAMIES_TRACE").is_some())
+    *ON.get_or_init(|| std::env::var_os("CLANKY_TRACE").is_some())
 }
 
 // ---------- click-through by region ----------
@@ -79,7 +79,7 @@ pub(crate) fn set_hit_rects(window: &tauri::WebviewWindow, flat: &[f64]) {
     use gtk::cairo::{RectangleInt, Region};
     use gtk::prelude::WidgetExt;
     let rects = hit_rects(flat);
-    // ROAMIES_TRACE=1: the shape goes to stderr, for checking click-through from outside (and for bug reports).
+    // CLANKY_TRACE=1: the shape goes to stderr, for checking click-through from outside (and for bug reports).
     if trace() {
         eprintln!("hit rects: {rects:?}");
     }
@@ -102,7 +102,7 @@ pub(crate) fn set_hit_rects(window: &tauri::WebviewWindow, flat: &[f64]) {
 
 /// COSMIC files every X11 window it manages with the apps: it ignores "keep above" (_NET_WM_STATE_ABOVE), so app
 /// windows cover the overlay, and it rounds and tints it like an app. It draws override-redirect windows (ones no
-/// window manager manages, like menus) above every app window, untouched. ROAMIES_UNMANAGED=1 or 0 forces it.
+/// window manager manages, like menus) above every app window, untouched. CLANKY_UNMANAGED=1 or 0 forces it.
 fn unmanaged_for(desktop: Option<&str>, force: Option<&str>) -> bool {
     match force {
         Some("1") => true,
@@ -115,7 +115,7 @@ pub(crate) fn unmanaged_overlay() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| {
         let env = |k: &str| std::env::var(k).ok();
-        unmanaged_for(env("XDG_CURRENT_DESKTOP").as_deref(), env("ROAMIES_UNMANAGED").as_deref())
+        unmanaged_for(env("XDG_CURRENT_DESKTOP").as_deref(), env("CLANKY_UNMANAGED").as_deref())
     })
 }
 
@@ -150,7 +150,7 @@ pub(crate) fn set_unmanaged(window: &tauri::WebviewWindow, on: bool, focus: bool
 
 /// _NET_ACTIVE_WINDOW's data for a request from a pager or taskbar (source 2), with no timestamp. GTK sends one
 /// from the app (source 1), which KWin's focus-stealing prevention turns down once another app has had a keypress,
-/// such as the shortcut that ran `roamies --ask`: the field shows but its keys go to the other app.
+/// such as the shortcut that ran `clanky --ask`: the field shows but its keys go to the other app.
 fn activation_request() -> [u32; 5] {
     [2, 0, 0, 0, 0]
 }
@@ -361,7 +361,7 @@ fn portal_screenshot() -> Result<PathBuf, String> {
     const NO_PORTAL: &str = "This desktop has no screenshot portal (install xdg-desktop-portal and the one for your desktop, e.g. xdg-desktop-portal-gnome, -kde or -wlr).";
     let err = |e: zbus::Error| e.to_string();
     let conn = Connection::session().map_err(err)?;
-    let token = format!("roamies_{}_{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed));
+    let token = format!("clanky_{}_{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed));
     let me = conn.unique_name().map(|n| n.to_string()).ok_or("no session bus name")?;
     // Listen for the answer before asking, so a quick one isn't missed.
     let request = Proxy::new(&conn, "org.freedesktop.portal.Desktop", portal_request_path(&me, &token), "org.freedesktop.portal.Request").map_err(err)?;
@@ -389,7 +389,7 @@ fn portal_screenshot() -> Result<PathBuf, String> {
     file_uri_path(uri).ok_or_else(|| "the portal sent a link that isn't a file".to_string())
 }
 
-/// Overlays go clear for a moment so the Roamie isn't in its own screenshot (macOS and Windows leave them out of
+/// Overlays go clear for a moment so the Clanky isn't in its own screenshot (macOS and Windows leave them out of
 /// captures instead). Main thread only.
 fn fade_overlays(app: &AppHandle, opacity: f64) {
     use gtk::prelude::WidgetExt;
@@ -486,10 +486,10 @@ fn exec_quoted(path: &str) -> Option<String> {
     Some(out)
 }
 
-/// The XDG autostart entry that starts Roamies when the user logs in.
+/// The XDG autostart entry that starts Clanky when the user logs in.
 fn autostart_entry(program: &str) -> Option<String> {
     let exec = exec_quoted(program)?;
-    Some(format!("[Desktop Entry]\nType=Application\nName=Roamies\nComment=AI desktop companions\nExec={exec}\nIcon=roamies\nTerminal=false\nX-GNOME-Autostart-enabled=true\n"))
+    Some(format!("[Desktop Entry]\nType=Application\nName=Clanky\nComment=AI desktop companions\nExec={exec}\nIcon=clanky\nTerminal=false\nX-GNOME-Autostart-enabled=true\n"))
 }
 
 /// Whether an autostart entry is switched on: desktops' own "startup apps" settings switch one off by adding
@@ -500,7 +500,7 @@ fn autostart_on(entry: &str) -> bool {
 
 fn autostart_file() -> Option<PathBuf> {
     let config = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).filter(|p| p.is_absolute()).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
-    Some(config.join("autostart").join("roamies.desktop"))
+    Some(config.join("autostart").join("clanky.desktop"))
 }
 
 /// Open at Login: an entry in ~/.config/autostart, which GNOME, KDE and the other XDG desktops all run. It starts
@@ -529,11 +529,11 @@ pub(crate) fn login_item(set: Option<bool>, installed: bool) -> (bool, bool) {
     (true, std::fs::read_to_string(&file).is_ok_and(|e| autostart_on(&e)))
 }
 
-/// The program as a shell word, for commands people bind to keys (`<this> --talk`): plain `roamies` when that's
+/// The program as a shell word, for commands people bind to keys (`<this> --talk`): plain `clanky` when that's
 /// what the package installed on PATH, else the AppImage or binary's full path, single-quoted if it needs it.
 fn launch_word(program: &str) -> String {
-    if program == "/usr/bin/roamies" || program == "/usr/local/bin/roamies" {
-        return "roamies".into();
+    if program == "/usr/bin/clanky" || program == "/usr/local/bin/clanky" {
+        return "clanky".into();
     }
     if program.chars().all(|c| c.is_ascii_alphanumeric() || "/._-+".contains(c)) {
         return program.into();
@@ -542,14 +542,14 @@ fn launch_word(program: &str) -> String {
 }
 
 pub(crate) fn launch_command() -> String {
-    let program = appimage().or_else(|| std::env::current_exe().ok()).map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|| "roamies".into());
+    let program = appimage().or_else(|| std::env::current_exe().ok()).map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|| "clanky".into());
     launch_word(&program)
 }
 
 /// Where a copy installed from a .deb or .rpm gets its update: the package manager owns those files, so the app
 /// can't swap itself as an AppImage can.
 pub(crate) fn open_releases_page() {
-    let _ = std::process::Command::new("xdg-open").arg("https://github.com/KenKaiii/Roamies/releases/latest").stdin(std::process::Stdio::null()).spawn();
+    let _ = std::process::Command::new("xdg-open").arg("https://github.com/Prathu3110/Clanky/releases/latest").stdin(std::process::Stdio::null()).spawn();
 }
 
 #[cfg(test)]
@@ -585,10 +585,10 @@ mod tests {
 
     #[test]
     fn the_autostart_entry_quotes_the_program() {
-        let e = autostart_entry("/home/kai/Apps/Roamies 0.1.33.AppImage").expect("an entry");
-        assert!(e.starts_with("[Desktop Entry]\nType=Application\nName=Roamies\n"));
-        assert!(e.contains("\nExec=\"/home/kai/Apps/Roamies 0.1.33.AppImage\"\n"), "{e}");
-        assert_eq!(exec_quoted("/usr/bin/roamies").as_deref(), Some("\"/usr/bin/roamies\""));
+        let e = autostart_entry("/home/kai/Apps/Clanky 0.1.33.AppImage").expect("an entry");
+        assert!(e.starts_with("[Desktop Entry]\nType=Application\nName=Clanky\n"));
+        assert!(e.contains("\nExec=\"/home/kai/Apps/Clanky 0.1.33.AppImage\"\n"), "{e}");
+        assert_eq!(exec_quoted("/usr/bin/clanky").as_deref(), Some("\"/usr/bin/clanky\""));
         // Characters a shell or the desktop would act on stay literal.
         assert_eq!(exec_quoted("/opt/a$b/50%/q\"t/b`t").as_deref(), Some("\"/opt/a\\\\$b/50%%/q\\\\\"t/b\\\\`t\""));
         assert_eq!(exec_quoted("/opt/back\\slash").as_deref(), Some("\"/opt/back\\\\\\\\slash\""));
@@ -598,17 +598,17 @@ mod tests {
 
     #[test]
     fn the_command_to_bind_names_this_copy() {
-        assert_eq!(launch_word("/usr/bin/roamies"), "roamies", "the package's own command");
-        assert_eq!(launch_word("/home/kai/Apps/Roamies_0.1.33_amd64.AppImage"), "/home/kai/Apps/Roamies_0.1.33_amd64.AppImage");
-        assert_eq!(launch_word("/home/kai/My Apps/Roamies.AppImage"), "'/home/kai/My Apps/Roamies.AppImage'");
-        assert_eq!(launch_word("/home/kai/it's/Roamies"), "'/home/kai/it'\\''s/Roamies'");
+        assert_eq!(launch_word("/usr/bin/clanky"), "clanky", "the package's own command");
+        assert_eq!(launch_word("/home/kai/Apps/Clanky_0.1.33_amd64.AppImage"), "/home/kai/Apps/Clanky_0.1.33_amd64.AppImage");
+        assert_eq!(launch_word("/home/kai/My Apps/Clanky.AppImage"), "'/home/kai/My Apps/Clanky.AppImage'");
+        assert_eq!(launch_word("/home/kai/it's/Clanky"), "'/home/kai/it'\\''s/Clanky'");
     }
 
     #[test]
     fn an_entry_the_desktop_switched_off_counts_as_off() {
-        assert!(autostart_on(&autostart_entry("/usr/bin/roamies").unwrap()));
-        assert!(!autostart_on("[Desktop Entry]\nExec=roamies\nHidden=true\n"));
-        assert!(!autostart_on("[Desktop Entry]\nExec=roamies\nX-GNOME-Autostart-enabled=false\n"));
+        assert!(autostart_on(&autostart_entry("/usr/bin/clanky").unwrap()));
+        assert!(!autostart_on("[Desktop Entry]\nExec=clanky\nHidden=true\n"));
+        assert!(!autostart_on("[Desktop Entry]\nExec=clanky\nX-GNOME-Autostart-enabled=false\n"));
         assert!(!autostart_on("[Desktop Entry]\nHidden = True\n"));
         assert!(autostart_on("[Desktop Entry]\nHidden=false\n"));
     }
@@ -634,7 +634,7 @@ mod tests {
 
     #[test]
     fn the_portal_answers_on_a_path_made_from_the_bus_name_and_token() {
-        assert_eq!(portal_request_path(":1.42", "roamies_7_0"), "/org/freedesktop/portal/desktop/request/1_42/roamies_7_0");
+        assert_eq!(portal_request_path(":1.42", "clanky_7_0"), "/org/freedesktop/portal/desktop/request/1_42/clanky_7_0");
         assert_eq!(portal_request_path(":1.1024", "t"), "/org/freedesktop/portal/desktop/request/1_1024/t");
     }
 

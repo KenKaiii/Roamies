@@ -10,11 +10,11 @@ assert.equal(distraction({ app: 'Arc', title: 'r/gaming', url: 'https://old.redd
 assert.equal(distraction({ app: 'Steam', title: 'Steam' }, L), 'Steam');
 assert.equal(distraction({ app: 'steamwebhelper', title: 'Library' }, L), 'Steam', 'app name contains it');
 assert.equal(distraction({ app: 'Minecraft Launcher', title: 'Minecraft' }, L), 'Minecraft');
-assert.equal(distraction({ app: 'Code', title: 'focus.mjs — Roamies' }, L), null, 'work is fine');
+assert.equal(distraction({ app: 'Code', title: 'focus.mjs — Clanky' }, L), null, 'work is fine');
 assert.equal(distraction({ app: 'Chrome', title: 'youtube-dl docs', url: 'https://github.com/ytdl-org/youtube-dl' }, L), null, 'an address, not the word');
 assert.equal(distraction({ app: 'Chrome', title: 'Docs', url: 'https://notyoutube.com/' }, L), null, 'not a lookalike domain');
 assert.equal(distraction({ app: 'Chrome', title: 'Reading about Steampunk', url: 'https://en.wikipedia.org/wiki/Steampunk' }, L), null, 'whole words in titles');
-assert.equal(distraction({ app: 'Roamies', title: 'YouTube' }, L), null, 'never Roamies itself');
+assert.equal(distraction({ app: 'Clanky', title: 'YouTube' }, L), null, 'never Clanky itself');
 assert.equal(distraction(null, L), null);
 
 assert.deepEqual(parseDistractions('https://www.chess.com/play, Steam;  news.ycombinator.com/item?id=1\nsteam, x'),

@@ -13,5 +13,5 @@ assert.match(checkDraw(mm(undefined)).join(), /branches/);
 assert.equal(DrawArgs.safeParse(mm([...Array(9)].map((_, i) => ({ text: `b${i}` })))).success, false, 'at most 8 branches');
 assert.equal(DrawArgs.safeParse(mm([{ text: 'a', items: [...Array(7)].map(() => 'x') }, two[0]])).success, false, 'at most 6 points a branch');
 // The overlay draws it: a mindmap renderer next to the others.
-assert.ok(readFileSync(new URL('../../../roamies/ink.js', import.meta.url), 'utf8').includes('async mindmap(m)'), 'ink.js draws mind maps');
+assert.ok(readFileSync(new URL('../../../clanky/ink.js', import.meta.url), 'utf8').includes('async mindmap(m)'), 'ink.js draws mind maps');
 console.log('mind map tests: passed');

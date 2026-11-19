@@ -1,12 +1,12 @@
-// Where the type-to-ask field sits beside the cursor (showcase/roamies/ask-bar.js: Roamie.askBarPlace). Run: npm test
+// Where the type-to-ask field sits beside the cursor (showcase/clanky/ask-bar.js: Clanky.askBarPlace). Run: npm test
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 
 // Without a document only the placement rule loads, which is all that's tested here.
-const window = { Roamie: {} };
-vm.runInNewContext(fs.readFileSync(new URL('../../../roamies/ask-bar.js', import.meta.url), 'utf8'), { window, Math });
-const place = (cursor, size = [320, 38], bounds = B) => Array.from(window.Roamie.askBarPlace(cursor, size, bounds));
+const window = { Clanky: {} };
+vm.runInNewContext(fs.readFileSync(new URL('../../../clanky/ask-bar.js', import.meta.url), 'utf8'), { window, Math });
+const place = (cursor, size = [320, 38], bounds = B) => Array.from(window.Clanky.askBarPlace(cursor, size, bounds));
 // A 1440 x 900 screen with a menu bar on top and a Dock below, less the 8 px kept clear of every edge.
 const B = { l: 8, t: 41, r: 1432, b: 812 };
 const inside = ([x, y], [w, h] = [320, 38], b = B) => x >= b.l && y >= b.t && x + w <= b.r && y + h <= b.b;
@@ -52,10 +52,10 @@ console.log('askbar tests: passed');
   const made = [];
   const document = { createElement: () => { const n = node(); made.push(n); return n; }, head: node(), body: node() };
   let now = 0;
-  const w = { Roamie: {} };
-  vm.runInNewContext(fs.readFileSync(new URL('../../../roamies/ask-bar.js', import.meta.url), 'utf8'),
+  const w = { Clanky: {} };
+  vm.runInNewContext(fs.readFileSync(new URL('../../../clanky/ask-bar.js', import.meta.url), 'utf8'),
     { window: w, Math, document, performance: { now: () => now }, innerWidth: 1440, innerHeight: 900 });
-  const bar = w.Roamie.askBar;
+  const bar = w.Clanky.askBar;
   let left = 0;
   const open = (o = {}) => bar.open({ ...o, onLeft: () => { left++; bar.close(); } });
   open();

@@ -105,12 +105,12 @@ async function run({ agent: a, model: md, content }) {
     model: md.model, system: agentSystem(a.type, { dir: a.dir, userName: a.userName, deliverTo: a.deliverTo, returns: a.returns }), tools, maxTurns: a.maxTurns ?? 80,
     thinking: md.thinking ?? undefined, signal: ctl.signal, priorMessages: [], transformContext: (msgs) => trimRun(msgs, budget),
   };
-  const Fake = process.env.ROAMIES_FAKE_AGENT ? (await import(pathToFileURL(process.env.ROAMIES_FAKE_AGENT).href)).default : null;
+  const Fake = process.env.CLANKY_FAKE_AGENT ? (await import(pathToFileURL(process.env.CLANKY_FAKE_AGENT).href)).default : null;
   if (Fake) agent = new Fake({ ...common, provider: md.provider });
   else if (route === 'claude-code') agent = new ClaudeCodeAgent({ ...common, executable: md.cc.executable, env: md.cc.env, cwd: a.dir });
   else {
     agent = new Agent({
-      ...common, provider: md.provider, maxTurnExtensions: 0, baseUrl: md.baseUrl, transportSessionId: a.id ? `roamies-agent-${a.id}` : undefined,
+      ...common, provider: md.provider, maxTurnExtensions: 0, baseUrl: md.baseUrl, transportSessionId: a.id ? `clanky-agent-${a.id}` : undefined,
       resolveCredentials: async () => {
         const c = await request({ t: 'creds' });
         if (!c?.apiKey) throw new Error(c?.error || 'No sign-in for this model.');

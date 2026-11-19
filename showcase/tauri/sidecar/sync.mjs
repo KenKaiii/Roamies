@@ -1,5 +1,5 @@
 // Memory sync between computers (macOS and Windows) through a folder the user already syncs (iCloud Drive, OneDrive,
-// Dropbox, Google Drive). No server, no account: each computer writes only its own file, <folder>/Roamies Sync/<device>.json,
+// Dropbox, Google Drive). No server, no account: each computer writes only its own file, <folder>/Clanky Sync/<device>.json,
 // and reads the others', so the sync service never sees two computers editing one file. Commitments, reminders and facts
 // are merged item by item, newest change wins; a deletion is kept as a tombstone so it isn't brought back.
 // Conversations, sign-ins and keys are never written there.
@@ -12,12 +12,12 @@ import { existsSync, readdirSync, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-export const SUBDIR = 'Roamies Sync';
+export const SUBDIR = 'Clanky Sync';
 export const HEADER = 'sync.json';
 export const KEY_NAME = 'sync-key'; // the secret store's name for this computer's copy of the key
 export const MIN_PASSPHRASE = 8;
 const SCRYPT = { N: 1 << 15, r: 8, p: 1, maxmem: 64 * 1024 * 1024 };
-const CHECK = 'roamies-sync';
+const CHECK = 'clanky-sync';
 
 // ---------- encryption ----------
 /** The folder key from the passphrase and the folder's salt (scrypt; about a tenth of a second, at setup only). */
@@ -54,7 +54,7 @@ export async function prepareFolder(dir, passphrase) {
     const fresh = { version: 1, kdf: 'scrypt', salt: salt.toString('base64'), check: seal(key, CHECK, 'check') };
     try { await fs.writeFile(file, JSON.stringify(fresh), { flag: 'wx', mode: 0o600 }); return { key }; } catch { head = await read(); }
   }
-  if (head?.version !== 1 || head.kdf !== 'scrypt' || typeof head.salt !== 'string') return { error: 'The sync folder was set up by a newer Roamies, or its sync.json is damaged.' };
+  if (head?.version !== 1 || head.kdf !== 'scrypt' || typeof head.salt !== 'string') return { error: 'The sync folder was set up by a newer Clanky, or its sync.json is damaged.' };
   const key = deriveKey(passphrase, Buffer.from(head.salt, 'base64'));
   try { if (unseal(key, head.check, 'check') === CHECK) return { key }; } catch { /* wrong passphrase */ }
   return { error: "That isn't the passphrase this sync folder was set up with. Use the same one as on your other computer." };

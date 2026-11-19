@@ -1,7 +1,7 @@
 # Clanky memory graph (Omnigraph)
 
 Graph memory from step 5 of [docs/CLANKY_PLAN.md](../docs/CLANKY_PLAN.md). Source lives here; data and tokens
-live in `~/Roamies/Data/` and are never committed.
+live in `~/Clanky/Data/` and are never committed.
 
 | File | What it is |
 |---|---|
@@ -23,11 +23,11 @@ http://127.0.0.1:7811/mcp --header "Authorization: Bearer <act-agent token>"`).
 
 ```sh
 brew install ModernRelay/tap/omnigraph
-D=~/Roamies/Data/omnigraph; mkdir -p $D
+D=~/Clanky/Data/omnigraph; mkdir -p $D
 cd omnigraph
 omnigraph cluster apply --target $D --config . --as act-me
 omnigraph cluster force-unlock <lock_id printed by apply> --target $D
-umask 077; python3 -c "import secrets,json;print(json.dumps({'act-me':secrets.token_urlsafe(32),'act-agent':secrets.token_urlsafe(32)}))" > ~/Roamies/Data/omnigraph.tokens.json
+umask 077; python3 -c "import secrets,json;print(json.dumps({'act-me':secrets.token_urlsafe(32),'act-agent':secrets.token_urlsafe(32)}))" > ~/Clanky/Data/omnigraph.tokens.json
 ```
 
 ## Changing the schema or queries

@@ -28,12 +28,12 @@ assert.match(side, /Moods: \$\{VOICE_CUES\.emotions\.filter\(\(e\) => !EMOTES\.i
 assert.match(side, /start your reply with one body tag[^\n]*Most replies need no body tag\./, 'body tags are named as such');
 assert.match(side, /Most replies want a voice cue somewhere/, 'voice cues are named as such');
 // The app's manual is read on demand, not sent with every request.
-assert.match(side, /call about_roamies and answer from what it says\. Don't invent features or settings it doesn't list\./, 'the prompt sends app questions to about_roamies');
-assert.match(side, /name: 'about_roamies',[^]*?execute: async \(\) => aboutRoamies\(/, 'about_roamies is a tool');
+assert.match(side, /call about_clanky and answer from what it says\. Don't invent features or settings it doesn't list\./, 'the prompt sends app questions to about_clanky');
+assert.match(side, /name: 'about_clanky',[^]*?execute: async \(\) => aboutClanky\(/, 'about_clanky is a tool');
 assert.ok(!side.includes('it saves one .log file in Downloads'), 'the manual is no longer in the system prompt');
 // One home per rule: how act_in_app pages and forms work is in its description, not repeated in the prompt.
 assert.ok(!/Long pages, feeds and lists:/.test(side) && !/a field that opens a calendar is clicked/.test(side), 'act_in_app details live in act_in_app');
-const host = readFileSync(fileURLToPath(new URL('../../../roamies/host.js', import.meta.url)), 'utf8');
+const host = readFileSync(fileURLToPath(new URL('../../../clanky/host.js', import.meta.url)), 'utf8');
 const webCase = host.slice(host.indexOf("if (e.anim.tool === 'web')"), host.indexOf('jobs.push', host.indexOf("if (e.anim.tool === 'web')")));
 assert.ok(webCase && !/panel\(\)\?\.open/.test(webCase), 'a web lookup does not open the card by itself');
 // Regression: "how are you? draw something" drew first and said "I'm doing great" only after it, and the drawing's

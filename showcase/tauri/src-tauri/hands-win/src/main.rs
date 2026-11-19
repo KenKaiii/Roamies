@@ -1,20 +1,20 @@
-// Hands helper for Roamies on Windows, the twin of hands/main.swift: lets the agent see one window or app, read its
+// Hands helper for Clanky on Windows, the twin of hands/main.swift: lets the agent see one window or app, read its
 // controls and work them. Same commands, same JSON: one command per run, one JSON object on stdout, live progress as
 // "@"-prefixed JSON lines on stderr.
 //
-//   roamies-hands windows                      visible windows, front to back
-//   roamies-hands front                        the app, window title and (for a browser) address in front
-//   roamies-hands capture <out.jpg> front|app:<name>|window:<id>|screen [max] [thumb thumbMax]
-//   roamies-hands locate front|app:<name>|window:<id>|screen
-//   roamies-hands select <out.png>             drag to choose an area (Esc cancels)
-//   roamies-hands ui front|app:<name>|window:<id> [controls]
-//   roamies-hands locate-control <target> <id>
-//   roamies-hands find-text <target> <text> [scroll]
-//   roamies-hands ocr-find <target> <text> [all]
-//   roamies-hands refine '[[x,y,w,h],…]' [window:<id>]
-//   roamies-hands act <json>                   {"app":"Notepad","steps":[{"do":"fill","field":"Text editor","text":"hi"}]}
-//   roamies-hands --self-test                  the logic checks (no windows needed)
-//   roamies-hands --smoke                      a real run against Notepad (CI)
+//   clanky-hands windows                      visible windows, front to back
+//   clanky-hands front                        the app, window title and (for a browser) address in front
+//   clanky-hands capture <out.jpg> front|app:<name>|window:<id>|screen [max] [thumb thumbMax]
+//   clanky-hands locate front|app:<name>|window:<id>|screen
+//   clanky-hands select <out.png>             drag to choose an area (Esc cancels)
+//   clanky-hands ui front|app:<name>|window:<id> [controls]
+//   clanky-hands locate-control <target> <id>
+//   clanky-hands find-text <target> <text> [scroll]
+//   clanky-hands ocr-find <target> <text> [all]
+//   clanky-hands refine '[[x,y,w,h],…]' [window:<id>]
+//   clanky-hands act <json>                   {"app":"Notepad","steps":[{"do":"fill","field":"Text editor","text":"hi"}]}
+//   clanky-hands --self-test                  the logic checks (no windows needed)
+//   clanky-hands --smoke                      a real run against Notepad (CI)
 //
 // Coordinates are screen points: physical pixels ÷ the scale of the monitor they're on, which is how the overlays
 // place things (each overlay's origin is its monitor's position ÷ its scale; see safe_js in src/main.rs). Window ids
@@ -105,7 +105,7 @@ fn windows_main(cmd: &str, args: &[String]) -> ! {
             }).collect();
             out(json!({ "ok": true, "windows": list }))
         }
-        // Where the user is right now: the app in front (never Roamies), its window's title, and a browser's address.
+        // Where the user is right now: the app in front (never Clanky), its window's title, and a browser's address.
         "front" => {
             let mut o = json!({ "ok": true });
             let Some(w) = resolve("front") else { out(o) };
@@ -299,7 +299,7 @@ mod smoke {
             println!("{} {name}{}", if ok { "ok" } else { "FAIL" }, if ok || detail.is_empty() { String::new() } else { format!(" ({detail})") });
             bad += usize::from(!ok);
         };
-        let phrase = "Roamies smoke 4711 Grüße \u{1F600}";
+        let phrase = "Clanky smoke 4711 Grüße \u{1F600}";
         let _ = Command::new("notepad.exe").spawn();
         let is_notepad = |w: &Value| app_matches(w["app"].as_str().unwrap_or(""), "", "notepad") || w["title"].as_str().unwrap_or("").contains("Notepad");
         let Some(win) = wait_window(is_notepad) else {
@@ -313,7 +313,7 @@ mod smoke {
         let loc = hands(&["locate", "app:Notepad"]);
         check("locate app:Notepad finds it", loc["window"]["id"].as_i64() == Some(id), loc.to_string());
 
-        let file = std::env::temp_dir().join(format!("roamies-smoke-{}.jpg", std::process::id()));
+        let file = std::env::temp_dir().join(format!("clanky-smoke-{}.jpg", std::process::id()));
         let file_s = file.to_string_lossy().to_string();
         let cap = hands(&["capture", &file_s, &target, "1568"]);
         let size = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
@@ -343,8 +343,8 @@ mod smoke {
         }
 
         // A terminal is never typed in.
-        let mut term = Command::new("cmd.exe").args(["/k", "title RoamiesSmoke"]).spawn().ok();
-        match wait_window(|w| w["title"].as_str().unwrap_or("").contains("RoamiesSmoke")) {
+        let mut term = Command::new("cmd.exe").args(["/k", "title ClankySmoke"]).spawn().ok();
+        match wait_window(|w| w["title"].as_str().unwrap_or("").contains("ClankySmoke")) {
             Some(t) => {
                 let plan = json!({ "window": t["id"], "steps": [{ "do": "type", "text": "echo hi" }] }).to_string();
                 let r = hands(&["act", &plan]);

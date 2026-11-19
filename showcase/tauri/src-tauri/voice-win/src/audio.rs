@@ -87,7 +87,7 @@ impl Sink {
 }
 
 /// Why the microphone didn't open or stopped: "missing", "busy", "blocked", "lost" or "failed", with the
-/// system's own words. The app turns the reason into what the Roamie says.
+/// system's own words. The app turns the reason into what the Clanky says.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MicError {
     pub reason: &'static str,

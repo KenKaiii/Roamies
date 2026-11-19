@@ -4,8 +4,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'roamies-skills-test-'));
-process.env.HOME = TMP; process.env.USERPROFILE = TMP; delete process.env.ROAMIES_DATA_DIR;
+const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'clanky-skills-test-'));
+process.env.HOME = TMP; process.env.USERPROFILE = TMP; delete process.env.CLANKY_DATA_DIR;
 process.on('exit', () => fs.rmSync(TMP, { recursive: true, force: true }));
 const K = await import('../skills.mjs');
 assert.ok(K.SKILLS_DIR.startsWith(TMP), 'skills live under the test HOME');
@@ -143,5 +143,5 @@ console.log('skills ok');
   assert.equal(fs.readdirSync(K.SKILLS_DIR).filter((n) => n.startsWith('.')).length, 0, 'a refused install leaves nothing behind');
   console.log('skills install tests: passed');
 }
-assert.equal(K.SKILLS_DIR, path.join(TMP, 'Roamies', 'Skills'), 'skills sit in the visible Roamies folder, beside Agents');
+assert.equal(K.SKILLS_DIR, path.join(TMP, 'Clanky', 'Skills'), 'skills sit in the visible Clanky folder, beside Agents');
 console.log('skills folder tests: passed');

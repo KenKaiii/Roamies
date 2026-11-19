@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Roamies",
+  "productName": "Clanky",
   "version": "0.1.44",
-  "identifier": "com.kenkai.roamies",
+  "identifier": "com.prathu3110.clanky",
   "build": {
     "frontendDist": "../dist"
   },
@@ -32,15 +32,15 @@
     },
     "createUpdaterArtifacts": true,
     "externalBin": [
-      "binaries/roamies-node"
+      "binaries/clanky-node"
     ]
   },
   "plugins": {
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQ0MEI0NTJGMEY1NkNGNUYKUldSZnoxWVBMMFVMMUlXK2ROU3YyaDJVZy9scW56d081dEZwelE0SFBQeFVSVXRVYnZyY3BSd0cK",
       "endpoints": [
-        "https://github.com/KenKaiii/Roamies/releases/latest/download/latest.json",
-        "https://raw.githubusercontent.com/KenKaiii/Roamies/updates/latest.json"
+        "https://github.com/Prathu3110/Clanky/releases/latest/download/latest.json",
+        "https://raw.githubusercontent.com/Prathu3110/Clanky/updates/latest.json"
       ],
       "windows": {
         "installMode": "passive"

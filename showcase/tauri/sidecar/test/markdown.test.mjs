@@ -1,11 +1,11 @@
-// Markdown in the Sidekick's replies (showcase/roamies/markdown.js, shared with the overlay). Run: npm test
+// Markdown in the Sidekick's replies (showcase/clanky/markdown.js, shared with the overlay). Run: npm test
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 
 const ctx = vm.createContext({});
-vm.runInContext(fs.readFileSync(new URL('../../../roamies/markdown.js', import.meta.url), 'utf8'), ctx);
-const md = ctx.Roamie.md;
+vm.runInContext(fs.readFileSync(new URL('../../../clanky/markdown.js', import.meta.url), 'utf8'), ctx);
+const md = ctx.Clanky.md;
 const plain = (o) => JSON.parse(JSON.stringify(o));
 
 // inline

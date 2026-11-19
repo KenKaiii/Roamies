@@ -1,13 +1,13 @@
-// The agents' corner in the overlay (showcase/roamies/minis.js, agent-home.js): which icon a file gets, the pixel
+// The agents' corner in the overlay (showcase/clanky/minis.js, agent-home.js): which icon a file gets, the pixel
 // icons themselves, and where the home sits. Run: npm test
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 
 // Without a document only the pure parts load, which is all that's tested here.
-const window = { Roamie: {} };
-for (const f of ['minis.js', 'agent-home.js']) vm.runInNewContext(fs.readFileSync(new URL(`../../../roamies/${f}`, import.meta.url), 'utf8'), { window, Math, Map });
-const { fileKind, icon, KINDS } = window.Roamie.minis;
+const window = { Clanky: {} };
+for (const f of ['minis.js', 'agent-home.js']) vm.runInNewContext(fs.readFileSync(new URL(`../../../clanky/${f}`, import.meta.url), 'utf8'), { window, Math, Map });
+const { fileKind, icon, KINDS } = window.Clanky.minis;
 
 const kinds = {
   'index.html': 'web', 'notes.md': 'doc', 'Report.PDF': 'pdf', 'logo.svg': 'image', 'photo.jpeg': 'image', 'budget.csv': 'sheet', 'plan.xlsx': 'sheet',
@@ -31,7 +31,7 @@ for (const k of KINDS) {
 }
 
 // The home: the top-right corner, 12 px in from the safe area (menu bar, Dock, notch), whatever the screen.
-const place = (size, safe, view) => Array.from(window.Roamie.agentHomePlace(size, safe, view));
+const place = (size, safe, view) => Array.from(window.Clanky.agentHomePlace(size, safe, view));
 const none = { top: 0, right: 0, bottom: 0, left: 0 };
 assert.deepEqual(place([300, 200], none, [1440, 900]), [1440 - 12 - 300, 12]);
 assert.deepEqual(place([300, 200], { top: 33, right: 0, bottom: 80, left: 0 }, [1440, 900]), [1128, 45], 'below the menu bar');
@@ -43,11 +43,11 @@ for (const [w, h] of [[1440, 900], [1280, 800], [1920, 1080], [3008, 1692]]) {
   assert.ok(x + 300 <= w - 12 && y >= 25 + 12 && Number.isInteger(x) && Number.isInteger(y), `${w}x${h}`);
 }
 // desktop.html pins every <canvas> (position: fixed); the minis must opt back into their row's layout.
-const homeSrc = fs.readFileSync(new URL('../../../roamies/agent-home.js', import.meta.url), 'utf8');
+const homeSrc = fs.readFileSync(new URL('../../../clanky/agent-home.js', import.meta.url), 'utf8');
 assert.ok(/canvas\s*\{[^}]*position:\s*fixed/.test(fs.readFileSync(new URL('../../../desktop.html', import.meta.url), 'utf8')));
 assert.ok(/\.ah-mini, \.ahs-mini \{[^}]*position: static/.test(homeSrc), 'minis stay in flow');
 // The made panel's open button: where it worked when it said so, else its files, else none.
-const label = window.Roamie.agentOpenLabel;
+const label = window.Clanky.agentOpenLabel;
 assert.equal(label({ outcome: 'x', files: [{ name: 'a.md' }], place: null }), 'Open folder');
 assert.equal(label({ outcome: 'x', files: [], place: { kind: 'folder', name: 'Downloads' } }), 'Open folder');
 assert.equal(label({ outcome: 'x', files: [], place: { kind: 'file', name: 'a.pdf' } }), 'Open file');

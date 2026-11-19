@@ -160,7 +160,7 @@ console.log('shape radius tests: passed');
   assert.deepEqual(q.trimCards(LIMITS.cardsShown), [], 'four cards: nothing to close');
   // The overlay closes them by the same number.
   const { readFileSync } = await import('node:fs');
-  assert.ok(readFileSync(new URL('../../../roamies/ink.js', import.meta.url), 'utf8').includes(`const MAX_CARDS = ${LIMITS.cardsShown};`), 'the overlay and the sidecar agree on how many cards stay up');
+  assert.ok(readFileSync(new URL('../../../clanky/ink.js', import.meta.url), 'utf8').includes(`const MAX_CARDS = ${LIMITS.cardsShown};`), 'the overlay and the sidecar agree on how many cards stay up');
   console.log('draw parts tests: passed');
 }
 
@@ -405,9 +405,9 @@ console.log('shape radius tests: passed');
 {
   const { readFileSync } = await import('node:fs');
   const { COUNTRIES } = await import('../countries.mjs');
-  const win = { Roamie: {} };
-  new Function('window', readFileSync(new URL('../../../roamies/world.js', import.meta.url), 'utf8'))(win);
-  const world = win.Roamie.world;
+  const win = { Clanky: {} };
+  new Function('window', readFileSync(new URL('../../../clanky/world.js', import.meta.url), 'utf8'))(win);
+  const world = win.Clanky.world;
   assert.deepEqual(world.countries.map((c) => c[0]), COUNTRIES.map((c) => c.n), 'world.js and countries.mjs list the same countries in the same order');
   assert.ok(world.countries.every(([, rings]) => rings.length && rings.every((r) => r.length >= 6 && r.length % 2 === 0)), 'every country has an outline');
   // Portugal's outline starts inside the box a map of it fits.

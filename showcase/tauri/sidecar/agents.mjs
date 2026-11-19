@@ -1,17 +1,17 @@
 // Background agents: a request like "send an agent to make me a landing page" runs as its own process
-// (agentrun.mjs) while the chat carries on. Each one works in its own folder under ~/Roamies/Agents, shows as a row
-// in the overlay's corner (roamies/agent-home.js), and ends with a short result: one line and the files it made.
+// (agentrun.mjs) while the chat carries on. Each one works in its own folder under ~/Clanky/Agents, shows as a row
+// in the overlay's corner (clanky/agent-home.js), and ends with a short result: one line and the files it made.
 // Pure helpers first (tested in test/agents.test.mjs), then the manager and the chat's tools.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
 import { askedLine, exactWords, userWordsBlock, withWords } from './quote.mjs';
-import { roamiesRoot } from './store.mjs';
+import { clankyRoot } from './store.mjs';
 import { withRole } from './subagents.mjs';
 
-// ~/Roamies (datadir.mjs): one visible folder, so no macOS privacy prompt; ROAMIES_DATA_DIR moves it for tests.
-export const agentsRoot = roamiesRoot;
+// ~/Clanky (datadir.mjs): one visible folder, so no macOS privacy prompt; CLANKY_DATA_DIR moves it for tests.
+export const agentsRoot = clankyRoot;
 export const AGENT_TYPES = ['maker', 'researcher', 'organizer'];
 // What it hands back: files when something was asked to be made, a written answer (to the chat) otherwise.
 export const RETURNS = ['files', 'answer'];
@@ -21,7 +21,7 @@ const returnsOf = (a) => (RETURNS.includes(a?.returns) ? a.returns : DEFAULT_RET
 const WORK_TOOLS = ['read_file', 'list_files', 'search_files', 'write_file', 'run_command', 'web_search', 'web_fetch'];
 export const TYPE_TOOLS = { maker: WORK_TOOLS, researcher: WORK_TOOLS, organizer: WORK_TOOLS };
 export const SCREEN_TOOLS = ['take_screenshot', 'list_windows', 'read_window', 'act_in_app', 'draw', 'open', 'see_photo',
-  'remember_commitment', 'update_commitment', 'forget_fact', 'plan_steps', 'show_list', 'list_commitments', 'about_roamies'];
+  'remember_commitment', 'update_commitment', 'forget_fact', 'plan_steps', 'show_list', 'list_commitments', 'about_clanky'];
 /** The tools an agent of this type gets, from the full set createTools made. */
 export const toolsFor = (type, all) => all.filter((t) => (TYPE_TOOLS[type] ?? []).includes(t.name) && !SCREEN_TOOLS.includes(t.name));
 
@@ -223,7 +223,7 @@ export function agentSystem(type, { dir, userName = 'the user', deliverTo = null
   const done = answer
     ? `When you're done, call finish once: outcome is one plain sentence under 90 characters; report is what you found or did, in plain text under 1,200 characters, the answer first and complete on its own; place (optional) is the folder, file or http(s) web address you worked on (the folder you tidied, the site you checked); files only if the brief asked for a file (paths from your folder, each with a few words on what it is); needs_you (under 70 characters) only if they must do something. Then stop: finish is all they see.`
     : `When you're done, call finish once: outcome is one plain sentence under 90 characters, files lists what they should open (paths from your folder, each with a few words on what it is), report (optional, under 1,200 characters) only for something they should know, place (optional) only if the result lives somewhere else (a folder, file or http(s) web address), and needs_you (under 70 characters) only if they must do something. Then stop: finish is all they see.`;
-  return `You are a background agent working for ${userName} in Roamies, a desktop app. You work alone: nobody reads your messages while you work, and you can't see the screen. The brief is all you know about the request, so do what it says without asking questions.
+  return `You are a background agent working for ${userName} in Clanky, a desktop app. You work alone: nobody reads your messages while you work, and you can't see the screen. The brief is all you know about the request, so do what it says without asking questions.
 ${how}
 ${mode}
 Your folder is ${dir}. What you make for ${userName} goes in files/ (only finished things, with clear names); scratch work, downloads and installed libraries go in work/; anything they sent you is in inputs/. Save what you make with paths starting files/ (like files/poem.md), and save each thing once: no second copies. Relative paths and run_command start in your folder.${deliverTo ? ` When you finish, a copy of what you list is also put in ${deliverTo} for them; don't copy it there yourself.` : ''}
@@ -243,7 +243,7 @@ const one = (s, n) => { const t = String(s ?? '').replace(/\s+/g, ' ').trim(); r
 const exists = (p) => fs.promises.stat(p).then(() => true, () => false);
 
 /**
- * deps: fork (node:child_process's), ui (to the overlay), root (~/Roamies), userName, runner (agentrun.mjs),
+ * deps: fork (node:child_process's), ui (to the overlay), root (~/Clanky), userName, runner (agentrun.mjs),
  * config: { model() → what to run on, creds(model) → { apiKey, accountId }, allowActions(), image() → this request's
  * snap or null, open(path), reveal(path) }, safety: { checkRead, checkWrite, checkOpen } from safety.mjs, home.
  */
@@ -271,20 +271,20 @@ export function createAgents({ fork, ui, config, root, userName = 'The user', ru
     const entry = `## Run ${a.runs} · ${stamp(a.started)} · ${a.state}\nAsked: ${one(a.brief, 600)}\n${a.result ? `Outcome: ${a.result.outcome}\n` : `Outcome: ${a.reason ?? a.state}\n`}${files ? `Files: ${files}\n` : ''}${a.result?.report ? `Report: ${a.result.report}\n` : ''}${a.result?.place ? `Place: ${a.result.place.url ?? a.result.place.path}\n` : ''}${a.result?.needs_you ? `Needs you: ${a.result.needs_you}\n` : ''}${a.delivered?.length ? `Copied to: ${a.delivered.join(', ')}\n` : ''}\n`;
     await fs.promises.appendFile(path.join(a.dir, 'history.md'), entry).catch(() => {});
     const index = path.join(dirOf, 'index.md');
-    if (!(await exists(index))) await fs.promises.writeFile(index, '# Roamies agents\n\nOne line per run: date · title · folder · asked · outcome.\n\n').catch(() => {});
+    if (!(await exists(index))) await fs.promises.writeFile(index, '# Clanky agents\n\nOne line per run: date · title · folder · asked · outcome.\n\n').catch(() => {});
     await fs.promises.appendFile(index, `- ${stamp(a.started)} · ${one(a.title, 60)} · ${a.folder}/ · asked: ${one(a.brief, 120)} · ${a.state}: ${one(a.result?.outcome ?? a.reason ?? '', 120)}\n`).catch(() => {});
     await saveState(a);
   }
 
   // Agents from earlier sessions (for follow-ups and the live state); one still marked working was cut off when
-  // Roamies closed.
+  // Clanky closed.
   const loaded = (async () => {
     const names = await fs.promises.readdir(dirOf).catch(() => []);
     for (const name of names) {
       const a = await fs.promises.readFile(path.join(dirOf, name, '.agent.json'), 'utf8').then(JSON.parse, () => null);
       if (!a?.id || agents.has(a.id) || !AGENT_TYPES.includes(a.type)) continue;
       Object.assign(a, { dir: path.join(dirOf, name), folder: name, ask: null, workFrom: null });
-      if (a.state === 'working' || a.state === 'waiting') { a.state = 'stopped'; a.reason = 'Roamies closed'; a.ended = a.ended ?? now(); a.seen = true; a.told = true; await record(a); }
+      if (a.state === 'working' || a.state === 'waiting') { a.state = 'stopped'; a.reason = 'Clanky closed'; a.ended = a.ended ?? now(); a.seen = true; a.told = true; await record(a); }
       if (now() - (a.ended ?? a.started ?? 0) < 30 * 24 * 3600_000) agents.set(a.id, a);
     }
   })().catch((e) => log('agents_load', { error: String(e.message) }));
@@ -371,7 +371,7 @@ export function createAgents({ fork, ui, config, root, userName = 'The user', ru
   }
 
   function spawn(a, startMsg) {
-    const child = fork(runner, [], { stdio: ['ignore', 'pipe', 'pipe', 'ipc'], serialization: 'advanced', env: { ...process.env, ROAMIES_AGENT: a.id } });
+    const child = fork(runner, [], { stdio: ['ignore', 'pipe', 'pipe', 'ipc'], serialization: 'advanced', env: { ...process.env, CLANKY_AGENT: a.id } });
     const p = { child, beat: now(), event: now(), end: null, stopping: null, kill: null };
     procs.set(a.id, p);
     for (const s of [child.stdout, child.stderr]) s?.on('data', (d) => process.stderr.write(`[agent ${a.id}] ${d}`));
@@ -420,7 +420,7 @@ export function createAgents({ fork, ui, config, root, userName = 'The user', ru
     if (p.stopping) { a.state = p.stopping.state; a.reason = p.stopping.reason; if (a.state !== 'done') a.result = null; }
     else if (p.end?.ok && a.result) a.state = 'done';
     else { a.state = 'failed'; a.result = null; a.reason = p.end?.error ? one(p.end.error, 120) : `It crashed (${code ?? signal})`; }
-    // Done and failed are news for the chat; stopping one (them, or closing Roamies) isn't.
+    // Done and failed are news for the chat; stopping one (them, or closing Clanky) isn't.
     a.told = a.state === 'stopped';
     if (a.state === 'done' && a.deliverTo) await deliver(a);
     await record(a);
@@ -528,7 +528,7 @@ export function createAgents({ fork, ui, config, root, userName = 'The user', ru
   const tools = [
     {
       name: 'send_agent',
-      description: `Start a background agent: it works on its own in its own folder (~/Roamies/Agents) while you keep talking, and shows as a row in the top-right corner of the screen. Use it when ${userName} asks for an agent or for work in the background, or for long hands-off work (a website, a document or slides, deep research, tidying a folder) after offering it and hearing yes. Never for a quick answer or anything on the screen. type: maker (makes files: pages, documents, code, pictures), researcher (finds things out on the web and writes notes), organizer (moves and renames files, with one yes for the batch). title: 2 to 5 words for its row. brief: everything it needs, complete and specific, because it sees none of this conversation: what to make or find, for whom, the style, every name and detail ${userName} gave (quote their own words where they matter, never reword a name or a number), and what done looks like. Their exact words are attached to the brief for you, so the agent always has them. subagent: a specialist from the Subagents list in the live state (its type and model are then set for you, so type and model can be left out); give it a prompt for its own part of the job. model: only when they named a model for this agent ("use Gemini for it", "have Opus do it"): its name as they said it; otherwise leave it out. inputs: paths of files it should have, or "snap" for the picture sent with this request. deliver_to: a folder they named for the result ("on my Desktop" → ~/Desktop). continue: the id of a finished agent, to carry on in its folder. returns: files when they asked for something made (a page, a document, slides, a picture, "save it as…"); answer when they want something found out or done (a question, a check, tidying, a lookup), and then it reports back to you, with no file. Left out: files for a maker, answer otherwise. Once it starts, say nothing more: its launch on screen is your reply.`,
+      description: `Start a background agent: it works on its own in its own folder (~/Clanky/Agents) while you keep talking, and shows as a row in the top-right corner of the screen. Use it when ${userName} asks for an agent or for work in the background, or for long hands-off work (a website, a document or slides, deep research, tidying a folder) after offering it and hearing yes. Never for a quick answer or anything on the screen. type: maker (makes files: pages, documents, code, pictures), researcher (finds things out on the web and writes notes), organizer (moves and renames files, with one yes for the batch). title: 2 to 5 words for its row. brief: everything it needs, complete and specific, because it sees none of this conversation: what to make or find, for whom, the style, every name and detail ${userName} gave (quote their own words where they matter, never reword a name or a number), and what done looks like. Their exact words are attached to the brief for you, so the agent always has them. subagent: a specialist from the Subagents list in the live state (its type and model are then set for you, so type and model can be left out); give it a prompt for its own part of the job. model: only when they named a model for this agent ("use Gemini for it", "have Opus do it"): its name as they said it; otherwise leave it out. inputs: paths of files it should have, or "snap" for the picture sent with this request. deliver_to: a folder they named for the result ("on my Desktop" → ~/Desktop). continue: the id of a finished agent, to carry on in its folder. returns: files when they asked for something made (a page, a document, slides, a picture, "save it as…"); answer when they want something found out or done (a question, a check, tidying, a lookup), and then it reports back to you, with no file. Left out: files for a maker, answer otherwise. Once it starts, say nothing more: its launch on screen is your reply.`,
       parameters: z.object({
         type: z.enum(AGENT_TYPES).optional(), subagent: z.string().max(40).optional(), title: z.string().min(1).max(60), brief: z.string().min(1).max(8000),
         inputs: z.array(z.string().max(500)).max(10).optional(), deliver_to: z.string().max(500).optional(), continue: z.string().max(12).optional(),
@@ -575,7 +575,7 @@ export function createAgents({ fork, ui, config, root, userName = 'The user', ru
     // The overlay (re)loaded: it gets every agent still working, and failures not yet dismissed.
     sync: () => { for (const a of agents.values()) if (a.state === 'working' || a.state === 'waiting' || (a.state === 'failed' && !a.seen)) tell('update', a); },
     setAllow: (on) => { for (const p of procs.values()) if (p.child.connected) p.child.send({ t: 'allow', on: !!on }); },
-    stopAll: () => { clearInterval(watch); for (const id of procs.keys()) stop(id, { state: 'stopped', reason: 'Roamies closed' }); },
+    stopAll: () => { clearInterval(watch); for (const id of procs.keys()) stop(id, { state: 'stopped', reason: 'Clanky closed' }); },
   };
 }
 

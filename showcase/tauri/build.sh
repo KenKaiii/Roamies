@@ -1,12 +1,12 @@
 #!/bin/bash
 # Syncs the shared web files into dist/, then bundles with the Tauri CLI.
-# ./build.sh        release bundle (Roamies.app on macOS, the installer on Windows, .AppImage/.deb/.rpm on Linux)
+# ./build.sh        release bundle (Clanky.app on macOS, the installer on Windows, .AppImage/.deb/.rpm on Linux)
 # ./build.sh dev    debug binary only, faster
 set -euo pipefail
 cd "$(dirname "$0")"
 rm -rf dist && mkdir -p dist
 cp ../desktop.html dist/
-cp -R ../roamies ../onboarding ../panel dist/
+cp -R ../clanky ../onboarding ../panel dist/
 ../tauri/sidecar/bundle.sh
 # Ship a Node.js runtime with the app, for the target being built (--target <triple>, else this machine).
 TARGET=""; prev=""; for a in "$@"; do [ "$prev" = "--target" ] && TARGET="$a"; prev="$a"; done
@@ -20,12 +20,12 @@ case "$TRIPLE" in
     mkdir -p src-tauri/binaries
     for h in voice hands; do
       cargo build --release --locked --manifest-path "src-tauri/$h-win/Cargo.toml" --target "$TRIPLE"
-      cp "src-tauri/$h-win/target/$TRIPLE/release/roamies-$h.exe" "src-tauri/binaries/roamies-$h-$TRIPLE.exe"
+      cp "src-tauri/$h-win/target/$TRIPLE/release/clanky-$h.exe" "src-tauri/binaries/clanky-$h-$TRIPLE.exe"
     done ;;
   *-linux-*)
     mkdir -p src-tauri/binaries
     cargo build --release --locked --manifest-path src-tauri/voice-win/Cargo.toml --target "$TRIPLE"
-    cp "src-tauri/voice-win/target/$TRIPLE/release/roamies-voice" "src-tauri/binaries/roamies-voice-$TRIPLE" ;;
+    cp "src-tauri/voice-win/target/$TRIPLE/release/clanky-voice" "src-tauri/binaries/clanky-voice-$TRIPLE" ;;
 esac
 cd src-tauri
 # macOS signing: APPLE_SIGNING_IDENTITY if set, else the first Developer ID Application certificate in

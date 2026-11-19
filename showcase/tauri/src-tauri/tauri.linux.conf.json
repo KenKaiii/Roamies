@@ -1,8 +1,8 @@
 {
   "bundle": {
     "externalBin": [
-      "binaries/roamies-voice",
-      "binaries/roamies-node"
+      "binaries/clanky-voice",
+      "binaries/clanky-node"
     ],
     "linux": {
       "appimage": {

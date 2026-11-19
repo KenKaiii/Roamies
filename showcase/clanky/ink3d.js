@@ -3,7 +3,7 @@
 // levels, so a model looks like the rest of it. A part can move (spin, orbit, slide, pulse) to show how a thing works.
 // ink.js draws the cells inside a card. No dependencies.
 (() => {
-  const R = window.Roamie;
+  const R = window.Clanky;
   if (!R || typeof document === 'undefined') return;
   const B4 = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
   const TONE_K = { white: 1.08, accent: 1, teal: 1, sky: 0.95, lime: 0.95, amber: 0.92, lilac: 0.88, coral: 0.85, red: 0.8 };

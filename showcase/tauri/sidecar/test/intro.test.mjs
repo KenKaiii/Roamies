@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { QUESTIONS, opener, openNote, answerNote, answerTurn, wantsSkip, endsChat, questionIn, splitTurn, plain, stripNote } from '../intro.mjs';
 
 assert.equal(QUESTIONS, 4);
-assert.match(opener('Ken'), /^Hi Ken, I'm Roamie!.*four quick questions\. What are you working on these days\?$/);
+assert.match(opener('Ken'), /^Hi Ken, I'm Clanky!.*four quick questions\. What are you working on these days\?$/);
 assert.match(opener('Ken', 'Sarah'), /^Hi Ken, I'm Sarah! /, "each look says its own name");
 assert.ok(!/[—–]| - /.test(opener('Ken')), 'no dashes in the opener');
 assert.match(openNote('Ken'), /word for word.*"\[wave\] Hi Ken/s);
@@ -36,8 +36,8 @@ assert.equal(questionIn(`${'a'.repeat(120)}?`), 'Type your answer…', 'too long
 assert.equal(questionIn('VS Code, nice. 😄 What\'s the actual thing you\'re going for right now? Could be X.'), "What's the actual thing you're going for right now?", 'no emoji in front');
 assert.equal(questionIn("100k by summer, love it! Okay, last one: have you used AI helpers before, like ChatGPT, Claude, Gemini, an AI that does things on your computer, or none yet?"), 'Have you used AI helpers before?', 'long question cut to its core');
 // The guide window shows the reaction, the question as the heading, and the nudge after it.
-assert.deepEqual(splitTurn("[wave] Hi Ken, I'm Roamies! I've got four quick questions. What are you working on these days?"),
-  { lead: "Hi Ken, I'm Roamies! I've got four quick questions.", question: 'What are you working on these days?', hint: '' });
+assert.deepEqual(splitTurn("[wave] Hi Ken, I'm Clanky! I've got four quick questions. What are you working on these days?"),
+  { lead: "Hi Ken, I'm Clanky! I've got four quick questions.", question: 'What are you working on these days?', hint: '' });
 assert.deepEqual(splitTurn('[warm] Night shifts and exam prep, wow. What does a normal week look like? Could be the hospital, Anki, or something else entirely.'),
   { lead: 'Night shifts and exam prep, wow.', question: 'What does a normal week look like?', hint: 'Could be the hospital, Anki, or something else entirely.' });
 assert.deepEqual(splitTurn('Okay, last one: have you used AI helpers before?'), { lead: '', question: 'Okay, last one: have you used AI helpers before?', hint: '' });
@@ -51,8 +51,8 @@ console.log('intro tests: passed');
   const { DrawArgs, checkDraw } = await import('../draw.mjs');
   assert.equal(goalFrom([{ text: 'Is a YouTuber' }, { text: 'Wants to launch a course by March' }]), 'Wants to launch a course by March');
   assert.equal(goalFrom([{ text: 'Likes coffee' }]), null);
-  const withGoal = tourBeats('Ken', 'Roamie', 'Wants to launch a course by March');
-  const without = tourBeats('Ken', 'Roamie', null, { mac: false });
+  const withGoal = tourBeats('Ken', 'Clanky', 'Wants to launch a course by March');
+  const without = tourBeats('Ken', 'Clanky', null, { mac: false });
   for (const beats of [withGoal, without]) { assert.ok(DrawArgs.safeParse({ beats }).success, 'the tour fits the draw schema'); assert.deepEqual(checkDraw({ beats }), []); }
   assert.equal(withGoal.at(-1).marks[0].kind, 'medal');
   assert.ok(!without.some((b) => b.marks.some((m) => m.kind === 'medal')), 'no goal, no medal');

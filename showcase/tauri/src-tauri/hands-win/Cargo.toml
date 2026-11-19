@@ -1,8 +1,8 @@
-# Hands helper for Roamies on Windows (the twin of hands/main.swift on macOS): the same commands and the same
-# JSON. Built by build.sh and bundled as binaries/roamies-hands-<target>.exe. Only logic.rs builds elsewhere,
+# Hands helper for Clanky on Windows (the twin of hands/main.swift on macOS): the same commands and the same
+# JSON. Built by build.sh and bundled as binaries/clanky-hands-<target>.exe. Only logic.rs builds elsewhere,
 # so `cargo test` runs its checks on any system.
 [package]
-name = "roamies-hands"
+name = "clanky-hands"
 version = "0.1.0"
 edition = "2021"
 license = "AGPL-3.0-only"
