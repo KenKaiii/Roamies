@@ -20,6 +20,11 @@
   <a href="https://www.kenkais.com"><img src="https://img.shields.io/badge/Website-kenkais.com-78ffe2?style=for-the-badge" alt="kenkais.com"></a>
 </p>
 
+> [!NOTE]
+> **Clanky** is a modified fork of [KenKaiii/Roamies](https://github.com/KenKaiii/Roamies), maintained by
+> [Prathu3110](https://github.com/Prathu3110). It is licensed under AGPL-3.0, like the original. See
+> [docs/CLANKY_PLAN.md](docs/CLANKY_PLAN.md) for what changes. The rest of this README describes upstream Roamies.
+
 Roamies is a little AI buddy that lives on your desktop. It stays by your cursor, talks back in its own
 voice, keeps track of what you said you'd do and nudges you when it's due.
 
