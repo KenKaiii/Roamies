@@ -1581,6 +1581,13 @@ fn log_path(home: &std::path::Path, name: &str) -> Option<PathBuf> {
     if !data.exists() && (old.join("sidekick").exists() || old.join("sidekick.json").exists()) {
         return Some(old.join(name));
     }
+    // Clanky: ~/Roamies/Data until the sidecar renames it to ~/Clanky (datadir.mjs); open logs move with it.
+    let pre = home.join("Roamies").join("Data");
+    if !data.exists() && pre.is_dir() {
+        let logs = pre.join("logs");
+        std::fs::create_dir_all(&logs).ok()?;
+        return Some(logs.join(name));
+    }
     let logs = data.join("logs");
     std::fs::create_dir_all(&logs).ok()?;
     Some(logs.join(name))
@@ -2008,6 +2015,10 @@ mod tests {
         let fresh = home.join("fresh");
         std::fs::create_dir_all(&fresh).unwrap();
         assert_eq!(log_path(&fresh, "sidekick-voice.log"), Some(fresh.join("Clanky").join("Data").join("logs").join("sidekick-voice.log")), "a fresh install");
+        let renamed = home.join("renamed");
+        std::fs::create_dir_all(renamed.join("Roamies").join("Data")).unwrap();
+        assert_eq!(log_path(&renamed, "sidekick.log"), Some(renamed.join("Roamies").join("Data").join("logs").join("sidekick.log")), "before ~/Roamies moves");
+        assert!(!renamed.join("Clanky").exists(), "~/Clanky isn't made early, so the sidecar's move still happens");
         let _ = std::fs::remove_dir_all(&home);
     }
 }
