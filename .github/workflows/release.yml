@@ -165,10 +165,12 @@ jobs:
           if (-not $app) { throw 'roamies.exe is not where the installer puts it' }
           $dir = $app.DirectoryName
           "Installed in $dir"
-          $missing = @('roamies-node.exe', 'roamies-voice.exe', 'roamies-hands.exe', 'sidecar/sidekick.mjs', 'msvcp140.dll', 'msvcp140_1.dll', 'vcruntime140.dll', 'vcruntime140_1.dll') | Where-Object { -not (Test-Path (Join-Path $dir $_)) }
+          $missing = @('roamies-node.exe', 'roamies-voice.exe', 'roamies-hands.exe', 'sidecar/sidekick.mjs', 'msvcp140.dll', 'msvcp140_1.dll', 'vcruntime140.dll', 'vcruntime140_1.dll', 'onnxruntime.dll') | Where-Object { -not (Test-Path (Join-Path $dir $_)) }
           if ($missing) { throw "The installed app is missing: $($missing -join ', ')" }
           & (Join-Path $dir 'roamies-hands.exe') --self-test
           if ($LASTEXITCODE) { throw "The installed hands helper failed its self-test ($LASTEXITCODE)" }
+          $ort = & (Join-Path $dir 'roamies-voice.exe') --test-ort
+          if ($LASTEXITCODE) { throw "The installed voice helper couldn't run ONNX Runtime: $ort" }
           $perms = & (Join-Path $dir 'roamies-voice.exe') --perms
           if (-not ($perms -match '"type":"perms"')) { throw "The installed voice helper didn't start: $perms" }
           # Voice off so the first run doesn't download the voice model.

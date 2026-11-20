@@ -9,7 +9,9 @@ license = "AGPL-3.0-only"
 publish = false
 
 [dependencies]
-parakeet-rs = "=0.4.3"
+# ONNX Runtime is loaded at run time from Microsoft's build (fetch-onnxruntime.sh), not linked from ort's prebuilt
+# one, which needs AVX2 and crashes on older CPUs (#128).
+parakeet-rs = { version = "=0.4.3", default-features = false, features = ["cpu", "load-dynamic", "api-28"] }
 serde_json = "=1.0.154"
 hound = "=3.5.1"
 

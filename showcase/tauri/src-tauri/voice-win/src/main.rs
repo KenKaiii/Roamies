@@ -11,6 +11,9 @@
 // "Hey Roamies" (wake.rs); hearing it starts a hands-free take. Exits when stdin closes.
 //
 // roamies-voice --model <dir> [--chord control,option]   normal use (Roamies starts it)
+// roamies-voice … --ort <library>                          ONNX Runtime to load (default: the one beside this helper,
+//                                                         or ORT_DYLIB_PATH; fetch-onnxruntime.sh puts it in place)
+// roamies-voice --test-ort                                loads ONNX Runtime and runs a tiny model: {"type":"ort",…}
 // roamies-voice --perms                                   prints {"type":"perms","mic":…}
 // roamies-voice --devices                                 prints {"type":"devices",…}: every mic, the default, formats
 // roamies-voice --model <dir> --transcribe <wav>          dev: transcribe a file and exit
@@ -21,6 +24,7 @@
 mod audio;
 mod ink;
 mod keys;
+mod onnx;
 mod wake;
 
 use audio::{MicError, Sink, Source};
@@ -77,7 +81,7 @@ fn load_model(dir: &Path) -> Result<ParakeetTDT, String> {
     // Half the cores: quick enough to read a minute of speech in a second or two, without starving the PC.
     let threads = thread::available_parallelism().map(|n| n.get() / 2).unwrap_or(2).clamp(1, 8);
     let t0 = Instant::now();
-    let env = parakeet_rs::ort::init().with_name("roamies-voice").build().map_err(|e| e.to_string())?;
+    let env = onnx::environment()?;
     let config = ExecutionConfig::new().with_environment(env).with_intra_threads(threads);
     let mut asr = ParakeetTDT::from_pretrained(dir, Some(config)).map_err(|e| e.to_string())?;
     // One short warm-up run, so the first real request doesn't pay for ONNX Runtime's setup.
@@ -912,6 +916,17 @@ fn main() {
         let mut v = audio::devices();
         v["mic_allowed"] = json!(keys::mic_allowed());
         emit(v);
+        return;
+    }
+    onnx::set_path(arg(&args, "--ort").map(PathBuf::from));
+    if args.iter().any(|a| a == "--test-ort") {
+        match onnx::self_check() {
+            Ok(v) => emit(v),
+            Err(e) => {
+                emit(json!({ "type": "ort", "ok": false, "error": e }));
+                std::process::exit(1);
+            }
+        }
         return;
     }
     let model = arg(&args, "--model").map(PathBuf::from);

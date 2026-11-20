@@ -1,5 +1,8 @@
 {
   "bundle": {
+    "resources": {
+      "onnxruntime/libonnxruntime.so": "libonnxruntime.so"
+    },
     "externalBin": [
       "binaries/roamies-voice",
       "binaries/roamies-node"

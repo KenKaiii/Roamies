@@ -47,6 +47,11 @@ pub(crate) fn start_voice(app: &AppHandle) {
     if let Some(dir) = app.state::<VoiceModel>().0.lock().unwrap().clone() {
         cmd.arg("--model").arg(dir);
     }
+    // Microsoft's ONNX Runtime, bundled as a resource (fetch-onnxruntime.sh); the helper loads it at run time.
+    #[cfg(any(windows, target_os = "linux"))]
+    if let Ok(dir) = app.path().resource_dir() {
+        cmd.arg("--ort").arg(dir.join(if cfg!(windows) { "onnxruntime.dll" } else { "libonnxruntime.so" }));
+    }
     // Debug builds: ROAMIES_TEST_AUDIO=<wav> stands in for the microphone, to test talking with no mic (CI, Docker).
     #[cfg(debug_assertions)]
     if let Some(wav) = std::env::var_os("ROAMIES_TEST_AUDIO") {

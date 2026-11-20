@@ -100,6 +100,26 @@ jobs:
         if: runner.os == 'Windows'
         run: cargo test --release --locked --manifest-path src-tauri/voice-win/Cargo.toml --target x86_64-pc-windows-msvc
 
+      # The voice helper loads Microsoft's ONNX Runtime and runs a tiny model with it (--test-ort), without the speech
+      # model. On Windows also on an emulated CPU without AVX2 (Intel SDE, Sandy Bridge), where the prebuilt ONNX
+      # Runtime it used to link crashed at start (#128).
+      - name: Test ONNX Runtime in the Linux voice helper
+        if: runner.os == 'Linux'
+        run: src-tauri/binaries/roamies-voice-x86_64-unknown-linux-gnu --test-ort --ort "$PWD/src-tauri/onnxruntime/libonnxruntime.so"
+
+      - name: Test ONNX Runtime in the Windows voice helper, natively and without AVX2
+        if: runner.os == 'Windows'
+        run: |
+          helper=src-tauri/binaries/roamies-voice-x86_64-pc-windows-msvc.exe
+          ort="$(cygpath -w "$PWD/src-tauri/onnxruntime/onnxruntime.dll")"
+          "$helper" --test-ort --ort "$ort"
+          tmp="$(cygpath -u "$RUNNER_TEMP")"
+          sde=sde-external-9.58.0-2025-06-16-win
+          curl -fsSL --retry 3 -o "$tmp/sde.tar.xz" "https://downloadmirror.intel.com/859732/$sde.tar.xz"
+          echo "ebb8b3b63fcb0b6c1f9721118ba4883703d2aed9e0db2defed4e44fba78d9ca9  $tmp/sde.tar.xz" | sha256sum -c -
+          tar -xJf "$tmp/sde.tar.xz" -C "$tmp"
+          "$tmp/$sde/sde.exe" -snb -- "$helper" --test-ort --ort "$ort"
+
       # The Windows hands helper's logic (logic.rs) builds and is tested anywhere.
       - name: Test the hands helper's logic
         if: runner.os != 'Windows'

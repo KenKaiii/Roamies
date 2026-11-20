@@ -2,7 +2,8 @@
 // in for the microphone. "Hey Roamies, what time is it?" has to start a take by itself and send only the request;
 // other talk must not wake it. Needs the speech model and a voice to say the lines, so it's run by hand:
 //   ROAMIES_VOICE_MODEL=<model dir> cargo test --features e2e --test wake_e2e -- --ignored --nocapture
-// (add --release on Windows and Linux; on macOS only the debug build links). The lines are spoken with macOS `say`;
+// (add --release on Windows and Linux; ORT_DYLIB_PATH=<the library fetch-onnxruntime.sh fetched>, unless it's beside
+// the helper). The lines are spoken with macOS `say`;
 // elsewhere set ROAMIES_WAKE_WAV and ROAMIES_OTHER_WAV to 16 kHz mono WAVs of them.
 
 use std::io::{BufRead, BufReader};

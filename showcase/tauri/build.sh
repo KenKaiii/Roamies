@@ -15,6 +15,8 @@ TARGET=""; prev=""; for a in "$@"; do [ "$prev" = "--target" ] && TARGET="$a"; p
 # builds its Swift twins in build.rs. Linux has the voice helper only (the same Rust one as Windows).
 # Always optimised: a debug voice build is far too slow at reading speech.
 TRIPLE="${TARGET:-$(rustc -vV | sed -n 's/^host: //p')}"
+# The voice helper loads Microsoft's ONNX Runtime, shipped beside it (fetch-onnxruntime.sh says why).
+case "$TRIPLE" in *-windows-*|*-linux-*) ./fetch-onnxruntime.sh "$TRIPLE" ;; esac
 case "$TRIPLE" in
   *-windows-*)
     mkdir -p src-tauri/binaries
