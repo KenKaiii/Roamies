@@ -4,7 +4,7 @@
       "version": null,
       "date": "2026-11-20",
       "items": [
-        { "kind": "fixed", "title": "Voice on older PCs", "text": "On PCs without AVX2, like an i5-2400, voice crashed at start. It works now. Thanks Harry and waningeplayz!" },
+        { "kind": "fixed", "title": "Voice on older PCs", "text": "Voice crashed at start on PCs without AVX2. It works now. Thanks Harry and waningeplayz!" },
         { "kind": "fixed", "title": "New look, new name", "text": "After switching looks mid chat, I could still think I was the old one. Not anymore." },
         { "kind": "fixed", "title": "ChatGPT running out fast", "text": "ChatGPT gives me a small share of your plan at first. I now show you where to raise it." },
         { "kind": "fixed", "title": "Time to read", "text": "Cards and replies vanished too fast. They stay long enough to read now. Thanks!" },
