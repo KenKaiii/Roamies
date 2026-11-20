@@ -27,7 +27,7 @@ assert.equal(readSecs([{ kind: 'card', text: Array(66).fill('word').join(' ') }]
 assert.equal(readSecs([{ kind: 'ring', at: { text: 'Save button here' } }]), 0, 'screen marks are not read');
 assert.equal(readSecs([{ kind: 'photo', query: 'black hole accretion disk image', caption: 'A disk' }]), 3, 'names and searches are not read');
 const ink = readFileSync(new URL('../../../roamies/ink.js', import.meta.url), 'utf8');
-assert.match(ink, /if \(b\.read && !voiced\) \{\n\s+await until_\(t0 \+ Math\.max\(dur, b\.read\), gen\);/, 'the overlay holds a written deep card for its read time');
+assert.match(ink, /if \(b\.read && !voiced\) \{\r?\n\s+await until_\(t0 \+ Math\.max\(dur, b\.read\), gen\);/, 'the overlay holds a written deep card for its read time');
 assert.match(ink, /now\(\) - held < 60 && G\.ptr && mine\(\)\.some/, 'and while the pointer rests on it, up to a minute');
 // The voice: drawings follow the audio actually played, and wait up to 8 s for a slow voice to start.
 assert.match(ink, /if \(\(V\.played\(\) - clock\.P\) \* cps\(\) >= chars\) return;/);
