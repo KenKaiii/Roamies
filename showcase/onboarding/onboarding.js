@@ -736,6 +736,7 @@
     record(which) {
       if (keys.recording) keys.stop();
       keys.recording = which;
+      send({ type: 'keys_capture', on: true }); // Roamies lets go of its shortcuts so the new keys reach this page
       $('keys-error').hidden = true;
       $(`${which}-caps`).textContent = 'Press keys…';
       $(`${which}-caps`).parentElement.classList.add('recording');
@@ -745,7 +746,7 @@
     stop() {
       const w = keys.recording;
       keys.recording = null;
-      if (w) { $(`${w}-caps`).parentElement.classList.remove('recording'); $(`${w}-change`).textContent = 'Change'; }
+      if (w) { $(`${w}-caps`).parentElement.classList.remove('recording'); $(`${w}-change`).textContent = 'Change'; send({ type: 'keys_capture', on: false }); }
       poseFn = null;
       keys.render();
     },
