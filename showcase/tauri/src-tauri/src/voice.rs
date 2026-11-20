@@ -11,12 +11,16 @@ static SUMMON_ID: AtomicU32 = AtomicU32::new(0);
 /// Id of the registered "ask about an area" hotkey.
 static SNAP_ID: AtomicU32 = AtomicU32::new(0);
 static LIST_ID: AtomicU32 = AtomicU32::new(0);
+/// Id of the "start or stop recording" hotkey (Windows: Record on the Listening page).
+static RECORD_ID: AtomicU32 = AtomicU32::new(0);
+/// The panel is waiting for new shortcut keys: every Roamies hotkey is let go so the keys reach it.
+pub(crate) static HOTKEYS_PAUSED: AtomicBool = AtomicBool::new(false);
 /// Id of the Esc hotkey, held only while the Roamie is on screen (0 when it isn't).
 static ESC_ID: AtomicU32 = AtomicU32::new(0);
 
 thread_local! {
     // The hotkey manager must live on the main thread; it also owns the current show/hide hotkey.
-    static HOTKEYS: RefCell<Option<(global_hotkey::GlobalHotKeyManager, [Option<global_hotkey::hotkey::HotKey>; 3])>> = const { RefCell::new(None) };
+    static HOTKEYS: RefCell<Option<(global_hotkey::GlobalHotKeyManager, [Option<global_hotkey::hotkey::HotKey>; 4])>> = const { RefCell::new(None) };
     // The overlays that have the Roamie (or its card, or its ask field) on screen right now.
     static ESC_UP: RefCell<std::collections::HashSet<String>> = RefCell::new(std::collections::HashSet::new());
 }
@@ -129,7 +133,7 @@ fn cancel_voice(app: &AppHandle) {
 pub(crate) fn init_hotkeys(app: &AppHandle) {
     use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
     match GlobalHotKeyManager::new() {
-        Ok(m) => HOTKEYS.with(|h| *h.borrow_mut() = Some((m, [None, None, None]))),
+        Ok(m) => HOTKEYS.with(|h| *h.borrow_mut() = Some((m, [None, None, None, None]))),
         Err(e) => return eprintln!("hotkeys unavailable: {e}"),
     }
     let app = app.clone();
@@ -140,6 +144,7 @@ pub(crate) fn init_hotkeys(app: &AppHandle) {
         let summon = e.id() == SUMMON_ID.load(Ordering::Relaxed);
         let snap = e.id() == SNAP_ID.load(Ordering::Relaxed);
         let list = e.id() == LIST_ID.load(Ordering::Relaxed);
+        let record = e.id() == RECORD_ID.load(Ordering::Relaxed);
         let esc = e.id() != 0 && e.id() == ESC_ID.load(Ordering::Relaxed);
         if esc {
             // The panel has the keyboard: Esc closes it, as it would without this hotkey.
@@ -154,7 +159,7 @@ pub(crate) fn init_hotkeys(app: &AppHandle) {
             });
             return;
         }
-        if !summon && !snap && !list {
+        if !summon && !snap && !list && !record {
             return;
         }
         let app2 = app.clone();
@@ -165,6 +170,8 @@ pub(crate) fn init_hotkeys(app: &AppHandle) {
                 to_overlays(&app2, &json!({ "kind": "summon" }));
             } else if list {
                 to_sidecar(&app2, &json!({ "type": "show_list" }));
+            } else if record {
+                to_sidecar(&app2, &json!({ "type": "record_toggle" }));
             } else {
                 to_sidecar(&app2, &json!({ "type": "snap" }));
             }
@@ -172,12 +179,12 @@ pub(crate) fn init_hotkeys(app: &AppHandle) {
     }));
 }
 
-/// Swaps one global shortcut (0 = show/hide, 1 = ask about an area, 2 = show the list). On failure (bad format, or
+/// Swaps one global shortcut (0 = show/hide, 1 = ask about an area, 2 = show the list, 3 = start or stop recording). On failure (bad format, or
 /// another app owns it) the old one stays.
 pub(crate) fn set_hotkey(slot: usize, accel: &str) -> Result<(), String> {
     use global_hotkey::hotkey::HotKey;
     let new: HotKey = accel.parse().map_err(|e| format!("{e}"))?;
-    let id_slot = [&SUMMON_ID, &SNAP_ID, &LIST_ID][slot];
+    let id_slot = [&SUMMON_ID, &SNAP_ID, &LIST_ID, &RECORD_ID][slot];
     HOTKEYS.with(|h| {
         let mut h = h.borrow_mut();
         let Some((manager, keys)) = h.as_mut() else { return Err("hotkeys unavailable".to_string()) };
@@ -205,6 +212,33 @@ pub(crate) fn set_hotkey(slot: usize, accel: &str) -> Result<(), String> {
             }
         }
     })
+}
+
+/// While the panel waits for new shortcut keys, every Roamies hotkey (and Esc) is let go, so pressing the current keys
+/// changes them instead of running them, and Esc reaches the panel to cancel. The talk chord and the type-to-ask tap
+/// pause too. Must run on the main thread.
+pub(crate) fn pause_hotkeys(app: &AppHandle, on: bool) {
+    use global_hotkey::hotkey::{Code, HotKey};
+    if HOTKEYS_PAUSED.swap(on, Ordering::Relaxed) == on {
+        return;
+    }
+    HOTKEYS.with(|h| {
+        let mut h = h.borrow_mut();
+        let Some((manager, keys)) = h.as_mut() else { return };
+        let esc = (ESC_ID.load(Ordering::Relaxed) != 0).then(|| HotKey::new(None, Code::Escape));
+        for key in keys.iter().flatten().chain(esc.iter()) {
+            let _ = if on { manager.unregister(*key) } else { manager.register(*key) };
+        }
+    });
+    to_voice(app, &json!({ "cmd": "keys_paused", "on": on }));
+}
+
+/// Ends picking new keys from any thread: the panel or the setup guide closed part way through.
+pub(crate) fn resume_hotkeys(app: &AppHandle) {
+    if HOTKEYS_PAUSED.load(Ordering::Relaxed) {
+        let app2 = app.clone();
+        let _ = app.run_on_main_thread(move || pause_hotkeys(&app2, false));
+    }
 }
 
 /// Esc stops the Roamie's answer, or sends it away when it's idle (overlay host.js decides which). Global, so it
@@ -266,6 +300,17 @@ fn handle_voice(app: &AppHandle, msg: Value) {
         app.state::<Voice>().1.store(0, Ordering::Relaxed);
         // A started (or restarted) helper doesn't know the picked mic yet: the sidecar sends it again.
         to_sidecar(app, &json!({ "type": "voice_ready" }));
+        return;
+    }
+    // Windows: a finished chunk of call audio (a WAV file, voice-win/src/call.rs) or whether recording is on. Both go to the
+    // sidecar only, never to the setup guide; the sidecar checks the file's place and name before it reads or deletes it.
+    if matches!(msg.get("type").and_then(Value::as_str), Some("call_chunk" | "call_state")) {
+        if !ONBOARDING.load(Ordering::Relaxed) {
+            let kind = if msg.get("type").and_then(Value::as_str) == Some("call_chunk") { "voice_call_chunk" } else { "voice_call_state" };
+            let mut out = msg.clone();
+            out["type"] = json!(kind);
+            to_sidecar(app, &out);
+        }
         return;
     }
     // Windows: the pen trail while circling something (voice-win/src/ink.rs); the overlays draw it, also during setup.

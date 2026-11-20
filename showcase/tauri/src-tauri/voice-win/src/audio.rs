@@ -54,14 +54,21 @@ pub struct Sink {
     channels: usize,
     mono: Vec<f32>,
     out: Vec<f32>,
+    /// System audio (a call): no level events, since those drive the talk session, and its failures are its own.
+    call: bool,
 }
 
 impl Sink {
     pub fn new(buf: Arc<Mutex<Vec<f32>>>, tx: Sender<Ev>) -> Self {
-        Sink { buf, tx, resampler: None, channels: 1, mono: Vec::new(), out: Vec::new() }
+        Sink { buf, tx, resampler: None, channels: 1, mono: Vec::new(), out: Vec::new(), call: false }
     }
 
-    fn start(&mut self, rate: u32, channels: usize) {
+    /// A sink for system audio: only fills the buffer.
+    pub fn call(buf: Arc<Mutex<Vec<f32>>>, tx: Sender<Ev>) -> Self {
+        Sink { call: true, ..Sink::new(buf, tx) }
+    }
+
+    pub(crate) fn start(&mut self, rate: u32, channels: usize) {
         self.resampler = Some(Resampler::new(rate));
         self.channels = channels.max(1);
     }
@@ -82,7 +89,9 @@ impl Sink {
             r.push(&self.mono, &mut self.out);
         }
         self.buf.lock().unwrap().extend_from_slice(&self.out);
-        let _ = self.tx.send(Ev::Level(level));
+        if !self.call {
+            let _ = self.tx.send(Ev::Level(level));
+        }
     }
 }
 
@@ -133,6 +142,14 @@ pub struct Source {
     #[cfg(any(windows, target_os = "linux"))]
     _stream: Option<cpal::Stream>,
     stop: Arc<AtomicBool>,
+}
+
+impl Source {
+    /// A capture run by threads of its own, which stop when `stop` is set.
+    #[cfg(windows)]
+    pub(crate) fn detached(stop: Arc<AtomicBool>) -> Self {
+        Source { _stream: None, stop }
+    }
 }
 
 impl Drop for Source {
@@ -254,9 +271,37 @@ pub fn has_input() -> bool {
     false
 }
 
+/// The default (or picked) microphone.
 #[cfg(any(windows, target_os = "linux"))]
-pub fn open_mic(mut sink: Sink) -> Result<Source, MicError> {
-    use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+pub fn open_mic(sink: Sink) -> Result<Source, MicError> {
+    use cpal::traits::HostTrait;
+    // The picked mic while it's plugged in, else the default.
+    let host = cpal::default_host();
+    let chosen = CHOSEN.lock().unwrap().clone();
+    let picked = chosen.and_then(|want| host.input_devices().ok()?.find(|d| name_of(d).as_deref() == Some(want.as_str())));
+    let dev = picked.or_else(|| host.default_input_device()).ok_or_else(|| MicError::new("missing", "no default input device"))?;
+    let supported = cpal::traits::DeviceTrait::default_input_config(&dev).map_err(open_failed)?;
+    open_stream(dev, supported, sink, "microphone")
+}
+
+/// What the PC is playing (the other people in a call, a video, music), through WASAPI loopback on the default output
+/// device. cpal turns an input stream on an output device into a loopback capture. Windows only.
+#[cfg(windows)]
+pub fn open_loopback(sink: Sink) -> Result<Source, MicError> {
+    use cpal::traits::{DeviceTrait, HostTrait};
+    let dev = cpal::default_host().default_output_device().ok_or_else(|| MicError::new("missing", "no default output device"))?;
+    let supported = dev.default_output_config().map_err(open_failed)?;
+    open_stream(dev, supported, sink, "system audio")
+}
+
+#[cfg(not(windows))]
+pub fn open_loopback(_sink: Sink) -> Result<Source, MicError> {
+    Err(MicError::new("failed", "hearing system audio is only available on Windows"))
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+fn open_stream(dev: cpal::Device, supported: cpal::SupportedStreamConfig, mut sink: Sink, what: &str) -> Result<Source, MicError> {
+    use cpal::traits::{DeviceTrait, StreamTrait};
     use cpal::{FromSample, SampleFormat, SizedSample, I24, U24};
 
     fn build<T>(dev: &cpal::Device, cfg: cpal::StreamConfig, mut sink: Sink, err_tx: Sender<Ev>) -> Result<cpal::Stream, cpal::Error>
@@ -265,6 +310,7 @@ pub fn open_mic(mut sink: Sink) -> Result<Source, MicError> {
         f32: FromSample<T>,
     {
         let mut tmp = Vec::new();
+        let call = sink.call;
         dev.build_input_stream::<T, _, _>(
             cfg,
             move |data: &[T], _| {
@@ -274,19 +320,13 @@ pub fn open_mic(mut sink: Sink) -> Result<Source, MicError> {
             },
             move |e| {
                 if let Some(p) = mic_problem(&e, false) {
-                    let _ = err_tx.send(Ev::AudioFailed(p));
+                    let _ = err_tx.send(if call { Ev::CallFailed(p) } else { Ev::AudioFailed(p) });
                 }
             },
             None,
         )
     }
 
-    // The picked mic while it's plugged in, else the default.
-    let host = cpal::default_host();
-    let chosen = CHOSEN.lock().unwrap().clone();
-    let picked = chosen.and_then(|want| host.input_devices().ok()?.find(|d| name_of(d).as_deref() == Some(want.as_str())));
-    let dev = picked.or_else(|| host.default_input_device()).ok_or_else(|| MicError::new("missing", "no default input device"))?;
-    let supported = dev.default_input_config().map_err(open_failed)?;
     sink.start(supported.sample_rate(), supported.channels() as usize);
     let err_tx = sink.tx.clone();
     let format = supported.sample_format();
@@ -308,7 +348,7 @@ pub fn open_mic(mut sink: Sink) -> Result<Source, MicError> {
     }
     .map_err(open_failed)?;
     stream.play().map_err(open_failed)?;
-    log("microphone on");
+    log(&format!("{what} on"));
     Ok(Source { _stream: Some(stream), stop: Arc::new(AtomicBool::new(false)) })
 }
 

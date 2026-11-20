@@ -381,3 +381,27 @@ html, body { height: 100%; background: transparent; }
 
 /* Arabic and Hebrew in a list (dir=auto on the text): the Arabic font first, for its own word spacing. */
 .item .text:dir(rtl) { font-family: "Roamies Arabic RTL", var(--mono); }
+
+/* ---------- Record (Windows): the switch, what to record, the models, past recordings ---------- */
+/* While recording, a blinking square sits before "Record" (the tray icon turns red too). */
+.setting.live > span::before {
+  content: ''; display: inline-block; width: 8px; height: 8px; margin-inline-end: 8px; background: var(--danger);
+  animation: rec-blink 1s steps(2, start) infinite;
+}
+@keyframes rec-blink { to { visibility: hidden; } }
+@media (prefers-reduced-motion: reduce) { .setting.live > span::before { animation: none; } }
+.rec-apps { display: grid; gap: 6px; padding-inline-start: 12px; border-inline-start: 1px dashed var(--line); }
+.rec-meter { position: relative; height: 18px; border: 1px solid var(--line-hi); }
+.rec-meter > span { position: absolute; inset: 0 auto 0 0; background: var(--line-hi); }
+.rec-meter > small { position: relative; display: block; padding: 0 6px; font: 500 var(--t-small)/16px var(--mono); color: var(--ink); }
+.rec-find { align-items: center; gap: 12px; }
+.rec-list { margin: 0; padding: 0; list-style: none; display: grid; }
+.rec-item { display: grid; gap: 6px; padding: 10px 0; border-bottom: 1px dashed var(--line); }
+.rec-item:last-child { border-bottom: 0; }
+.rec-top { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 12px; }
+.rec-top b { display: block; font: 700 var(--t-body)/1.35 var(--mono); color: var(--ink); overflow-wrap: anywhere; }
+.rec-top small { display: block; font-size: var(--t-small); line-height: 1.35; color: var(--ink-3); }
+.rec-points { margin: 0; padding-inline-start: 1.2em; font-size: var(--t-small); line-height: 1.45; color: var(--ink-2); }
+.rec-lines summary { cursor: pointer; font-size: var(--t-small); color: var(--accent); }
+.rec-lines p { margin: 6px 0 0; font-size: var(--t-small); line-height: 1.45; color: var(--ink-2); overflow-wrap: anywhere; }
+.rec-lines time { font: 500 var(--t-small) var(--mono); color: var(--ink-3); }

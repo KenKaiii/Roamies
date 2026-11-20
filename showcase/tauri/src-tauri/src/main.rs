@@ -28,7 +28,7 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder, Wry};
 
 use sidecar::spawn_sidecar;
-use voice::{init_hotkeys, set_esc, set_hotkey, start_voice, stop_voice, to_voice, voice_binary};
+use voice::{init_hotkeys, pause_hotkeys, resume_hotkeys, set_esc, set_hotkey, start_voice, stop_voice, to_voice, voice_binary, HOTKEYS_PAUSED};
 
 static GENERATION: AtomicUsize = AtomicUsize::new(0);
 /// The overlay window the sidekick lives in. It moves to whichever screen the cursor is on.
@@ -746,6 +746,7 @@ const PANEL_H: f64 = 560.0;
 /// Plays the panel's close animation, then hides it (unless it was opened again meanwhile). why: what closed it,
 /// for the log (blur, icon, esc, panel).
 pub(crate) fn hide_panel(app: &AppHandle, why: &'static str) {
+    resume_hotkeys(app);
     let Some(w) = app.get_webview_window(PANEL_LABEL) else { return };
     if !w.is_visible().unwrap_or(false) || PANEL_CLOSING.swap(true, Ordering::SeqCst) {
         return;
@@ -890,6 +891,26 @@ fn set_panel_position(w: &WebviewWindow, x: f64, y: f64, s: f64) {
 }
 // The scale of the screen the menu bar icon is on (1 when it can't be read). Looked up in pixels, an icon on a
 // Retina screen matched the screen to its right, or none at all.
+/// The app icon with its red and green swapped: the green Roamie turns red while Record is on.
+#[cfg(not(target_os = "macos"))]
+fn red_icon(icon: &tauri::image::Image<'_>) -> tauri::image::Image<'static> {
+    let mut rgba = icon.rgba().to_vec();
+    for px in rgba.chunks_exact_mut(4) {
+        px.swap(0, 1);
+    }
+    tauri::image::Image::new_owned(rgba, icon.width(), icon.height())
+}
+
+/// The tray icon shows when Record is on (Windows and Linux; the Mac's menu bar icon is a template and stays as it is).
+fn set_tray_recording(app: &AppHandle, on: bool) {
+    let Some(tray) = app.tray_by_id("roamies") else { return };
+    #[cfg(not(target_os = "macos"))]
+    if let Some(icon) = app.default_window_icon() {
+        let _ = tray.set_icon(Some(if on { red_icon(icon) } else { icon.clone().to_owned() }));
+    }
+    let _ = tray.set_tooltip(Some(if on { "Roamies (recording)" } else { "Roamies" }));
+}
+
 #[cfg(target_os = "macos")]
 fn tray_scale(app: &AppHandle) -> f64 {
     use objc2::rc::Retained;
@@ -975,6 +996,7 @@ fn open_onboarding(app: &AppHandle, mode: Option<&str>) {
             w.on_window_event(move |e| {
                 if let tauri::WindowEvent::Destroyed = e {
                     ONBOARDING.store(false, Ordering::Relaxed);
+                    resume_hotkeys(&app2);
                     stop_perm_guide(&app2);
                     set_dock(&app2, false);
                     to_sidecar(&app2, &json!({ "type": "ob_closed" }));
@@ -1486,7 +1508,7 @@ fn pump_cursor(app: AppHandle) {
         // The type-to-ask shortcut: a quick tap of its two modifier keys. Not while the setup guide is open (its
         // Shortcuts step is where the pair is picked, and its chat has a field of its own).
         let chord = WRITE_CHORD.load(Ordering::Relaxed);
-        if chord != 0 && tap.step(chord, mods_down(), other_input_down, start.elapsed().as_millis() as u64) && !ONBOARDING.load(Ordering::Relaxed) {
+        if chord != 0 && !HOTKEYS_PAUSED.load(Ordering::Relaxed) && tap.step(chord, mods_down(), other_input_down, start.elapsed().as_millis() as u64) && !ONBOARDING.load(Ordering::Relaxed) {
             to_sidecar(&app, &json!({ "type": "write_tap" }));
         }
         // A drawing waits for a click: report each press (where, when) to the overlays, which check it hit the mark.
@@ -1793,7 +1815,7 @@ fn handle_sidecar(app: &AppHandle, msg: Value) {
         }
         Some("onboarding") => open_onboarding(app, msg.get("mode").and_then(Value::as_str)),
         Some("keybinds") => {
-            for (slot, which) in [(0usize, "summon"), (1, "snap"), (2, "list")] {
+            for (slot, which) in [(0usize, "summon"), (1, "snap"), (2, "list"), (3, "record")] {
                 if let Some(accel) = msg.get(which).and_then(Value::as_str) {
                     if let Err(e) = set_hotkey(slot, accel) {
                         eprintln!("{which} shortcut {accel}: {e}");
@@ -1838,6 +1860,8 @@ fn handle_sidecar(app: &AppHandle, msg: Value) {
         // Esc while it's listening: drop the take.
         Some("listen_cancel") => to_voice(app, &json!({ "cmd": "cancel" })),
         // Notch mode: the capsule at the notch shows the listening, so the pill by the cursor stays off.
+        Some("hotkeys_paused") => pause_hotkeys(app, msg.get("on").and_then(Value::as_bool) == Some(true)),
+        Some("recording") => set_tray_recording(app, msg.get("on").and_then(Value::as_bool) == Some(true)),
         Some("pill") => to_voice(app, &json!({ "cmd": "pill", "on": msg.get("on").and_then(Value::as_bool) != Some(false) })),
         // Whether any screen has a camera notch: the notch capsule is only offered then.
         Some("notch_screen") => to_sidecar(app, &json!({ "type": "notch_screen", "on": HAS_NOTCH.load(Ordering::SeqCst) })),
@@ -1859,6 +1883,11 @@ fn handle_sidecar(app: &AppHandle, msg: Value) {
                 to_voice(app, &json!({ "cmd": "wake", "on": wake }));
                 let name = msg.get("wakeName").and_then(Value::as_str).unwrap_or("");
                 to_voice(app, &json!({ "cmd": "wake_name", "word": name }));
+                // Record (Windows): what the PC plays, or only the picked apps (their process ids). Off unless the user turned it on.
+                let call = msg.get("call").and_then(Value::as_bool).unwrap_or(false);
+                let call_dir = msg.get("callDir").and_then(Value::as_str).unwrap_or("");
+                let apps = msg.get("callApps").filter(|a| a.is_array()).cloned().unwrap_or_else(|| json!([]));
+                to_voice(app, &json!({ "cmd": "call", "on": call, "dir": call_dir, "apps": apps }));
                 // The language takes are recognised in ("auto": the Mac's own language list). macOS helper only.
                 let lang = msg.get("lang").and_then(Value::as_str).unwrap_or("auto");
                 to_voice(app, &json!({ "cmd": "lang", "id": lang }));

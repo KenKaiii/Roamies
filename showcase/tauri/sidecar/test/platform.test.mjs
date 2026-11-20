@@ -1,7 +1,7 @@
 // What the model is told about each system, and which features each one gets. Run: npm test
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { canCircle, canSnap, hasHands, hasHotkeys, hasVoice, hasWakeWord, linuxSession, micTrouble, needsVoiceModel, platformLine, samePair, seesPointer, writeChord, writeChords } from '../platform.mjs';
+import { hasCallAudio, canCircle, canSnap, hasHands, hasHotkeys, hasVoice, hasWakeWord, linuxSession, micTrouble, needsVoiceModel, platformLine, samePair, seesPointer, writeChord, writeChords } from '../platform.mjs';
 
 const win = platformLine('win32', { arch: 'x64', release: '10.0.22631' });
 assert.match(win, /^Platform: Windows 11 on x64\./);
@@ -42,6 +42,8 @@ assert.ok(hasVoice('darwin') && hasVoice('win32') && hasVoice('linux') && !hasVo
 assert.ok(!needsVoiceModel('darwin') && needsVoiceModel('win32') && needsVoiceModel('linux'));
 // The wake word (#97): Apple's speech on macOS, the Parakeet helper on Windows and Linux.
 assert.ok(hasWakeWord('darwin') && hasWakeWord('win32') && hasWakeWord('linux') && !hasWakeWord('freebsd'));
+// Hearing system audio (WASAPI loopback) is Windows only.
+assert.ok(hasCallAudio('win32') && !hasCallAudio('darwin') && !hasCallAudio('linux') && !hasCallAudio('freebsd'));
 // No hands helper on Linux yet: nothing reads or works other apps, no area snap, no circling.
 assert.ok(!hasHands('linux', '') && !canSnap('linux', '') && !canCircle('linux'));
 

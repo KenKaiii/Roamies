@@ -75,6 +75,8 @@ export const needsVoiceModel = (platform) => platform === 'win32' || platform ==
 
 /** The wake word ("Hey Roamies"): Apple's speech on macOS, the Parakeet helper on Windows and Linux. */
 export const hasWakeWord = (platform) => platform === 'darwin' || needsVoiceModel(platform);
+// Record: what the PC plays, such as other people in a call, through WASAPI loopback in the Windows voice helper.
+export const hasCallAudio = (platform) => platform === 'win32';
 
 /** Whether the hands helper's tools are on: always on macOS (they explain what's missing), elsewhere when the
  *  helper is there (Roamies sets ROAMIES_HANDS to it). */

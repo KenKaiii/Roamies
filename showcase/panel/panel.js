@@ -16,8 +16,14 @@
   let state = null, tab = 'home', deferred = false;
   // What's open in the panel itself: a key field (provider id, 'fish' or 'gemini'), the row action waiting for its
   // Confirm, each long list's page (pg) and how many rows fit on one (per, measured), Memory's tab and its search.
-  const ui = { key: null, kind: {}, arm: null, add: { label: '', url: '', key: '', images: false }, addSent: null, pg: {}, per: {}, base: {}, rec: null, mtab: 'facts', tabs: {}, q: '', bindShown: new Set() };
+  const ui = { key: null, kind: {}, arm: null, add: { label: '', url: '', key: '', images: false }, addSent: null, pg: {}, per: {}, base: {}, rec: null, mtab: 'facts', tabs: {}, q: '', bindShown: new Set(), appsAsked: false, openRec: new Set() };
   let armTimer = 0;
+  // Picking new shortcut keys: Roamies lets go of its own shortcuts meanwhile, so pressing the current keys changes them
+  // instead of running them, Esc reaches this page, and holding the talk keys doesn't start talking.
+  const setRec = (id) => {
+    if ((ui.rec != null) !== (id != null)) send({ type: 'keys_capture', on: id != null });
+    ui.rec = id;
+  };
   const disarm = () => { clearTimeout(armTimer); if (ui.arm) { ui.arm = null; return true; } return false; };
 
   const el = (tag, props = {}, ...kids) => {
@@ -863,14 +869,121 @@
   // Wayland: the commands to bind to keys in the desktop's settings (no app may hold its own shortcuts there).
   // A command shows only after copying it failed, so it can be copied by hand.
   const BIND_ROWS = [['talk', 'Talk to me'], ['summon', 'Show or hide me'], ['ask', 'Ask me'], ['list', 'Your list'], ['panel', 'This panel']];
+  // Windows: Record writes down what the PC plays (a call, a meeting, a video) on this computer. Off after every restart.
+  const RECORD_NOTE = 'If other people can be heard, tell them before you record. Recording people without telling them can break the law and the rules of apps like Discord.';
+  const dayTime = (at) => new Date(at).toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  const clock = (at) => new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+  function recordSwitch(v, r) {
+    const hint = !r.key ? 'Download the transcription models below first' : !v.callAudio ? 'Off' : r.recording ? 'Recording now' : 'Starting…';
+    const row = toggle('Record', hint, v.callAudio, () => act('record'), 'record');
+    row.classList.toggle('live', !!r.recording);
+    return group(null, 'Writes down what your PC plays, like a call or a video, so you can ask me about it later. It all stays on this computer.', null,
+      row,
+      r.shortcut ? el('p', { className: 'why wrap', textContent: `Shortcut: ${r.shortcut}. You can change it on the Shortcuts page.` }) : null,
+      el('p', { className: 'why wrap', role: 'note', textContent: RECORD_NOTE }));
+  }
+
+  // The open apps are looked up once each time the panel opens (and with Refresh), not on every redraw.
+  function appPicker(r) {
+    if (!ui.appsAsked) { ui.appsAsked = true; send({ type: 'panel_record_apps' }); }
+    const rows = r.apps.map((a) => toggle(a.name, a.open ? a.title : 'Not open right now', a.on, () => act(`recordapp:${a.name}`), `app-${a.name.replace(/[^\w-]/g, '_')}`));
+    return el('div', { className: 'rec-apps' },
+      rows.length ? rows : el('p', { className: 'why', textContent: 'Looking for open apps…' }),
+      el('div', { className: 'links' }, link('Refresh', () => send({ type: 'panel_record_apps' }), { k: 'record-refresh', aria: 'Look for open apps again' })));
+  }
+
+  function recordSource(r) {
+    const tips = {
+      all: 'Everything your PC plays: calls, videos, music.',
+      apps: 'Only the sound of the apps you pick. Needs Windows 11 or a recent Windows 10.',
+    };
+    return group('What to record', null, null,
+      picks('What to record', [['all', 'Everything'], ['apps', 'Only apps I pick']], r.mode, (x) => act(`recordmode:${x}`), 'recordmode', tips),
+      r.mode === 'apps' ? appPicker(r) : null);
+  }
+
+  function recordModels(r) {
+    const { stt } = r;
+    let status;
+    if (stt.status === 'downloading') {
+      status = el('div', { className: 'rec-meter', role: 'progressbar', 'aria-label': 'Downloading the transcription models', 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-valuenow': stt.pct },
+        el('span', { style: `width: ${stt.pct}%` }), el('small', { textContent: `Downloading… ${stt.pct}%` }));
+    } else if (r.key) {
+      status = el('div', { className: 'links' },
+        el('span', { className: 'why', textContent: stt.gpu ? 'Ready. Runs on your NVIDIA graphics card.' : 'Ready.' }),
+        link('Remove', () => act('sttremove'), { k: 'sttremove', danger: true, aria: 'Remove the transcription models' }));
+    } else {
+      const speed = stt.gpu ? 'Your NVIDIA graphics card keeps up with a live call.' : 'No NVIDIA graphics card found, so text may lag behind a long recording.';
+      status = el('div', {},
+        el('div', { className: 'links' }, link(`Download (${stt.size || 'about 1 GB'}, free)`, () => act('sttdownload'), { k: 'sttdownload', aria: 'Download the transcription models' })),
+        el('p', { className: 'why wrap', textContent: stt.error ? `${stt.error} ${speed}` : speed }));
+    }
+    return group('Transcription', 'Free models that run on this computer and understand French, English, Arabic and Moroccan Darija. Nothing is sent anywhere.', null,
+      status,
+      toggle('Keep the audio files', r.keep ? `Kept in ${r.where}` : 'Deleted once they are written down', r.keep, () => act('callkeep'), 'callkeep'));
+  }
+
+  /** Saved entries (transcript pieces and summaries, newest first) as one item per recording. */
+  function recordingsOf(entries) {
+    const by = new Map();
+    for (const e of entries) {
+      const id = e.session || e.id;
+      const s = by.get(id) ?? { id, at: e.at, end: e.at, app: '', summary: null, lines: [] };
+      if (e.kind === 'summary') s.summary = e;
+      else {
+        s.lines.push(e);
+        if (e.app) s.app = e.app;
+        s.end = Math.max(s.end, e.at + (e.secs || 0) * 1000);
+      }
+      s.at = Math.min(s.at, e.at);
+      by.set(id, s);
+    }
+    for (const s of by.values()) s.lines.sort((a, b) => a.at - b.at);
+    return [...by.values()].sort((a, b) => b.at - a.at);
+  }
+
+  function recordingItem(s) {
+    const mins = Math.round((s.end - s.at) / 60000);
+    const meta = [s.app, dayTime(s.at), mins ? `${mins} min` : ''].filter(Boolean).join(' · ');
+    const remove = /^c\d+$/.test(s.id)
+      ? () => send({ type: 'panel_call_delete_session', session: s.id })
+      : () => s.lines.concat(s.summary ?? []).forEach((e) => send({ type: 'panel_call_delete', id: e.id }));
+    const open = ui.openRec.has(s.id);
+    return el('li', { className: 'rec-item' },
+      el('div', { className: 'rec-top' },
+        el('span', {}, el('b', { textContent: s.summary?.subject || 'Recording', dir: 'auto' }), el('small', { textContent: meta })),
+        link('Delete', remove, { danger: true, k: `recdel-${s.id}`, aria: `Delete the recording from ${dayTime(s.at)}` })),
+      s.summary ? el('ul', { className: 'rec-points' }, s.summary.points.map((p) => el('li', { textContent: p, dir: 'auto' }))) : null,
+      s.lines.length ? el('details', { className: 'rec-lines', open, on: { toggle: (e) => (e.target.open ? ui.openRec.add(s.id) : ui.openRec.delete(s.id)) } },
+        el('summary', { textContent: `What was said (${plural(s.lines.length, 'part')})` }),
+        s.lines.map((l) => el('p', { dir: 'auto' }, el('time', { textContent: clock(l.at) }), ` ${l.text}`))) : null);
+  }
+
+  function recordHistory(r) {
+    const q = el('input', { type: 'search', value: r.query || '', placeholder: 'Search what was said', 'aria-label': 'Search your recordings', maxLength: 200 });
+    const search = () => send({ type: 'panel_call_search', q: q.value });
+    q.addEventListener('keydown', (e) => { if (e.key === 'Enter') search(); });
+    const list = recordingsOf(r.entries);
+    return group('Recordings', null, list.length || null,
+      el('div', { className: 'find rec-find' }, el('span', { className: 'px field' }, q), link('Search', search, { k: 'callsearch' })),
+      list.length ? el('ul', { className: 'rec-list' }, list.map(recordingItem)) : el('p', { className: 'why', textContent: r.query ? 'Nothing matches that.' : 'Nothing recorded yet.' }),
+      list.length ? link('Delete all', () => act('callclear'), { k: 'callclear', danger: true }) : null);
+  }
+
+  function recordPage(v) {
+    const r = v.calls;
+    return [recordSwitch(v, r), recordSource(r), recordModels(r), recordHistory(r)];
+  }
   // Talking to me, and when the mic opens without a key.
   function listeningPage() {
     const v = state.voice;
     if (!v) return [group('Listening', 'Voice input isn’t available on this computer.', null)];
     const needs = (hint) => (v.on ? hint : 'Needs Voice control on');
-    const tabs = [['talking', 'Talking'], ['handsfree', 'Hands-free']], t = pageTab('listening', tabs);
+    const tabs = [['talking', 'Talking'], ['handsfree', 'Hands-free'], ...(v.callOk ? [['record', 'Record']] : [])], t = pageTab('listening', tabs);
     const head = el('div', { className: 'mhead' }, tabRow('Listening', 'listen-panel', tabs, t, (id) => { ui.tabs.listening = id; }));
-    return [head, tabPanel('listen-panel', t, t === 'talking'
+    return [head, tabPanel('listen-panel', t, t === 'record' ? recordPage(v) : t === 'talking'
       ? group(null, 'Speak instead of typing.', null,
         toggle('Voice control', v.download
           ? (v.download.status === 'downloading' ? `Downloading the voice model… ${v.download.pct}%` : v.download.status === 'error' ? 'The download failed' : `Needs a ${v.download.size} download`)
@@ -891,7 +1004,7 @@
           link('Change', () => act('wakename'), { k: 'wakename', aria: 'Change the wake word name' })) : null))];
   }
   // The keys that work from anywhere. On Wayland no app may hold its own, so it lists the commands to bind instead.
-  const SHORTCUT_LABELS = { summon: 'Show or hide me', snap: 'Ask about an area', list: 'Your list' };
+  const SHORTCUT_LABELS = { summon: 'Show or hide me', snap: 'Ask about an area', list: 'Your list', record: 'Start or stop Record' };
   function shortcutsPage() {
     const b = state.bind, sc = state.shortcuts, w = state.writeKeys;
     if (b) {
@@ -914,7 +1027,7 @@
           const rec = ui.rec === id, label = SHORTCUT_LABELS[id] ?? id;
           return el('div', { className: `setting${rec ? ' recording' : ''}` },
             el('span', {}, label, el('small', { textContent: rec ? 'Press the new keys…' : words, 'aria-live': rec ? 'polite' : null })),
-            link(rec ? 'Cancel' : 'Change', () => { ui.rec = rec ? null : id; render(`rec-${id}`); }, { k: `rec-${id}`, aria: rec ? `Stop changing the keys for ${label.toLowerCase()}` : `Change the keys for ${label.toLowerCase()}` }));
+            link(rec ? 'Cancel' : 'Change', () => { setRec(rec ? null : id); render(`rec-${id}`); }, { k: `rec-${id}`, aria: rec ? `Stop changing the keys for ${label.toLowerCase()}` : `Change the keys for ${label.toLowerCase()}` }));
         })),
     ];
   }
@@ -1118,7 +1231,7 @@
     const changed = name !== tab;
     if (!changed && !focus) return;
     tab = name;
-    disarm(); ui.key = null; ui.rec = null;
+    disarm(); ui.key = null; setRec(null);
     for (const t of TABS) {
       if (t === name) navi(t).setAttribute('aria-current', 'page'); else navi(t).removeAttribute('aria-current');
       $(`pane-${t}`).hidden = t !== name;
@@ -1145,11 +1258,11 @@
     const which = ui.rec;
     if (!which) return;
     e.preventDefault(); e.stopImmediatePropagation();
-    if (e.key === 'Escape') { ui.rec = null; render(`rec-${which}`); return; }
+    if (e.key === 'Escape') { setRec(null); render(`rec-${which}`); return; }
     if (['Control', 'Alt', 'Shift', 'Meta'].includes(e.key) || !KEY_CODE.test(e.code)) return;
     const mods = [e.ctrlKey && 'Control', e.altKey && 'Alt', e.shiftKey && 'Shift', e.metaKey && 'Command'].filter(Boolean);
     if (!mods.some((x) => x !== 'Shift')) { note(state.os === 'mac' ? 'Hold Control, Option or Command too.' : 'Hold Ctrl or Alt too.', true); return; }
-    ui.rec = null;
+    setRec(null);
     act(`shortcut:${which}:${[...mods, e.code].join('+')}`);
     render(`rec-${which}`);
   }, true);
@@ -1197,7 +1310,7 @@
     render(null, true);
   };
   window.__panelShut = () => {
-    disarm(); ui.key = null; unarmQuit();
+    disarm(); ui.key = null; setRec(null); ui.appsAsked = false; unarmQuit();
     body.classList.remove('opening');
     if (REDUCED.matches) { body.classList.add('shut'); return; }
     body.classList.add('shutting');
@@ -1329,10 +1442,25 @@
     };
     if (q.has('studio')) Object.assign(s, { tts: 'voicestudio', studio: STUDIO[q.get('studio')] ?? STUDIO.on });
     if (q.has('uptodate')) s.update.result = { ok: true, at: Date.now() + 60e3 };
+    // ?record&tab=listening: the Record tab (Windows) while recording two picked apps, with two saved recordings.
+    if (q.has('record')) {
+      const t1 = at - 50 * 60e3, t2 = at - 26 * 3600e3, part = (t, secs, app, text) => ({ kind: 'transcript', id: `t-${t}`, session: `c${t1}`, at: t, secs, app, text });
+      s.shortcuts.keys.push({ id: 'record', words: 'Ctrl+Shift+F9' });
+      Object.assign(s.voice, { callOk: true, callAudio: true, calls: {
+        key: true, keep: false, recording: true, query: '', where: 'C:\\Users\\you\\Roamies\\Data\\calls', mode: q.get('record') || 'apps', shortcut: 'Ctrl+Shift+F9',
+        stt: { status: q.has('download') ? 'downloading' : 'ready', pct: 42, size: '1.8 GB', gpu: true, error: null },
+        apps: [{ name: 'chrome', title: 'Weekly sync - Google Meet', open: true, on: false }, { name: 'Discord', title: '#general | Friends', open: true, on: true }, { name: 'Spotify', title: 'Spotify Premium', open: true, on: false }, { name: 'Zoom', title: '', open: false, on: true }],
+        entries: [
+          { kind: 'summary', id: `s-${t1}`, session: `c${t1}`, at: t1, subject: 'Call about the launch date', points: ['The launch moves to Friday', 'Maya finishes the design review tomorrow'], chunks: 2 },
+          part(t1 + 30e3, 30, 'Discord', 'Maya will finish it tomorrow and then we can ship the new pricing page.'),
+          part(t1, 30, 'Discord', 'We should move the launch to Friday because the design review is not finished yet.'),
+          { kind: 'transcript', id: `t-${t2}`, session: `c${t2}`, at: t2, secs: 30, app: 'Discord', text: 'واش غادي نتلاقاو غدا فالصباح ولا لا؟' },
+        ] } });
+    }
     // ?v=0.1.36&from=0.1.35: What's new as it looks just after updating from one version to the other.
     if (q.get('v')) s.version = q.get('v');
     if (q.get('from')) s.whatsNewFrom = q.get('from');
-    if (q.get('tab')) setTimeout(() => { if (q.get('mtab')) ui.mtab = q.get('mtab'); if (q.get('atab')) ui.tabs.abilities = q.get('atab'); show(q.get('tab')); }, 0);
+    if (q.get('tab')) setTimeout(() => { if (q.get('mtab')) ui.mtab = q.get('mtab'); if (q.get('atab')) ui.tabs.abilities = q.get('atab'); if (q.get('ltab')) ui.tabs.listening = q.get('ltab'); show(q.get('tab')); }, 0);
     setTimeout(() => window.__panel({ kind: 'state', state: s }), 0);
     return async (cmd, args) => {
       if (cmd !== 'sidecar_send') return null;

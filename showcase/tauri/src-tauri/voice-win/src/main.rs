@@ -11,6 +11,11 @@
 // "Hey Roamies" (wake.rs); hearing it starts a hands-free take. Exits when stdin closes.
 //
 // roamies-voice --model <dir> [--chord control,option]   normal use (Roamies starts it)
+// {"cmd":"call","on":true,"dir":"<folder>"} (Windows) also records what the PC plays, such as the other people in a
+// call, through WASAPI loopback (call.rs): a 16 kHz mono WAV of about 30 s lands in <folder> and comes out as
+// {"type":"call_chunk","path":…,"at":<unix ms>,"secs":…}; {"type":"call_state","on":true|false} says whether it is
+// recording. The app turns it on only when the user does, and sends the files to speech-to-text itself.
+//
 // roamies-voice --perms                                   prints {"type":"perms","mic":…}
 // roamies-voice --devices                                 prints {"type":"devices",…}: every mic, the default, formats
 // roamies-voice --model <dir> --transcribe <wav>          dev: transcribe a file and exit
@@ -18,7 +23,9 @@
 // roamies-voice --model <dir> --test-audio <wav> --wake   dev: the same with the wake word on, so "Hey Roamies" starts
 //                                                         a take (tests/wake_e2e.rs runs it on a spoken recording)
 
+mod apploop;
 mod audio;
+mod call;
 mod ink;
 mod keys;
 mod wake;
@@ -55,6 +62,7 @@ pub enum Ev {
     StdinClosed,
     Level(f64),
     AudioFailed(MicError),
+    CallFailed(MicError),
     Text { take: u64, text: String, last: bool, wake: bool },
     EngineFailed(String),
 }
@@ -111,9 +119,9 @@ fn spawn_engine(dir: PathBuf, tx: Sender<Ev>) -> (Sender<Job>, thread::JoinHandl
             }
         };
         while let Ok(first) = jrx.recv() {
-            // Only the newest live read matters; a closing read always runs.
             let mut jobs = vec![first];
             jobs.extend(jrx.try_iter());
+            // Only the newest live read matters; a closing read always runs.
             let job = match jobs.iter().rposition(|j| j.last) {
                 Some(i) => jobs.swap_remove(i),
                 None => jobs.pop().expect("at least one job"),
@@ -256,6 +264,15 @@ struct Voice {
     // This take was started by the phrase, which took this many words: they aren't part of what was said.
     woke: bool,
     wake_words: usize,
+    // System audio (call.rs): on when the app asked for it; retried if the output device goes away; paused while
+    // Roamies speaks.
+    call: call::Call,
+    /// The app is picking new shortcut keys: the talk chord is ignored until it's done.
+    keys_paused: bool,
+    call_want: bool,
+    call_retry_at: f64,
+    call_retries: u32,
+    call_hold_until: f64,
     tx: Sender<Ev>,
     t0: Instant,
 }
@@ -307,6 +324,12 @@ impl Voice {
             wake_reading: false,
             woke: false,
             wake_words: 0,
+            call: call::Call::new(tx.clone()),
+            keys_paused: false,
+            call_want: false,
+            call_retry_at: 0.0,
+            call_retries: 0,
+            call_hold_until: 0.0,
             tx,
             t0: Instant::now(),
         }
@@ -330,9 +353,15 @@ impl Voice {
 
     fn tick(&mut self) {
         let now = self.now();
-        self.tick_keys(now, keys::held());
+        if self.keys_paused {
+            // Keys still held when picking ends must be let go before they can start talking.
+            self.blocked = true;
+        } else {
+            self.tick_keys(now, keys::held());
+        }
         self.ink.set_armed(matches!(self.phase, Phase::Armed | Phase::Holding), now);
         self.ink.follow(now);
+        self.tick_call(now);
         match self.phase {
             Phase::Holding | Phase::HandsFree => self.maybe_read(now),
             Phase::Wake => self.tick_wake(now),
@@ -709,7 +738,79 @@ impl Voice {
         }
     }
 
+    // ---------- system audio (call.rs): what other people say in a call, when the user turned that on ----------
+
+    fn set_call(&mut self, on: bool, dir: Option<PathBuf>, apps: Vec<u32>) {
+        self.call_want = on;
+        self.call_retries = 0;
+        if !on {
+            if self.call.is_on() {
+                log("system audio off");
+            }
+            let last = self.call.stop();
+            self.emit_chunks(last);
+            emit(json!({ "type": "call_state", "on": false }));
+            return;
+        }
+        if self.call.is_on() && self.call.apps() != apps.as_slice() {
+            // A different choice of apps: finish what was heard so far, then listen again.
+            let last = self.call.stop();
+            self.emit_chunks(last);
+        }
+        match self.call.start(dir, Some(apps)) {
+            Ok(()) => {
+                log("recording system audio");
+                emit(json!({ "type": "call_state", "on": true }));
+            }
+            Err(e) => {
+                log(&format!("system audio: {} ({})", e.detail, e.reason));
+                self.call_want = false;
+                emit(json!({ "type": "call_state", "on": false }));
+                emit(json!({ "type": "error", "code": "call_failed", "reason": e.reason, "message": e.detail }));
+            }
+        }
+    }
+
+    // The output device went away (unplugged headphones, a driver reset): try again a few times, then say so.
+    fn call_lost(&mut self, e: &MicError) {
+        log(&format!("system audio: {} ({})", e.detail, e.reason));
+        let last = self.call.stop();
+        self.emit_chunks(last);
+        emit(json!({ "type": "call_state", "on": false }));
+        if self.call_want && self.call_retries < 3 {
+            self.call_retries += 1;
+            self.call_retry_at = self.now() + 5.0;
+        } else {
+            self.call_want = false;
+            emit(json!({ "type": "error", "code": "call_failed", "reason": e.reason, "message": e.detail }));
+        }
+    }
+
+    fn emit_chunks(&self, chunks: Vec<call::Chunk>) {
+        for c in chunks {
+            emit(json!({ "type": "call_chunk", "path": c.path.to_string_lossy(), "at": c.at, "secs": c.secs }));
+        }
+    }
+
+    fn tick_call(&mut self, now: f64) {
+        if self.call_want && !self.call.is_on() && self.call_retries > 0 && now >= self.call_retry_at {
+            match self.call.start(None, None) {
+                Ok(()) => {
+                    log("system audio back");
+                    self.call_retries = 0;
+                    emit(json!({ "type": "call_state", "on": true }));
+                }
+                Err(e) => self.call_lost(&e),
+            }
+        }
+        // While Roamies answers and speaks it would hear itself: that sound is thrown away.
+        let chunks = self.call.poll(now < self.call_hold_until);
+        self.emit_chunks(chunks);
+    }
+
     fn set_wake_hold(&mut self, on: bool) {
+        // System audio waits too, and a moment longer for the end of the speech to fade.
+        self.call_hold_until = if on { f64::INFINITY } else { self.now() + 3.0 };
         if self.wake_on && on != self.wake_hold {
             log(if on { "wake: paused while Roamies answers" } else { "wake: resumed" });
         }
@@ -859,6 +960,19 @@ impl Voice {
                     *audio::CHOSEN.lock().unwrap() = id;
                     self.stop_wake(); // wake listening starts again on the new mic
                 }
+                Some("call") => {
+                    let on = msg.get("on").and_then(Value::as_bool) == Some(true);
+                    let dir = msg.get("dir").and_then(Value::as_str).filter(|d| !d.is_empty()).map(PathBuf::from);
+                    // Process ids of the apps to hear; none means everything the PC plays.
+                    let apps: Vec<u32> = msg.get("apps").and_then(Value::as_array).map(|a| a.iter().filter_map(|v| v.as_u64()).filter_map(|v| u32::try_from(v).ok()).filter(|v| *v > 0).collect()).unwrap_or_default();
+                    self.set_call(on, dir, apps);
+                }
+                Some("keys_paused") => {
+                    self.keys_paused = msg.get("on").and_then(Value::as_bool) == Some(true);
+                    if self.keys_paused && matches!(self.phase, Phase::Armed | Phase::Holding) {
+                        self.cancel();
+                    }
+                }
                 Some("wake") => self.set_wake(msg.get("on").and_then(Value::as_bool) == Some(true)),
                 Some("wake_name") => {
                     let ok = self.wake.set_name(msg.get("word").and_then(Value::as_str));
@@ -887,6 +1001,7 @@ impl Voice {
                     self.cancel();
                 }
             }
+            Ev::CallFailed(e) => self.call_lost(&e),
             Ev::Text { take, text, wake: true, .. } => self.on_wake_text(take, text),
             Ev::Text { take, text, last, wake: false } => self.on_text(take, text, last),
             Ev::EngineFailed(e) => {
