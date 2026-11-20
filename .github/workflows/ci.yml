@@ -20,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [windows-latest]  # throwaway: only the old-CPU proof
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     defaults:
@@ -99,6 +99,26 @@ jobs:
       - name: Test the Windows voice helper
         if: runner.os == 'Windows'
         run: cargo test --release --locked --manifest-path src-tauri/voice-win/Cargo.toml --target x86_64-pc-windows-msvc
+
+      # Throwaway (not for merge): today's helper on an emulated Sandy Bridge (no AVX2). Passes if SDE catches an
+      # instruction that CPU doesn't have, i.e. the crash from #128 is reproduced.
+      - name: Reproduce the old-CPU crash under Intel SDE
+        if: runner.os == 'Windows'
+        run: |
+          helper=src-tauri/binaries/roamies-voice-x86_64-pc-windows-msvc.exe
+          tmp="$(cygpath -u "$RUNNER_TEMP")"
+          sde=sde-external-9.58.0-2025-06-16-win
+          curl -fsSL --retry 3 -o "$tmp/sde.tar.xz" "https://downloadmirror.intel.com/859732/$sde.tar.xz"
+          echo "ebb8b3b63fcb0b6c1f9721118ba4883703d2aed9e0db2defed4e44fba78d9ca9  $tmp/sde.tar.xz" | sha256sum -c -
+          tar -xJf "$tmp/sde.tar.xz" -C "$tmp"
+          mkdir -p "$tmp/nomodel"
+          set +e
+          echo "--- native --perms"; "$helper" --perms; echo "exit $?"
+          echo "--- native, model load"; "$helper" --model "$(cygpath -w "$tmp/nomodel")" --transcribe x.wav; echo "exit $?"
+          echo "--- sde -snb --perms"; "$tmp/$sde/sde.exe" -snb -- "$helper" --perms 2>&1 | tee "$tmp/a.log"; echo "exit $?"
+          echo "--- sde -snb, model load"; "$tmp/$sde/sde.exe" -snb -- "$helper" --model "$(cygpath -w "$tmp/nomodel")" --transcribe x.wav 2>&1 | tee "$tmp/b.log"; echo "exit $?"
+          cat "$tmp"/sde-mix-out.txt 2>/dev/null | head -5
+          grep -hi "not valid for specified chip" "$tmp/a.log" "$tmp/b.log"
 
       # The Windows hands helper's logic (logic.rs) builds and is tested anywhere.
       - name: Test the hands helper's logic
