@@ -31,6 +31,18 @@ assert.equal(fitted['local/ollama/qwen3.5:4b'].contextWindow, 32768);
 assert.equal(fitted['local/ollama/qwen3.5:4b'].maxOutputTokens, 4096);
 assert.equal(fitted['local/ollama/gemma4:12b'].contextWindow, 32768);
 
+// Regression (#150): a server the user added that lists only model ids (NVIDIA NIM) got gg-core's 4k guess, so each
+// request was cut to about 2k tokens and every earlier turn was dropped. It gets Roamies' minimum; a reported window
+// stays, and Ollama still waits to be measured.
+const nim = serverList([{ id: 'nvidia', label: 'NVIDIA', baseUrl: 'https://integrate.api.nvidia.com/v1' }]).at(-1);
+const hosted = Object.fromEntries(localModels([{ endpoint: nim, reachable: true, models: [
+  model('nvidia/nemotron-3-nano-omni-30b-a3b-reasoning', { endpointId: 'nvidia' }),
+  model('served-8k', { endpointId: 'nvidia', contextWindow: 8192, contextWindowKnown: true }),
+] }]).map((m) => [m.id, m]));
+assert.equal(hosted['local/nvidia/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning'].contextWindow, MIN_CONTEXT);
+assert.equal(hosted['local/nvidia/served-8k'].contextWindow, 8192);
+assert.equal(localModels([probe]).find((m) => m.id === 'local/ollama/qwen3.5:4b').contextWindow, 4096);
+
 // Connecting registers the models; the credential is saved only when Ollama answered.
 const saved = [];
 const auth = { setLocalEndpoint: async (id, baseUrl) => saved.push([id, baseUrl]), getCredentials: async () => undefined };

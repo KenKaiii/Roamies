@@ -17,10 +17,17 @@ export const MIN_CONTEXT = 32_768;
 // The window gg-core gives a model of this size (room for the prompt on small windows).
 export const withWindow = (info, contextWindow) => ({ ...info, contextWindow, maxOutputTokens: Math.max(512, Math.min(4096, Math.floor(contextWindow / 4))) });
 
+// A server the user added that doesn't say a model's window (hosted APIs like NVIDIA NIM list only ids) gets Roamies'
+// minimum, not gg-core's 4k guess: fitted to half of 4k, every earlier turn was dropped (#150).
 /** Models Roamies can run: it reads screenshots and drives tools, so both are needed. `windows`: measured contexts by id. */
 export const localModels = (probes, windows = new Map()) => probes.filter((p) => p.reachable).flatMap((p) => p.models
   .filter((m) => m.supportsImages && m.supportsTools)
-  .map((m) => { const info = toModelInfo(m, p.endpoint); return !m.contextWindowKnown && windows.has(info.id) ? withWindow(info, windows.get(info.id)) : info; }));
+  .map((m) => {
+    const info = toModelInfo(m, p.endpoint);
+    if (m.contextWindowKnown) return info;
+    if (windows.has(info.id)) return withWindow(info, windows.get(info.id));
+    return p.endpoint.custom ? withWindow(info, MIN_CONTEXT) : info;
+  }));
 
 const okServer = (s) => s && typeof s === 'object' && typeof s.id === 'string' && /^[a-z0-9][a-z0-9-]{0,39}$/.test(s.id)
   && !BUILT_IN.some((b) => b.id === s.id) && typeof s.label === 'string' && typeof s.baseUrl === 'string';
@@ -120,7 +127,7 @@ export const contextNote = (window, server = OLLAMA, lite = false) => {
   const k = Math.round(window / 1024);
   if (server.id === 'ollama') return `Ollama gives this model only ${k}k tokens of memory, too little for me to work well. In Ollama's settings, set Context length to ${need} or more (or start it with OLLAMA_CONTEXT_LENGTH=${min}), then pick the model again.`;
   if (server.id === 'lmstudio') return `LM Studio gives this model only ${k}k tokens of memory (or hasn't loaded it yet), too little for me to work well. In LM Studio, load it with Context Length set to ${need} or more, then pick the model again.`;
-  return `${server.label} says this model has only ${k}k tokens of memory (or didn't say), too little for me to work well. Start it with a context of ${need} or more, then pick the model again.`;
+  return `${server.label} says this model has only ${k}k tokens of memory, too little for me to work well. Start it with a context of ${need} or more, then pick the model again.`;
 };
 // A model's size from its name ("qwen3.5:9b", "gemma-4-e4b-it", "llama-3.2-3B-instruct"), in billions; null when the
 // name doesn't say. Small (9B or less) is when Lite mode is suggested.

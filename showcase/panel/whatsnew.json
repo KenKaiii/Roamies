@@ -1,6 +1,13 @@
 {
   "updates": [
     {
+      "version": null,
+      "date": "2026-11-21",
+      "items": [
+        { "kind": "fixed", "title": "I remember with NVIDIA NIM", "text": "With NVIDIA NIM, I forgot what we'd just said. Not anymore. Thanks FunisWokodneer!" }
+      ]
+    },
+    {
       "version": "0.1.48",
       "date": "2026-11-21",
       "items": [
