@@ -168,7 +168,9 @@ export const DrawArgs = z.preprocess(tidyDraw, z.object({
 export function drawModelSchema(lean) {
   const marks = lean.properties.beats.items.properties.marks.items.properties;
   // Places (at, to, tie) keep their fields: shown only as objects, Claude tied cards to guessed pixels.
-  for (const [k, p] of Object.entries(marks)) if (p.type === 'array' && p.items?.type === 'object') marks[k] = { type: 'array', items: { type: 'object' }, ...(p.minItems ? { minItems: p.minItems } : {}), ...(p.maxItems ? { maxItems: p.maxItems } : {}) };
+  // additionalProperties says the items take any fields: OpenAI's strict mode can't, so draw goes to it non-strict
+  // (a bare object became one with no fields allowed, and OpenAI refused every request, #156).
+  for (const [k, p] of Object.entries(marks)) if (p.type === 'array' && p.items?.type === 'object') marks[k] = { type: 'array', items: { type: 'object', additionalProperties: true }, ...(p.minItems ? { minItems: p.minItems } : {}), ...(p.maxItems ? { maxItems: p.maxItems } : {}) };
   return lean;
 }
 

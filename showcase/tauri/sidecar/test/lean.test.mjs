@@ -16,9 +16,10 @@ const draw = tools.find((t) => t.name === 'draw');
 const mark = resolveToolSchema(draw).properties.beats.items.properties.marks.items.properties;
 // Draw's schema was about 5,000 tokens on every request: a card's list items are shown only as objects (their fields
 // are in the description), and the shapes models then guess are set right before the check.
-assert.deepEqual(mark.parts, { type: 'array', items: { type: 'object' }, maxItems: 40 }, "a card's list items are only objects, with their counts");
+assert.deepEqual(mark.parts, { type: 'array', items: { type: 'object', additionalProperties: true }, maxItems: 40 }, "a card's list items are only objects (any fields), with their counts");
 assert.ok(mark.tie.properties.text, 'places keep their fields (as bare objects Claude tied cards to guessed pixels)');
-assert.ok(JSON.stringify(resolveToolSchema(draw)).length < 5500, 'draw schema stays short');
+// 5,700: saying the list items take any fields (#156) costs about 520 characters.
+assert.ok(JSON.stringify(resolveToolSchema(draw)).length < 5700, 'draw schema stays short');
 assert.deepEqual(mark.points.items, { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2 }, 'mark fields keep their types and counts');
 // Regression: DeepSeek wrote a model's at as {x, y, z} and lost the drawing.
 const shaped = DrawArgs.parse({ beats: [{ say: 'x', marks: [

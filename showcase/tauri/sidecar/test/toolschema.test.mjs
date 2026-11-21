@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { resolveToolSchema } from '@kenkaiiii/gg-ai';
 import { createTools, shellFor } from '../tools.mjs';
 import { LIMITS } from '../draw.mjs';
+import { leanTools } from '../lean.mjs';
 
 const noop = async () => {};
 const { tools } = createTools({ allowActions: false, ui: () => {}, ask: async () => false, openUrl: noop, onCommitments: noop, showList: noop, fmtWhen: String, commitmentsText: () => '', userName: 'Test', focus: { start: () => 'ok', stop: () => 'ok' }, jobs: { changed: () => {}, run: async () => ({ id: 'a1' }) }, skills: { changed: () => {} } });
@@ -34,6 +35,7 @@ const walk = (name, node, at) => {
 };
 for (const t of tools) walk(t.name, resolveToolSchema(t), '');
 assert.deepEqual(formats, [], 'no tool uses a string format');
+
 // draw replaced point_at, on every platform (pixels from a screenshot work everywhere).
 assert.ok(tools.some((t) => t.name === 'draw') && !tools.some((t) => t.name === 'point_at'), 'draw, not point_at');
 const drawSchema = JSON.stringify(resolveToolSchema(tools.find((t) => t.name === 'draw')));
@@ -160,3 +162,20 @@ if (process.platform === 'darwin') {
   assert.deepEqual(asks[0].choices, ['Install', "Don't install"]);
   console.log('install_skill asks tests: passed');
 }
+
+// Regression (#156): OpenAI's strict mode needs every object's fields. draw's list items were a bare {type: object},
+// which gg-ai sent strict with no fields, and OpenAI refused every request. An object either lists its fields or says
+// it takes any (additionalProperties), which gg-ai sends non-strict.
+const bare = [];
+const objects = (name, node, at) => {
+  if (Array.isArray(node)) return node.forEach((n, i) => objects(name, n, `${at}/${i}`));
+  if (!node || typeof node !== 'object') return;
+  if ([].concat(node.type ?? []).includes('object') && !node.properties && !node.additionalProperties) bare.push(`${name}${at}`);
+  for (const [k, v] of Object.entries(node)) {
+    if (k === 'properties') for (const [p, s] of Object.entries(v)) objects(name, s, `${at}/properties/${p}`);
+    else objects(name, v, `${at}/${k}`);
+  }
+};
+// The model-facing schemas, as the app sends them (lean.mjs), for every tool checked above.
+for (const t of leanTools(tools)) objects(t.name, resolveToolSchema(t), '');
+assert.deepEqual(bare, [], 'every object lists its fields or takes any');
