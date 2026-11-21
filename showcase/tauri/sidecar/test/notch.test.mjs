@@ -214,4 +214,19 @@ R.notch.close(); flush(); frames();
   for (let i = 0; i < 3; i++) rafs.splice(0).forEach((f) => f(performance.now()));
   assert.equal(R.notch.active, false, 'and it still folds away');
 }
+// Regression (#134): Linux's WebKitGTK drew the liquid pour (SVG blur and threshold filters) as a solid black shape
+// that broke into stripes, so on Linux the capsule opens without it; elsewhere it still pours.
+for (const linux of [false, true]) {
+  els.length = 0;
+  const c = {
+    ...ctx, matchMedia: () => ({ matches: false, addEventListener: noop }),
+    window: { ...(linux ? { ROAMIE_LINUX: 'x11' } : {}), Roamie: { safe: { top: 30 }, wake: noop } },
+  };
+  vm.runInNewContext(fs.readFileSync(new URL('../../../roamies/notch.js', import.meta.url), 'utf8'), c);
+  const cap = els.find((e) => e.className?.startsWith?.('nc '));
+  c.window.Roamie.notch.enabled = true;
+  c.window.Roamie.notch.style = 'drop';
+  c.window.Roamie.notch.hello();
+  assert.equal(cap.classList.contains('liquid'), !linux, linux ? 'no liquid pour on Linux' : 'the liquid pour elsewhere');
+}
 console.log('notch tests: passed');

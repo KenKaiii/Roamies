@@ -628,8 +628,10 @@
   // and splits, two droplets fall after it and merge in, the pill wobbles as it settles. pour('in') runs it backwards:
   // the notch reaches down, the pill squashes, stretches up into it and melts away.
   const OUT_MS = 820, IN_MS = 620;
+  // Not on Linux: WebKitGTK draws the goo's filters as a solid black shape that breaks into stripes (#134).
+  const LINUX = !!window.ROAMIE_LINUX;
   const pour = (dir) => {
-    if (!drop() || reduced()) { st.liq = null; return; }
+    if (!drop() || reduced() || LINUX) { st.liq = null; return; }
     st.liq = { dir, t0: performance.now(), dropped: false };
     el.classList.add('liquid');
     goo.style.display = 'block';
