@@ -206,6 +206,13 @@
     'gemini-3.8-flash-tts': "Google's best voice quality, with more feeling in it.",
   };
   const geminiPrice = (c) => `About $${(c.per10s * 120).toFixed(2)} per 100 replies, billed to your Google AI Studio account (it has a free tier).`;
+  // ElevenLabs bills in credits rather than per second, so its models get a plain description and one account note.
+  const ELEVEN_WHY = { 'eleven_flash_v2_5': 'Quick. Costs less.', eleven_v3: 'Most expressive. Costs more.' };
+  const ELEVEN_WHY_LONG = {
+    eleven_flash_v2_5: 'The quick, cheaper one: good for everyday replies.',
+    eleven_v3: "ElevenLabs' most expressive voice, with more feeling in it.",
+  };
+  const ELEVEN_PRICE = 'Billed in credits to your ElevenLabs account.';
   const where = () => (state?.os === 'mac' ? 'your Keychain' : state?.os === 'win' ? 'Windows, encrypted for your account' : state?.os === 'linux' ? 'your keyring' : 'this computer');
 
   // ---------------------------------------------------------------- header
@@ -768,7 +775,7 @@
       ) : null,
     ];
   }
-  const TTS_NAMES = { fish: 'Fish Audio', gemini: 'Gemini', voicestudio: 'VoiceStudio' };
+  const TTS_NAMES = { fish: 'Fish Audio', gemini: 'Gemini', elevenlabs: 'ElevenLabs', voicestudio: 'VoiceStudio' };
   // How loud I am: my voice and my sounds together (#136). Moving it shows the level; letting go saves it.
   function volumeRow() {
     const said = el('p', { className: 'why', 'aria-hidden': 'true' });
@@ -802,7 +809,7 @@
         picks('Voice provider', Object.entries(TTS_NAMES), tts, (x) => {
           if (x !== 'voicestudio' && !state[`${x}Key`]) { ui.key = x; note(`Add a ${TTS_NAMES[x]} key to hear me talk.`); } // its key field opens with it
           act(`tts:${x}`);
-        }, 'tts', { fish: 'A voice for each look, acted out with feeling. Billed to your Fish Audio account.', gemini: "Google's voices: pick one of 30. Billed to your Google AI Studio account.", voicestudio: 'The free VoiceStudio app on this computer, in the engine and voices you set up there. Nothing leaves your computer.' }),
+        }, 'tts', { fish: 'A voice for each look, acted out with feeling. Billed to your Fish Audio account.', gemini: "Google's voices: pick one of 30. Billed to your Google AI Studio account.", elevenlabs: "ElevenLabs' voices: pick one of eight. Billed in credits to your ElevenLabs account.", voicestudio: 'The free VoiceStudio app on this computer, in the engine and voices you set up there. Nothing leaves your computer.' }),
         local ? el('div', { className: 'reveal', 'data-anim': 'studio' }, studioRows()) : null,
         local ? el('div', { className: 'reveal', 'data-anim': 'studio-speak' },
           el('p', { className: 'sub', textContent: 'How much it speaks' }),
@@ -819,6 +826,18 @@
           picks('Voice model', state.geminiModels.map((c) => [c.id, c.name]), state.geminiModel, (x) => act(`geminimodel:${x}`), 'geminimodel',
             Object.fromEntries(state.geminiModels.map((c) => [c.id, `${GEMINI_WHY_LONG[c.id] ?? ''} ${geminiPrice(c)}`.trim()]))),
           el('p', { className: 'why', textContent: GEMINI_WHY[state.geminiModel] ?? '' }),
+        ) : null,
+        tts === 'elevenlabs' && hasKey && state.elevenVoices?.length ? el('div', { className: 'reveal', 'data-anim': 'eleven-voice' },
+          el('p', { className: 'sub', textContent: `Voice for ${state.name}` }),
+          el('span', { className: 'px field select' },
+            el('select', { 'aria-label': 'ElevenLabs voice', 'data-k': 'elevenvoice', on: { change: (e) => act(`elevenlabsvoice:${e.target.value}`) } },
+              state.elevenVoices.map((v) => el('option', { value: v.id, textContent: `${v.name} · ${v.style}`, selected: v.id === state.elevenVoice })))),
+        ) : null,
+        tts === 'elevenlabs' && hasKey && state.elevenModels?.length ? el('div', { className: 'reveal', 'data-anim': 'eleven-model' },
+          el('p', { className: 'sub', textContent: 'Voice model' }),
+          picks('Voice model', state.elevenModels.map((c) => [c.id, c.name]), state.elevenModel, (x) => act(`elevenlabsmodel:${x}`), 'elevenlabsmodel',
+            Object.fromEntries(state.elevenModels.map((c) => [c.id, `${ELEVEN_WHY_LONG[c.id] ?? ''} ${ELEVEN_PRICE}`.trim()]))),
+          el('p', { className: 'why', textContent: ELEVEN_WHY[state.elevenModel] ?? '' }),
         ) : null,
         tts === 'fish' && state.replies === 'voice' && state.fishModels?.length ? el('div', { className: 'reveal', 'data-anim': 'fish-model' },
           el('p', { className: 'sub', textContent: 'Voice model' }),
@@ -1285,8 +1304,12 @@
       name: 'Roamie', look: 'classic', looks: [['classic', 'Roamie'], ['jarvis', 'JARVIS'], ['glayos', 'GlayOS'], ['ultren', 'Ultren'], ['anime', 'Anime Girl'], ['sarah', 'Sarah'], ['adrian', 'Adrian'], ['rita', 'Rita X']],
       size: 'default', sizes: [['default', 'Default'], ['small', 'Small'], ['cursor', 'Cursor']],
       replies: 'voice', fishKey: true, fishModel: 'drama-3', fishFree: false,
-      // ?tts=gemini: Gemini as the voice, its key saved.
-      tts: new URLSearchParams(location.search).get('tts') === 'gemini' ? 'gemini' : 'fish', geminiKey: new URLSearchParams(location.search).get('tts') === 'gemini', geminiVoice: 'Kore',
+      // ?tts=gemini: Gemini as the voice, its key saved; ?tts=elevenlabs: ElevenLabs, same.
+      tts: new URLSearchParams(location.search).get('tts') === 'gemini' ? 'gemini' : new URLSearchParams(location.search).get('tts') === 'elevenlabs' ? 'elevenlabs' : 'fish',
+      geminiKey: new URLSearchParams(location.search).get('tts') === 'gemini', geminiVoice: 'Kore',
+      elevenlabsKey: new URLSearchParams(location.search).get('tts') === 'elevenlabs', elevenVoice: '21m00Tcm4TlvDq8ikWAM',
+      elevenVoices: [['21m00Tcm4TlvDq8ikWAM', 'Rachel', 'Warm, calm'], ['JBFqnCBsd6RMkjVDRZzb', 'George', 'Warm, British'], ['EXAVITQu4vr4xnSDxMaL', 'Bella', 'Soft, young'], ['pNInz6obpgDQGcFmaJgB', 'Adam', 'Deep, steady']].map(([id, name, style]) => ({ id, name, style })),
+      elevenModel: 'eleven_flash_v2_5', elevenModels: [{ id: 'eleven_flash_v2_5', name: 'Flash v2.5' }, { id: 'eleven_v3', name: 'v3' }],
       geminiVoices: [['Zephyr', 'Bright'], ['Puck', 'Upbeat'], ['Charon', 'Informative'], ['Kore', 'Firm']].map(([id, style]) => ({ id, style })),
       // &shared: speaking with the AI's Gemini key, none saved for the voice.
       geminiShared: new URLSearchParams(location.search).has('shared'), geminiModel: 'gemini-3.8-flash-lite-tts',

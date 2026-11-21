@@ -51,6 +51,7 @@ import { SLOTS, isSetting, resolveEffort } from './effort.mjs';
 import { pickNotch } from './notch.mjs';
 import { DEFAULT_VOICE, FISH_CHOICES } from './fish.mjs';
 import { GEMINI_CHOICES, GEMINI_DEFAULT_VOICE, GEMINI_LOOK_VOICES, GEMINI_MODEL, GEMINI_VOICES } from './gemini.mjs';
+import { ELEVEN_CHOICES, ELEVEN_DEFAULT_VOICE, ELEVEN_LOOK_VOICES, ELEVEN_MODEL, ELEVEN_VOICES } from './elevenlabs.mjs';
 import { createSecrets, retryLoad, runInput } from './secrets.mjs';
 import { showTrayIcon } from './wintray.mjs';
 import { createActivity } from './activity.mjs';
@@ -132,14 +133,16 @@ const DEFAULTS = {
   efforts: {}, // how hard each model slot thinks: default, each heavy job, backup1, backup2 ('' = automatic, 'off', or a level)
   notch: 'off', // where I appear: 'off' (beside the cursor, default), 'drop' (the capsule) or 'spread' (a Mac's notch; see notchMode)
   onboarded: false, onboardStep: 0, filesAsked: false, keys: DEFAULT_KEYS, muteWhileTalking: true, volume: 100, autoListen: false, listenEvery: false, listenSecs: 8, lite: false, wakeWord: false, setupVersion: 0, size: 'default', look: 'classic', introDone: false,
-  replies: 'text', // 'voice': spoken (with Fish Audio or Gemini) as well as shown
+  replies: 'text', // 'voice': spoken (with Fish Audio, Gemini or ElevenLabs) as well as shown
   speechLang: 'auto', // the language talking is recognised in (macOS): 'auto' follows the Mac's language list, or a locale like 'ar-SA'
-  tts: 'fish', // which one speaks: 'fish' (Fish Audio), 'gemini' or 'voicestudio' (the VoiceStudio app on this computer)
+  tts: 'fish', // which one speaks: 'fish' (Fish Audio), 'gemini', 'elevenlabs' or 'voicestudio' (the VoiceStudio app on this computer)
   studioSpeak: 'short', // how much VoiceStudio says out loud: 'short', 'medium' or 'full' (it renders slower than real time)
   studioVoices: {}, // look → its VoiceStudio voice (a saved profile id; none: the selected engine's default voice)
   fishModel: FISH_CHOICES[0].id, // Drama 3 (most expressive) or S2.1 Pro (natural pace, cheaper)
   geminiVoices: {}, // look → the Gemini voice it speaks in, where picked in the setup guide or the panel (else GEMINI_LOOK_VOICES)
   geminiModel: GEMINI_MODEL, // Flash Lite (quick, cheaper) or Flash (studio quality)
+  elevenVoices: {}, // look → the ElevenLabs voice it speaks in, where picked (else ELEVEN_LOOK_VOICES)
+  elevenModel: ELEVEN_MODEL, // Flash v2.5 (quick, cheaper) or v3 (most expressive)
 };
 const LINUX = process.platform === 'linux';
 // Linux: "x11" or "wayland" (the app says which). Wayland keeps apps from seeing the pointer over other apps and
@@ -153,8 +156,8 @@ const SIZES = [['default', 'Default'], ['small', 'Small'], ...(POINTER_OK ? [['c
 const sizeNow = () => (SIZES.some(([s]) => s === config.size) ? config.size : 'default');
 // What the sidekick looks like: the goo blob, JARVIS (a globe of light with a HUD reticle at cursor size) or
 // one of four characters, each with its own Fish Audio voice. Roamie's used to be JARVIS's, saved in every
-// config as fishVoice, so the voice comes from the look and that setting is no longer read. (With Gemini as the
-// voice, it's the one Gemini voice the user picked, whatever the look.)
+// config as fishVoice, so the voice comes from the look and that setting is no longer read. (With Gemini or
+// ElevenLabs as the voice, it's the one voice the user picked, whatever the look.)
 const LOOKS = [
   ['classic', 'Roamie', DEFAULT_VOICE],
   ['jarvis', 'JARVIS', 'e13fa398a7f445a685316a3de6089ce7'],
@@ -168,6 +171,7 @@ const LOOKS = [
 const lookVoice = () => (LOOKS.find(([id]) => id === config.look) ?? LOOKS[0])[2];
 // The look's voice with Gemini and with VoiceStudio: the user's pick for it, else its own default.
 const geminiVoice = () => config.geminiVoices?.[config.look] ?? GEMINI_LOOK_VOICES[config.look] ?? GEMINI_DEFAULT_VOICE;
+const elevenVoice = () => config.elevenVoices?.[config.look] ?? ELEVEN_LOOK_VOICES[config.look] ?? ELEVEN_DEFAULT_VOICE;
 const studioVoice = () => config.studioVoices?.[config.look] ?? null;
 // Its name is its look's: Roamie, JARVIS, GlayOS, Ultren, Anime Girl, Sarah, Adrian or Rita X. Roamies is the app.
 const nameOfLook = (look) => (LOOKS.find(([id]) => id === look) ?? LOOKS[0])[1];
@@ -221,13 +225,14 @@ const saveConfig = () => writeJson(CONFIG_PATH, routed && defaultPick ? { ...con
 const TTS = {
   fish: { id: 'fish', name: 'Fish Audio', secret: 'fish-audio', site: 'fish.audio' },
   gemini: { id: 'gemini', name: 'Gemini', secret: 'gemini-tts', site: 'aistudio.google.com' },
+  elevenlabs: { id: 'elevenlabs', name: 'ElevenLabs', secret: 'elevenlabs-tts', site: 'elevenlabs.io' },
   // On this computer: no key, never falls back to a paid service when it isn't running.
   voicestudio: { id: 'voicestudio', name: 'VoiceStudio', local: true },
 };
 const tts = () => TTS[config.tts] ?? TTS.fish;
 // Which have a key to speak with: 'own' (saved for the voice), 'shared' (Gemini only: the AI's Gemini key, from the
 // Model page, when no key was saved just for the voice) or false. For the one in use, speech.on says.
-const ttsKeys = { fish: false, gemini: false };
+const ttsKeys = { fish: false, gemini: false, elevenlabs: false };
 const hasVoiceKey = (id) => (id === tts().id ? speech.on : !!ttsKeys[id]);
 // The key the AI uses for Gemini, if it's an API key (the same Google AI Studio key speaks too).
 const brainGeminiKey = () => auth.resolveApiKey('gemini').then((c) => c?.accessToken || null).catch(() => null);
@@ -276,6 +281,7 @@ function aimSpeaker(id) {
   speech.setStudioSpeak?.(config.studioSpeak); // how much VoiceStudio says out loud
   if (TTS[id]?.local) speech.setLocalVoice(studioVoice());
   else if (id === 'gemini') { speech.setVoice(geminiVoice()); speech.setModel(config.geminiModel); }
+  else if (id === 'elevenlabs') { speech.setVoice(elevenVoice()); speech.setModel(config.elevenModel); }
   else { speech.setVoice(lookVoice()); speech.setModel(config.fishModel); }
 }
 // The same, with its key: the one given, else the saved one.
@@ -1812,6 +1818,7 @@ function setLook(l) {
   // Each look has its own voice with every service.
   if (tts().id === 'fish') speech.setVoice(lookVoice());
   else if (tts().id === 'gemini') speech.setVoice(geminiVoice());
+  else if (tts().id === 'elevenlabs') speech.setVoice(elevenVoice());
   else speech.setLocalVoice(studioVoice());
   ui({ kind: 'look', look: l }); menu();
   // Spoken only: the picker shows the words. Not over a reply, and a quick run of picks only says the last one.
@@ -1844,7 +1851,7 @@ function speakLine(text, mood = 'happy') {
   if (v) { v.say(text); v.end(); }
 }
 
-// Fish Audio or Gemini. One without a key yet speaks once it has one (the panel and the guide ask for it).
+// Fish Audio, Gemini or ElevenLabs. One without a key yet speaks once it has one (the panel and the guide ask for it).
 async function setTts(id) {
   if (!TTS[id] || id === tts().id) return;
   await voiceKeysLoaded;
@@ -1893,6 +1900,19 @@ function setGeminiVoice(v) {
   if (tts().id === 'gemini' && VOICE_ON()) speakLine('This is how I sound.');
 }
 
+function setElevenVoice(v) {
+  if (!ELEVEN_VOICES.some((x) => x.id === v) || v === elevenVoice()) return;
+  config.elevenVoices = { ...config.elevenVoices, [config.look]: v }; saveConfig(); // this look's
+  if (tts().id === 'elevenlabs') speech.setVoice(v);
+  menu(); if (onboarding) obState();
+  if (tts().id === 'elevenlabs' && VOICE_ON()) speakLine('This is how I sound.');
+}
+
+function setElevenModel(id) {
+  if (!ELEVEN_CHOICES.some((c) => c.id === id) || id === config.elevenModel) return;
+  config.elevenModel = id; saveConfig(); if (tts().id === 'elevenlabs') speech.setModel(id); menu();
+}
+
 async function removeVoiceKey(id = tts().id) {
   const t = TTS[id];
   if (!t) return;
@@ -1907,7 +1927,7 @@ async function removeVoiceKey(id = tts().id) {
   say(`${t.name} key removed.${ttsKeys[id] === 'shared' ? " I'll use the Gemini key from the Model page." : used ? ' Replies are text only.' : ''}`, 'happy');
 }
 
-// A key for Fish Audio or Gemini: checked, saved, and that service is then the one that speaks.
+// A key for Fish Audio, Gemini or ElevenLabs: checked, saved, and that service is then the one that speaks.
 // note(text, bad, problem): typed into the panel or the setup guide, so how it went shows there too, next to the field.
 const KEY_STORE = MAC ? 'Keychain' : LINUX ? 'keyring' : '';
 async function voiceKeyLogin({ provider = tts().id, thenVoice = false, given = null, note = null } = {}) {
@@ -1924,8 +1944,9 @@ async function voiceKeyLogin({ provider = tts().id, thenVoice = false, given = n
     await useTts(was);
     return say(a.reason === 'key' ? `That key didn't work. Copy it again from ${t.site} and retry.` : `I couldn't reach ${t.name}. Check the connection and try again.`, 'concerned');
   }
-  // Gemini's account check passes for keys it then won't speak with (a region it refuses, say): try a word first.
-  const tried = t.id === 'gemini' ? await speech.probe() : { ok: true };
+  // Gemini's and ElevenLabs' account checks pass for keys they then won't speak with (a region refused, a voice not on
+  // the plan): try a word first.
+  const tried = t.id === 'gemini' || t.id === 'elevenlabs' ? await speech.probe() : { ok: true };
   if (!tried.ok && tried.status >= 400 && tried.status < 500 && tried.status !== 429) {
     await useTts(was);
     return say(`${t.name} took that key but won't speak with it: ${voiceWhy(tried.message)}.`, 'concerned');
@@ -2306,6 +2327,8 @@ function panelState() {
     fishModel: config.fishModel, fishModels: FISH_CHOICES, fishFree: tts().id === 'fish' && speech.on && speech.model.endsWith('-free'),
     geminiVoice: geminiVoice(), geminiVoices: GEMINI_VOICES, geminiShared: ttsKeys.gemini === 'shared',
     geminiModel: config.geminiModel, geminiModels: GEMINI_CHOICES,
+    elevenlabsKey: hasVoiceKey('elevenlabs'), elevenVoice: elevenVoice(), elevenVoices: ELEVEN_VOICES,
+    elevenModel: config.elevenModel, elevenModels: ELEVEN_CHOICES,
     studio: tts().local ? studioState() : null,
     voice: VOICE_OK ? {
       on: !!config.voice, lang: speechLangId(), langOnline: langInfo && langInfo.id === speechLangId() ? langInfo.online : null, studioSpeak: config.studioSpeak === 'full' || config.studioSpeak === 'medium' ? config.studioSpeak : 'short', keys: HOTKEYS_OK ? talkSymbols() : null, ready: voiceReady(), mac: MAC, mute: config.muteWhileTalking !== false, autoListen: !!config.autoListen, listenEvery: !!config.listenEvery, listenSecs: listenSecs(), listenChoices: LISTEN_SECS, snoozeListen: !!config.snoozeListen, wake: WAKE_OK, wakeWord: !!config.wakeWord, wakeName: wakeName(config),
@@ -2555,13 +2578,17 @@ async function onMenu(id, via) {
   else if (id === 'fishkey_remove') removeVoiceKey('fish');
   else if (id === 'geminikey') voiceKeyLogin({ provider: 'gemini' });
   else if (id === 'geminikey_remove') removeVoiceKey('gemini');
+  else if (id === 'elevenlabskey') voiceKeyLogin({ provider: 'elevenlabs' });
+  else if (id === 'elevenlabskey_remove') removeVoiceKey('elevenlabs');
   else if (id.startsWith('tts:')) setTts(id.slice(4));
   else if (id.startsWith('geminivoice:')) setGeminiVoice(id.slice(12));
+  else if (id.startsWith('elevenlabsvoice:')) setElevenVoice(id.slice('elevenlabsvoice:'.length));
   else if (id.startsWith('studiovoice:')) setStudioVoice(id.slice(12));
   else if (id === 'voicestudio_check') { await speech.checkLocal(); menu(); if (onboarding) obState(); }
   else if (id.startsWith('geminimodel:') && GEMINI_CHOICES.some((c) => c.id === id.slice(12))) {
     config.geminiModel = id.slice(12); saveConfig(); if (tts().id === 'gemini') speech.setModel(config.geminiModel); menu();
   }
+  else if (id.startsWith('elevenlabsmodel:')) setElevenModel(id.slice('elevenlabsmodel:'.length));
   // Scheduled jobs, from the Abilities page's Routines tab. Remove is asked first in the panel's own words.
   else if (/^job:(run|pause|resume|remove):j[0-9a-f]+$/.test(id)) {
     const [, what, jid] = id.split(':');
@@ -2809,8 +2836,9 @@ function obState() {
     look: config.look ?? 'classic',
     size: sizeNow(),
     replies: VOICE_ON() ? 'voice' : 'text', // voice only when it can really speak: a service picked without its key yet shows as text
-    tts: tts().id, fishKey: hasVoiceKey('fish'), geminiKey: hasVoiceKey('gemini'),
+    tts: tts().id, fishKey: hasVoiceKey('fish'), geminiKey: hasVoiceKey('gemini'), elevenlabsKey: hasVoiceKey('elevenlabs'),
     geminiVoice: geminiVoice(), geminiVoices: GEMINI_VOICES, geminiShared: ttsKeys.gemini === 'shared',
+    elevenVoice: elevenVoice(), elevenVoices: ELEVEN_VOICES, elevenModel: config.elevenModel, elevenModels: ELEVEN_CHOICES,
     studio: tts().local ? studioState() : null,
   });
 }
@@ -2842,16 +2870,18 @@ async function onGuide(m) {
   else if (m.type === 'chat_skip') { endIntro(); config.introDone = true; saveConfig(); menu(); }
   else if (m.type === 'chat_forget' && typeof m.id === 'string') { await forgetFact(m.id); ob({ kind: 'chat_facts', facts: introFacts() }); menu(); }
   else if (m.type === 'ob_step') { config.onboardStep = Math.max(0, Math.min(8, m.step | 0)); saveConfig(); }
-  // Voice needs a working key first: without one, the guide asks for it (ob_fishkey or ob_geminikey) instead.
+  // Voice needs a working key first: without one, the guide asks for it (ob_fishkey, ob_geminikey or ob_elevenkey) instead.
   else if (m.type === 'ob_replies' && (m.mode === 'text' || (m.mode === 'voice' && speech.on))) { await voiceKeysLoaded; await setReplies(m.mode); }
   // A service picked in the guide that already has its key: it speaks from now on (voice goes on if it was text).
   else if (m.type === 'ob_tts') { await setTts(m.provider); if (speech.on && tts().id === m.provider) await setReplies('voice'); }
   else if (m.type === 'ob_geminivoice') setGeminiVoice(m.voice);
+  else if (m.type === 'ob_elevenvoice') setElevenVoice(m.voice);
   else if (m.type === 'ob_studiovoice' && typeof m.voice === 'string') setStudioVoice(m.voice);
   else if (m.type === 'ob_studiocheck') { await speech.checkLocal(); obState(); }
-  else if ((m.type === 'ob_fishkey' || m.type === 'ob_geminikey') && typeof m.key === 'string') {
+  else if ((m.type === 'ob_fishkey' || m.type === 'ob_geminikey' || m.type === 'ob_elevenkey') && typeof m.key === 'string') {
     const note = (text, bad, p) => ob({ kind: 'fish', ok: !bad, error: bad ? text : null, ...(bad && p ? linked(p) : {}) });
-    await voiceKeyLogin({ provider: m.type === 'ob_geminikey' ? 'gemini' : 'fish', given: m.key.slice(0, 1000), thenVoice: true, note }).catch((e) => { const p = problem('key', e, { store: KEY_STORE }); note(p.text, true, p); });
+    const provider = m.type === 'ob_geminikey' ? 'gemini' : m.type === 'ob_elevenkey' ? 'elevenlabs' : 'fish';
+    await voiceKeyLogin({ provider, given: m.key.slice(0, 1000), thenVoice: true, note }).catch((e) => { const p = problem('key', e, { store: KEY_STORE }); note(p.text, true, p); });
   }
   else if (m.type === 'ob_login' && OAUTH[m.provider]) oauthLogin(m.provider, typeof m.id === 'string' ? m.id.slice(0, 40) : undefined);
   else if (m.type === 'ob_login_cancel') cancelLogin(typeof m.id === 'string' ? m.id : undefined);
@@ -2894,7 +2924,10 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       .catch((e) => { const p = problem('key', e, { store: KEY_STORE }); panelNote(p.text, true, p); });
   } else if (m.type === 'panel_local_add' && typeof m.label === 'string' && typeof m.baseUrl === 'string') {
     addServer({ label: m.label.slice(0, 200), baseUrl: m.baseUrl.slice(0, 500), key: typeof m.key === 'string' ? m.key.trim().slice(0, 1000) : '', images: m.images === true }).catch((e) => console.error('add server', e));
-  } else if ((m.type === 'panel_fishkey' || m.type === 'panel_geminikey') && typeof m.key === 'string') voiceKeyLogin({ provider: m.type === 'panel_geminikey' ? 'gemini' : 'fish', given: m.key.slice(0, 1000), note: panelNote }).catch((e) => console.error('voice key', e));
+  } else if ((m.type === 'panel_fishkey' || m.type === 'panel_geminikey' || m.type === 'panel_elevenlabskey') && typeof m.key === 'string') {
+    const provider = m.type === 'panel_geminikey' ? 'gemini' : m.type === 'panel_elevenlabskey' ? 'elevenlabs' : 'fish';
+    voiceKeyLogin({ provider, given: m.key.slice(0, 1000), note: panelNote }).catch((e) => console.error('voice key', e));
+  }
   else if (m.type === 'answer') { pending.get(m.id)?.(m.text ?? null); pending.delete(m.id); }
   else if (m.type === 'ui_ready') {
     retired.then((notes) => { if (notes.length) { retired = Promise.resolve([]); say(`${notes.join(' ')} Do it on the Model page in ${PANEL}.`, 'concerned'); } });

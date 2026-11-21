@@ -260,7 +260,7 @@ h2 { margin: 0; font: 700 13px/1.35 var(--mono); font-stretch: 87.5%; color: var
 .label-row .link { flex: none; padding: 0; }
 .link[hidden] { display: none; }
 #fish-change { margin: -6px 0 10px; }
-/* Which service speaks (Fish Audio or Gemini), and Gemini's voice: a label with its choice at the far end. */
+/* Which service speaks (Fish Audio, Gemini or ElevenLabs), and its voice: a label with its choice at the far end. */
 .tts-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 12px; font-size: 12px; color: var(--ink-2); }
 .tts-row[hidden] { display: none; }
 .tts-row .field { flex: 0 1 230px; }

@@ -485,10 +485,10 @@
   });
 
   // ---------------------------------------------------------------- step 3: how replies come
-  // Text only, or Voice + text (spoken with Fish Audio, Gemini or VoiceStudio). Fish Audio and Gemini need the user's
-  // own key: picking one opens the field, and the key is checked before voice turns on. VoiceStudio runs on this
-  // computer and needs no key, only to be open: its status shows instead, with Check again. With Gemini and
-  // VoiceStudio there's also a voice to choose (Fish Audio's comes with the look).
+  // Text only, or Voice + text (spoken with Fish Audio, Gemini, ElevenLabs or VoiceStudio). Fish Audio, Gemini and
+  // ElevenLabs need the user's own key: picking one opens the field, and the key is checked before voice turns on.
+  // VoiceStudio runs on this computer and needs no key, only to be open: its status shows instead, with Check again.
+  // With Gemini, ElevenLabs and VoiceStudio there's also a voice to choose (Fish Audio's comes with the look).
   // link: where a key comes from. Gemini's is Google AI Studio's key page.
   // Ken's Fish Audio affiliate link (sign-up lands on their site; keys are under Developers). It's disclosed in
   // the UI: the #fish-link button in index.html reads "Get a free key (affiliate link)".
@@ -496,6 +496,7 @@
   const TTS = {
     fish: { name: 'Fish Audio', link: FISH_URL, get: 'Get a free key (affiliate link)', note: 'Spoken replies are billed to your own Fish Audio account.', send: 'ob_fishkey' },
     gemini: { name: 'Gemini', link: 'https://aistudio.google.com/apikey', get: 'Get a free key', note: 'Spoken replies are billed to your own Google AI Studio account.', send: 'ob_geminikey' },
+    elevenlabs: { name: 'ElevenLabs', link: 'https://elevenlabs.io/app/settings/api-keys', get: 'Get a key', note: 'Spoken replies are billed in credits to your own ElevenLabs account.', send: 'ob_elevenkey' },
     voicestudio: { name: 'VoiceStudio', local: true },
   };
   // A row on this step coming or going: grows into its room and fades in, or the reverse, rather than popping.
@@ -546,13 +547,15 @@
       showRow($('studio-row'), mode === 'voice' && !!t.local);
       $('studio-status').textContent = !vs || vs.checking ? 'Checking VoiceStudio…' : vs.ok ? `VoiceStudio is ready${vs.engine ? ` · ${vs.engine}` : ''}` : vs.message || "VoiceStudio isn't available.";
       $('studio-status').className = vs && !vs.checking && !vs.ok ? 'bad' : '';
-      // The voices, once it can speak: Gemini's ("Kore · Firm"), or the ones saved in VoiceStudio.
+      // The voices, once it can speak: Gemini's ("Kore · Firm"), ElevenLabs' ("Rachel · Warm, calm"), or the ones
+      // saved in VoiceStudio.
       showRow($('gvoice-row'), mode === 'voice' && t !== TTS.fish && saved);
       const voices = t.local ? [{ id: 'default', label: 'Engine default' }, ...(vs?.voices ?? []).map((v) => ({ id: v.id, label: v.name }))]
-        : (state?.geminiVoices ?? []).map((v) => ({ id: v.id, label: `${v.id} · ${v.style}` }));
+        : replies.tts() === 'elevenlabs' ? (state?.elevenVoices ?? []).map((v) => ({ id: v.id, label: `${v.name} · ${v.style}` }))
+          : (state?.geminiVoices ?? []).map((v) => ({ id: v.id, label: `${v.id} · ${v.style}` }));
       const list = JSON.stringify(voices);
       if ($('gvoice').dataset.list !== list) { $('gvoice').dataset.list = list; $('gvoice').replaceChildren(...voices.map((v) => el('option', { value: v.id, textContent: v.label }))); }
-      const picked = t.local ? vs?.voice ?? 'default' : state?.geminiVoice;
+      const picked = t.local ? vs?.voice ?? 'default' : replies.tts() === 'elevenlabs' ? state?.elevenVoice : state?.geminiVoice;
       if (picked) $('gvoice').value = picked;
       $('fish-link').textContent = t.get ?? '';
       $('fish-note').textContent = t.note ?? '';
@@ -618,6 +621,7 @@
   $('gvoice').addEventListener('change', () => {
     const v = $('gvoice').value;
     if (TTS[replies.tts()].local) { if (state.studio) state.studio.voice = v === 'default' ? null : v; send({ type: 'ob_studiovoice', voice: v }); }
+    else if (replies.tts() === 'elevenlabs') { state.elevenVoice = v; send({ type: 'ob_elevenvoice', voice: v }); }
     else { state.geminiVoice = v; send({ type: 'ob_geminivoice', voice: v }); }
   });
   $('find-show').addEventListener('click', () => { invoke('open_settings', { pane: 'taskbar' }); quip('Switch me on under Other system tray icons', 4); });
@@ -1326,10 +1330,13 @@
     const st = {
       // &filesAsked=1: Allow was tapped for the folders in an earlier run. &replies=voice&fish=1: voice already on.
       kind: 'state', platform: q.get('platform') || 'darwin', step: +(q.get('step') || 0), sound: true, look: q.get('look') || 'classic', size: q.get('size') || 'default', voice: true, actions: false, login: true, filesAsked: q.get('filesAsked') === '1',
-      // &tts=gemini&gemini=1: Gemini as the voice, its key saved.
+      // &tts=gemini&gemini=1 or &tts=elevenlabs&eleven=1: that voice, its key saved.
       replies: q.get('replies') === 'voice' ? 'voice' : 'text', fishKey: q.get('fish') === '1',
       bind: q.get('session') === 'wayland' ? Object.fromEntries(['summon', 'talk', 'ask', 'list', 'panel'].map((k) => [k, `'/home/sam/Apps/Roamies 0.1.33.AppImage' --${k}`])) : null,
-      tts: q.get('tts') === 'gemini' ? 'gemini' : 'fish', geminiKey: q.get('gemini') === '1', geminiVoice: 'Kore',
+      tts: q.get('tts') === 'gemini' ? 'gemini' : q.get('tts') === 'elevenlabs' ? 'elevenlabs' : 'fish',
+      geminiKey: q.get('gemini') === '1', geminiVoice: 'Kore',
+      elevenlabsKey: q.get('eleven') === '1', elevenVoice: '21m00Tcm4TlvDq8ikWAM',
+      elevenVoices: [['21m00Tcm4TlvDq8ikWAM', 'Rachel', 'Warm, calm'], ['JBFqnCBsd6RMkjVDRZzb', 'George', 'Warm, British'], ['EXAVITQu4vr4xnSDxMaL', 'Bella', 'Soft, young']].map(([id, name, style]) => ({ id, name, style })),
       geminiVoices: [['Zephyr', 'Bright'], ['Puck', 'Upbeat'], ['Charon', 'Informative'], ['Kore', 'Firm']].map(([id, style]) => ({ id, style })),
       keys: q.get('platform') === 'win32' ? { talk: ['control', 'option'], write: ['control', 'shift'], summon: 'Control+Shift+KeyS', snap: 'Control+Shift+KeyA' } : { talk: ['control', 'option'], write: win ? ['control', 'shift'] : ['option', 'command'], summon: 'Control+Alt+KeyS', snap: 'Control+Alt+KeyA' }, connected: null,
       voiceModel: win ? { status: q.get('model') || 'missing', done: q.get('model') === 'downloading' ? 281601575 : 0, total: 670479942, error: q.get('model') === 'error' ? 'Download failed. Check your internet.' : null, size: '670 MB' } : null,
@@ -1379,11 +1386,12 @@
           window.__onboard?.({ kind: 'login', provider: m.provider, phase: 'done' }); window.__onboard?.({ ...st });
         }, 900);
       } else if (m.type === 'ob_replies') { st.replies = m.mode; reply({ ...st }); reply({ kind: 'say', text: m.mode === 'voice' ? 'Voice is on!' : 'Text only from now on.' }, 50); }
-      else if (m.type === 'ob_fishkey' || m.type === 'ob_geminikey') {
+      else if (m.type === 'ob_fishkey' || m.type === 'ob_geminikey' || m.type === 'ob_elevenkey') {
         // A key of "bad" is refused, like a wrong one.
-        const p = m.type === 'ob_geminikey' ? 'gemini' : 'fish';
+        const p = m.type === 'ob_geminikey' ? 'gemini' : m.type === 'ob_elevenkey' ? 'elevenlabs' : 'fish';
+        const site = p === 'gemini' ? 'aistudio.google.com' : p === 'elevenlabs' ? 'elevenlabs.io' : 'fish.audio';
         setTimeout(() => {
-          if (m.key === 'bad') return window.__onboard?.({ kind: 'fish', ok: false, error: `That key didn't work. Copy it again from ${p === 'gemini' ? 'aistudio.google.com' : 'fish.audio'} and retry.` });
+          if (m.key === 'bad') return window.__onboard?.({ kind: 'fish', ok: false, error: `That key didn't work. Copy it again from ${site} and retry.` });
           Object.assign(st, { [`${p}Key`]: true, tts: p, replies: 'voice' }); window.__onboard?.({ kind: 'fish', ok: true }); window.__onboard?.({ ...st });
         }, 900);
       } else if (m.type === 'ob_tts') {
@@ -1396,6 +1404,7 @@
       else if (m.type === 'ob_studiocheck') reply({ ...st }, 600);
       else if (m.type === 'ob_studiovoice') { st.studio.voice = m.voice === 'default' ? null : m.voice; reply({ ...st }); reply({ kind: 'say', text: 'This is my new voice.' }, 50); }
       else if (m.type === 'ob_geminivoice') { st.geminiVoice = m.voice; reply({ ...st }); reply({ kind: 'say', text: 'This is how I sound.' }, 50);
+      } else if (m.type === 'ob_elevenvoice') { st.elevenVoice = m.voice; reply({ ...st }); reply({ kind: 'say', text: 'This is how I sound.' }, 50);
       } else if (m.type === 'set_keys') {
         // As the sidecar does: talk and type never share a pair, so picking the other one's pair swaps them.
         const k = st.keys, both = (a, b) => a.every((x) => b.includes(x));

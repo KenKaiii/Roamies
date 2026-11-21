@@ -1,5 +1,5 @@
-// Speaks replies with Fish Audio, Gemini or VoiceStudio (the user's pick) and hands the audio to the overlay
-// ({ kind: 'speech' } messages).
+// Speaks replies with Fish Audio, Gemini, ElevenLabs or VoiceStudio (the user's pick) and hands the audio to the
+// overlay ({ kind: 'speech' } messages).
 // - VoiceStudio is the VoiceStudio app on this computer (voicestudio.mjs): no key, its selected engine, the user's saved
 //   VoiceStudio voice. A reply that fails there is reported and stays text; it never falls back to a paid service.
 //   Beats aren't made in it (each one would hold up the GPU for seconds), so its replies have none.
@@ -19,6 +19,7 @@ import { DEFAULT_VOICE, FISH_MODELS, FREE_MODEL, FishVoice, RATE, fishAccount } 
 import { StudioVoice, studioStatus } from './voicestudio.mjs';
 import { cueFeel } from './speech.mjs';
 import { GEMINI_DEFAULT_VOICE, GEMINI_MODEL, GEMINI_MODELS, GEMINI_PITCH, GEMINI_RATE, GeminiVoice, geminiAccount } from './gemini.mjs';
+import { ELEVEN_DEFAULT_VOICE, ELEVEN_MODEL, ELEVEN_MODELS, ELEVEN_RATE, ElevenVoice, elevenAccount } from './elevenlabs.mjs';
 
 // The services that can speak. models: priciest first, the pick and the ones after it are tried in turn; pick:
 // the one used until the user picks (else the first); freeModel: the one for an account with no credit; rate:
@@ -27,6 +28,8 @@ import { GEMINI_DEFAULT_VOICE, GEMINI_MODEL, GEMINI_MODELS, GEMINI_PITCH, GEMINI
 export const PROVIDERS = {
   fish: { id: 'fish', name: 'Fish Audio', Voice: FishVoice, account: fishAccount, models: FISH_MODELS, freeModel: FREE_MODEL, rate: RATE, defaultVoice: DEFAULT_VOICE },
   gemini: { id: 'gemini', name: 'Gemini', Voice: GeminiVoice, account: geminiAccount, models: GEMINI_MODELS, pick: GEMINI_MODEL, freeModel: null, rate: GEMINI_RATE, play: Math.round(GEMINI_RATE * GEMINI_PITCH), defaultVoice: GEMINI_DEFAULT_VOICE, warmDelay: 15_000 },
+  // Beats cost characters too, and a look's voice can be tried out: wait a little before making 34 of them.
+  elevenlabs: { id: 'elevenlabs', name: 'ElevenLabs', Voice: ElevenVoice, account: elevenAccount, models: ELEVEN_MODELS, pick: ELEVEN_MODEL, freeModel: null, rate: ELEVEN_RATE, defaultVoice: ELEVEN_DEFAULT_VOICE, warmDelay: 30_000 },
 };
 
 // Silence trimmed from both ends (a little kept), so a beat starts the moment it plays.
@@ -74,7 +77,7 @@ export function bundledBeats(dir = path.join(path.dirname(fileURLToPath(import.m
 }
 
 // What the overlay says when a reply's voice fails (onProblem's argument): the service's own reason when there is one.
-export const voiceWhy = (message) => String(message ?? '').replace(/^(Gemini|Fish Audio):\s*/, '').replace(/[.\s]+$/, '');
+export const voiceWhy = (message) => String(message ?? '').replace(/^(Gemini|Fish Audio|ElevenLabs):\s*/, '').replace(/[.\s]+$/, '');
 export function voiceProblemText(what, name) {
   if (what === 'key') return `My ${name} key isn't working, so replies are text for now.`;
   const why = typeof what === 'string' ? voiceWhy(what) : '';

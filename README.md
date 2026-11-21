@@ -34,11 +34,11 @@ voice, keeps track of what you said you'd do and nudges you when it's due.
 
 - **Talk, don't type.** Hold ⌃⌥ (Ctrl+Alt on Windows and Linux), say it, let go. On macOS and Windows, circle something with the cursor while you talk and it sees what you mean.
 - **Or type.** Tap ⌥⌘ (Ctrl+Shift on Windows and Linux) and a small text field opens beside your cursor. Type, press Enter.
-- **It talks back.** Spoken replies in its own voice, with real feeling, through [Fish Audio](https://fish.audio), or in a Gemini voice you pick, with your own [Google AI Studio](https://aistudio.google.com/apikey) key (the one you already use for a Gemini model works).
+- **It talks back.** Spoken replies in its own voice, with real feeling, through [Fish Audio](https://fish.audio), [ElevenLabs](https://elevenlabs.io), or in a Gemini voice you pick, with your own [Google AI Studio](https://aistudio.google.com/apikey) key (the one you already use for a Gemini model works).
 - **It remembers.** What you said you'd do, reminders down to the second (or on repeat: "every weekday at 9", "every 2 hours"), and what matters to you.
 - **It draws on your screen.** Rings the exact button to click, walks you through each step, and sketches answers beside what you're reading.
 - **It does the clicking.** Opens apps, sites and files, and on macOS and Windows clicks or types in other apps for you.
-- **Your subscriptions.** Sign in with Claude or ChatGPT, or use an API key (Gemini, Grok, Kimi Code and more).
+- **Your subscriptions.** Sign in with Claude or ChatGPT, or use an API key (Gemini, Grok, Kimi Code, OpenCode and more).
 
 | Pick your Roamie | What you get                                            |
 | ---------------- | ------------------------------------------------------- |
@@ -93,7 +93,7 @@ quizzes you answer with a click.
 | ---------------------- | -------------------------- | --------------------------- | ---------------------------------- |
 | Talk to it             | Yes, best on macOS 26+     | Yes, speech runs on your PC | Yes, speech runs on your PC        |
 | Circle while talking   | Yes                        | Yes                         | No                                 |
-| Spoken replies         | Fish Audio or Gemini key   | Fish Audio or Gemini key    | Fish Audio or Gemini key           |
+| Spoken replies         | Fish, Gemini or ElevenLabs key | Fish, Gemini or ElevenLabs key | Fish, Gemini or ElevenLabs key |
 | Memory and reminders   | Yes                        | Yes                         | Yes                                |
 | Read windows and point | Yes                        | Yes                         | Points from screenshots only       |
 | Cards and diagrams     | Yes                        | Yes                         | Yes                                |
@@ -114,7 +114,7 @@ recognition (it needs a Windows language with text recognition, which most have)
 running as administrator, and it borrows your cursor for real clicks, keys and scrolling, giving it back when it's done.
 Windows also leaves Roamies out of every screen capture, so it won't show in your screenshots or screen shares.</sub>
 
-<sub>Spoken replies are billed to your own Fish Audio or Google AI Studio account; the panel shows what each voice model costs. Voice on
+<sub>Spoken replies are billed to your own Fish Audio, Google AI Studio or ElevenLabs account; the panel shows what each voice model costs. Voice on
 Windows and Linux uses [NVIDIA Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3)
 ([CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)), in the ONNX export by
 [istupakov](https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx), run with
@@ -261,7 +261,7 @@ about the screen, go to the AI provider you pick. [PRIVACY.md](PRIVACY.md) lists
 2. Drag Roamies from Applications to the Trash.
 3. Delete the `~/Roamies` folder (your settings, memory, chats, skills and what agents made), and `~/.gg/sidekick`
    and `~/.gg/sidekick.json` if they're there from an older version. Keep `~/.gg/auth.json` if you use GG Coder.
-4. Open Keychain Access, search for "Roamies" and delete the Fish Audio and Gemini voice keys.
+4. Open Keychain Access, search for "Roamies" and delete the Fish Audio, Gemini and ElevenLabs voice keys.
 
 **Windows:**
 
@@ -276,7 +276,8 @@ about the screen, go to the AI provider you pick. [PRIVACY.md](PRIVACY.md) lists
 2. Remove the package (`sudo apt remove roamies` or `sudo dnf remove roamies`), or delete the AppImage.
 3. Delete the `~/Roamies` folder (the voice model is in `~/Roamies/Data/models`), and `~/.gg/sidekick` and
    `~/.gg/sidekick.json` if they're there from an older version. Keep `~/.gg/auth.json` if you use GG Coder.
-4. Delete the Fish Audio key: `secret-tool clear service com.kenkai.roamies account fish-audio`.
+4. Delete the Fish Audio key: `secret-tool clear service com.kenkai.roamies account fish-audio`. The Gemini and
+   ElevenLabs voice keys use `account gemini-tts` and `account elevenlabs-tts`.
 
 ## Build with the framework
 
