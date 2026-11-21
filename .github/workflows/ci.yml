@@ -193,19 +193,25 @@ jobs:
           src-tauri/target/debug/roamies > "$RUNNER_TEMP/app-mutter.log" 2>&1 &
           pid=$!
           trap 'kill $pid 2>/dev/null' EXIT
-          overlay=
+          # The overlay: the biggest visible Roamies window kept above the others.
+          overlay='' area=0
           for _ in $(seq 60); do
             sleep 1
             for id in $(xdotool search --onlyvisible --name '^Roamies$' 2>/dev/null); do
-              xprop -id "$id" _NET_WM_STATE | grep -q _NET_WM_STATE_ABOVE && overlay=$id
+              xprop -id "$id" _NET_WM_STATE | grep -q _NET_WM_STATE_ABOVE || continue
+              a=$(xwininfo -id "$id" | awk '/Width:/{w=$2} /Height:/{h=$2} END{print w * h}')
+              if [ "$a" -gt "$area" ]; then overlay=$id area=$a; fi
             done
-            [ -n "$overlay" ] && break
+            [ "$area" -gt 1000000 ] && break
           done
           sleep 3
-          state=; [ -n "$overlay" ] && state=$(xprop -id "$overlay" _NET_WM_STATE)
+          for id in $(xdotool search --onlyvisible --name '^Roamies$' 2>/dev/null); do
+            echo "window $id ($(xwininfo -id "$id" | awk '/Width:/{w=$2} /Height:/{h=$2} END{print w "x" h}')): $(xprop -id "$id" _NET_WM_STATE)"
+          done
           if [ -z "$overlay" ]; then
             tail -30 "$RUNNER_TEMP/mutter.log"; tail -30 "$RUNNER_TEMP/app-mutter.log"; echo "No overlay window showed up under Mutter"; exit 1
           fi
+          state=$(xprop -id "$overlay" _NET_WM_STATE)
           size=$(xwininfo -id "$overlay" | awk '/Width:/{w=$2} /Height:/{h=$2} END{print w "x" h}')
           echo "overlay $overlay ($size): $state"
           if echo "$state" | grep -q MAXIMIZED; then echo "Mutter maximized the overlay (#78)"; exit 1; fi
