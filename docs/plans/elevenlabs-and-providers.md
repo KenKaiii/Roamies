@@ -1,6 +1,6 @@
 # ElevenLabs voice, OpenCode and Antigravity providers
 
-Status: implemented on `feat/elevenlabs-voice`, awaiting review. No PR until approved.
+Status: implemented on `feat/elevenlabs-voice`, open for review in PR #162.
 
 ## What changes
 
