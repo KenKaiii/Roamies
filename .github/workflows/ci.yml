@@ -176,6 +176,41 @@ jobs:
           SH
           dbus-run-session -- xvfb-run -a -s '-screen 0 1600x1000x24' bash "$RUNNER_TEMP/smoke.sh"
 
+      # Under GNOME's window manager (Mutter, X11) the overlay must not end up maximized: Mutter auto-maximizes a new
+      # resizable window covering most of the screen, and a maximized window above a fullscreen app keeps GNOME's top
+      # bar and dock up (#78). The overlay is the window that keeps itself above the others.
+      - name: Check the Linux overlay under Mutter
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y mutter x11-utils
+          cat > "$RUNNER_TEMP/mutter.sh" <<'SH'
+          set -u
+          export ROAMIES_DATA_DIR="$RUNNER_TEMP/roamies-mutter" XDG_CURRENT_DESKTOP=GNOME
+          mkdir -p "$ROAMIES_DATA_DIR"
+          echo '{"onboarded":true,"setupVersion":2,"voice":false}' > "$ROAMIES_DATA_DIR/sidekick.json"
+          mutter --x11 --replace > "$RUNNER_TEMP/mutter.log" 2>&1 &
+          for _ in $(seq 30); do xprop -root _NET_SUPPORTING_WM_CHECK | grep -q 'window id' && break; sleep 1; done
+          src-tauri/target/debug/roamies > "$RUNNER_TEMP/app-mutter.log" 2>&1 &
+          pid=$!
+          overlay=
+          for _ in $(seq 60); do
+            sleep 1
+            for id in $(xdotool search --onlyvisible --name '^Roamies$' 2>/dev/null); do
+              xprop -id "$id" _NET_WM_STATE | grep -q _NET_WM_STATE_ABOVE && overlay=$id
+            done
+            [ -n "$overlay" ] && break
+          done
+          sleep 3
+          state=; [ -n "$overlay" ] && state=$(xprop -id "$overlay" _NET_WM_STATE)
+          kill $pid 2>/dev/null
+          if [ -z "$overlay" ]; then
+            tail -30 "$RUNNER_TEMP/mutter.log"; tail -30 "$RUNNER_TEMP/app-mutter.log"; echo "No overlay window showed up under Mutter"; exit 1
+          fi
+          echo "overlay $overlay: $state"
+          if echo "$state" | grep -q MAXIMIZED; then echo "Mutter maximized the overlay (#78)"; exit 1; fi
+          SH
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1600x1000x24' bash "$RUNNER_TEMP/mutter.sh"
+
       # The debug app starts, starts its sidecar (its "start" log line) and keeps running.
       - name: Smoke test the Windows app
         if: runner.os == 'Windows'
