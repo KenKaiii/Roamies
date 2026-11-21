@@ -19,15 +19,18 @@ export const withWindow = (info, contextWindow) => ({ ...info, contextWindow, ma
 
 // A server the user added that doesn't say a model's window (hosted APIs like NVIDIA NIM list only ids) gets Roamies'
 // minimum, not gg-core's 4k guess: fitted to half of 4k, every earlier turn was dropped (#150).
-/** Models Roamies can run: it reads screenshots and drives tools, so both are needed. `windows`: measured contexts by id. */
-export const localModels = (probes, windows = new Map()) => probes.filter((p) => p.reachable).flatMap((p) => p.models
-  .filter((m) => m.supportsImages && m.supportsTools)
+/** Models that use tools, seeing images or not: those that don't can still be subagents. `windows`: measured contexts by id. */
+export const toolModels = (probes, windows = new Map()) => probes.filter((p) => p.reachable).flatMap((p) => p.models
+  .filter((m) => m.supportsTools)
   .map((m) => {
     const info = toModelInfo(m, p.endpoint);
     if (m.contextWindowKnown) return info;
     if (windows.has(info.id)) return withWindow(info, windows.get(info.id));
     return p.endpoint.custom ? withWindow(info, MIN_CONTEXT) : info;
   }));
+
+/** Models Roamies can talk through: it reads screenshots and drives tools, so both are needed. */
+export const localModels = (probes, windows = new Map()) => toolModels(probes, windows).filter((m) => m.supportsImages);
 
 const okServer = (s) => s && typeof s === 'object' && typeof s.id === 'string' && /^[a-z0-9][a-z0-9-]{0,39}$/.test(s.id)
   && !BUILT_IN.some((b) => b.id === s.id) && typeof s.label === 'string' && typeof s.baseUrl === 'string';
@@ -79,19 +82,20 @@ const onServer = (id) => (m) => m.provider === 'local' && parseLocalModelId(m.id
 export const forgetLocal = (id) => clearRuntimeModels(onServer(id));
 
 /**
- * Asks one server what it serves and registers its usable models, leaving other servers' alone. `save`: also store
- * its `local:<id>` credential, with `apiKey` (only when it answered). → { ok, reason, models, all } where `all`
- * counts every chat model, usable or not.
+ * Asks one server what it serves and registers its models that use tools (text-only ones are for subagents), leaving
+ * other servers' alone. `save`: also store its `local:<id>` credential, with `apiKey` (only when it answered).
+ * → { ok, reason, models, text, all }: `models` can also see images, `text` counts those that can't (subagents only),
+ * `all` counts every chat model.
  */
 export async function connectLocal(auth, server, { save = false, apiKey, windows, probe = probeEndpoint } = {}) {
   const key = apiKey || await storedKey(auth, server.id);
   const p = await probe(key ? { ...server, apiKey: key } : server, { timeoutMs: 1500 });
   if (!p.reachable) return { ok: false, reason: p.reason ?? 'not running', models: [], all: 0 };
-  const models = localModels([p], windows);
+  const usable = toolModels([p], windows), models = usable.filter((m) => m.supportsImages);
   clearRuntimeModels(onServer(server.id));
-  registerRuntimeModels(models);
+  registerRuntimeModels(usable);
   if (save) await auth.setLocalEndpoint(server.id, server.baseUrl, key);
-  return { ok: true, models, all: p.models.length };
+  return { ok: true, models, text: usable.length - models.length, all: p.models.length };
 }
 
 /** Refreshes every connected server at once; the models of servers not connected leave the menu. → Map id → result. */

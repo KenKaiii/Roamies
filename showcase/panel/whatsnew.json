@@ -4,6 +4,7 @@
       "version": null,
       "date": "2026-11-21",
       "items": [
+        { "kind": "new", "title": "Text-only subagents", "text": "Subagents can use models that can't see images, like NVIDIA's coding models." },
         { "kind": "fixed", "title": "Smooth capsule on Linux", "text": "On Linux, the capsule flashed black stripes as it opened. Fixed. Thanks sakartvelo11!" },
         { "kind": "fixed", "title": "I remember with NVIDIA NIM", "text": "With NVIDIA NIM, I forgot what we'd just said. Not anymore. Thanks FunisWokodneer!" }
       ]

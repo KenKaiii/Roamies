@@ -529,19 +529,24 @@
   // Settings, one page per concern.
   const SIZE_TIPS = { default: 'My full size.', small: 'Half my size, so I take less of your screen.', cursor: 'I become a little arrow pointer, like your cursor.' };
   // The runnable models, one optgroup per signed-in provider, values 'provider:modelId'; `current` is the selected one ('' for none).
-  const modelOptgroups = (current) => state.providers.filter((p) => p.on).map((p) => el('optgroup', { label: p.label },
-    p.models.map((m) => el('option', { value: `${p.id}:${m.id}`, textContent: m.name, selected: `${p.id}:${m.id}` === current }))));
+  // text: also the models that can't see images, in their own group per provider (subagents only).
+  const modelOptgroups = (current, text = false) => state.providers.filter((p) => p.on).flatMap((p) => [
+    el('optgroup', { label: p.label }, p.models.map((m) => el('option', { value: `${p.id}:${m.id}`, textContent: m.name, selected: `${p.id}:${m.id}` === current }))),
+    text && p.textModels?.length ? el('optgroup', { label: `${p.label}, text only` },
+      p.textModels.map((m) => el('option', { value: `${p.id}:${m.id}`, textContent: m.name, selected: `${p.id}:${m.id}` === current }))) : null,
+  ].filter(Boolean));
   // The model a 'provider:modelId' names (undefined when it isn't listed), and its display name (the raw id when it isn't).
   const findModel = (v) => {
     const i = v.indexOf(':');
-    return i < 0 ? undefined : state.providers.find((p) => p.id === v.slice(0, i))?.models.find((x) => x.id === v.slice(i + 1));
+    const p = i < 0 ? null : state.providers.find((x) => x.id === v.slice(0, i)), id = v.slice(i + 1);
+    return p ? p.models.find((x) => x.id === id) ?? p.textModels?.find((x) => x.id === id) : undefined;
   };
   const modelName = (v) => findModel(v)?.name ?? v;
   // A model select with a first option `first` (value ''), for the value `current`; onpick gets the select element.
-  const modelSelect = (aria, k, current, first, onpick) => el('span', { className: 'px field select' },
+  const modelSelect = (aria, k, current, first, onpick, text = false) => el('span', { className: 'px field select' },
     el('select', { 'aria-label': aria, 'data-k': k, on: { change: (e) => onpick(e.target) } },
       el('option', { value: '', textContent: first, selected: !current }),
-      modelOptgroups(current)));
+      modelOptgroups(current, text)));
   // Effort: how hard a model thinks before it answers. A model's `levels` are the thinking levels it supports (none: it
   // can't think). The stops are Off, then those levels; the automatic value ('') starts at the app default, 'low'.
   const EFFORT_NAMES = { off: 'Off', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra', max: 'Max', ultra: 'Ultra' };
@@ -670,7 +675,7 @@
       on ? sa.crew.map((c) => el('div', { className: 'slot' },
         el('div', { className: 'setting' },
           el('span', { id: `lbl-crew-${c.id}` }, c.label, el('small', { className: 'wrap', textContent: c.via === 'hybrid' ? `${c.hint} Uses ${modelName(c.uses)}.` : c.hint })),
-          modelSelect(`${c.label} model`, `crew_${c.id}`, c.value, hybridOn ? 'Follow hybrid' : 'Off', (sel) => act(`crew_${c.id}:${sel.value}`))),
+          modelSelect(`${c.label} model`, `crew_${c.id}`, c.value, hybridOn ? 'Follow hybrid' : 'Off', (sel) => act(`crew_${c.id}:${sel.value}`), true)),
         c.value ? effortRow(`sub_${c.id}`, c.value) : null)) : null);
   }
   // A local server: connected (a lit dot) or not, its address if it was added, and why its models aren't in the
@@ -1246,7 +1251,9 @@
         { id: 'moonshot', label: 'Kimi (Moonshot)', on: false, method: 'key', models: [], kinds: [
           { id: 'kimi-code', label: 'Kimi Code', billing: 'Uses your Kimi Code plan. Create the key in the Kimi Code Console.' },
           { id: 'moonshot', label: 'Moonshot', billing: 'Pay-per-token from platform.moonshot.ai.' }] },
-        { id: 'local', label: 'Local models', on: q.has('local'), method: 'local', models: q.has('local') ? [{ id: 'local/ollama/qwen3-vl:8b', name: 'qwen3-vl:8b (Ollama)', levels: [] }] : [] },
+        { id: 'local', label: 'Local models', on: q.has('local'), method: 'local', models: q.has('local') ? [{ id: 'local/ollama/qwen3-vl:8b', name: 'qwen3-vl:8b (Ollama)', levels: [] }] : [],
+          // A coding model that can't see images: only the subagent pickers offer it.
+          textModels: q.has('local') ? [{ id: 'local/ollama/qwen3-coder:30b', name: 'qwen3-coder:30b (Ollama)', levels: [] }] : [] },
         ...['xAI', 'GLM (Z.ai)', 'MiniMax', 'Xiaomi', 'DeepSeek', 'Sakana', 'OpenRouter', 'Hugging Face'].map((label) => ({ id: label.toLowerCase().replace(/\W/g, ''), label, on: false, method: 'key', models: [] })),
       ],
       // ?local: Ollama connected, LM Studio not running, and an added server whose models can't see images.

@@ -458,7 +458,7 @@ async function measureLocal(id) {
 }
 const HOW_TO_GET = { ollama: ' Open it (get it at ollama.com), then try again.', lmstudio: ' Open it (get it at lmstudio.ai), turn on its server (Developer → Start Server), then try again.' };
 const connectedNote = (s, r) => (r.models.length ? `${s.label} is connected: ${r.models.length} model${r.models.length === 1 ? '' : 's'} that can see your screen.`
-  : `${s.label} is connected, but I can't use any of its models yet. ${noModelsNote(s, r.all)}`);
+  : `${s.label} is connected, but I can't talk through any of its models yet. ${noModelsNote(s, r.all)}${r.text ? ` ${r.text === 1 ? 'Its model' : `Its ${r.text} models`} can still be subagents (Model → Subagents).` : ''}`);
 async function connectServer(id) {
   const s = servers().find((x) => x.id === id);
   if (!s) return;
@@ -498,6 +498,9 @@ async function removeServer(id) {
 // Some models run on only one kind of key (Kimi K2.8 Preview on a Kimi Code plan key, MiMo UltraSpeed on API Credits).
 const canRun = (p, id) => !!signedIn.get(p) && seesImages(p, id) && getAuthStorageKeys(p, id).some((k) => k === p || storedKeys.has(k));
 const runnable = (p) => getModelsForProvider(p).filter((m) => canRun(p, m.id));
+// Subagents may run on a model that can't see images: they work from a written brief, and pictures are left out.
+const canRunText = (p, id) => !!signedIn.get(p) && getModelsForProvider(p).some((m) => m.id === id) && getAuthStorageKeys(p, id).some((k) => k === p || storedKeys.has(k));
+const textOnly = (p) => getModelsForProvider(p).filter((m) => !seesImages(p, m.id) && canRunText(p, m.id));
 function ensureModel() {
   if (config.provider && getModel(config.model) && canRun(config.provider, config.model)) return true;
   // A local model stays picked while its server is closed; the request says to open it.
@@ -524,9 +527,10 @@ let turnNamed = null; // the model they named this turn: a background agent star
 let retryInfo = null; // a request being retried on the next model after a limit: { sent, from, untilText, count }
 let retryNext = null;
 // The subagents that can be handed work now: the models picked for them, else hybrid's for their kind of job.
-const crewNow = () => (config.subagents ? activeCrew(config.crew, runnableSpec, hybridActive() ? config.heavy : null) : []);
+const crewNow = () => (config.subagents ? activeCrew(config.crew, crewSpec, hybridActive() ? config.heavy : null) : []);
 const hybridActive = () => !!config.hybrid && hybridOn(config.heavy);
 const runnableSpec = (p, id) => canRun(p, id) || (p === 'local' && !!signedIn.get('local') && !!parseLocalModelId(id ?? ''));
+const crewSpec = (p, id) => runnableSpec(p, id) || canRunText(p, id);
 const modelName = (id) => getModel(id)?.name ?? id;
 const pickOf = (provider, model, slot) => ({ provider, model, spec: `${provider}:${model}`, slot });
 const defaultSpecPick = () => { const d = defaultPick ?? { provider: config.provider, model: config.model }; return pickOf(d.provider, d.model, 'default'); };
@@ -934,7 +938,7 @@ async function agentModel(override) {
   const provider = use.provider, model = use.model;
   const m = getModel(model), c = cc ? {} : await credsFor(provider, model).catch(() => ({}));
   return {
-    provider, model, route: cc ? 'claude-code' : 'api', cc: cc ?? undefined,
+    provider, model, route: cc ? 'claude-code' : 'api', cc: cc ?? undefined, images: !!cc || seesImages(provider, model),
     thinking: thinkingFor(slot, provider, model),
     baseUrl: c.baseUrl, modelInfo: provider === 'local' ? m : undefined, budget: Math.round(getContextWindow(model, { provider }) * 0.6),
   };
@@ -2279,6 +2283,7 @@ function panelState() {
         // Kimi and Xiaomi: which kind of key is being added (plan or pay-per-token).
         kinds: meta && keyKinds(meta).length > 1 ? keyKinds(meta).map(([id, label, billing]) => ({ id, label, billing })) : null,
         models: on ? runnable(p).map((mm) => ({ id: mm.id, name: mm.name, levels: mm.supportsThinking ? levelsOf(p, mm.id) : [] })) : [],
+        textModels: on ? textOnly(p).map((mm) => ({ id: mm.id, name: mm.name, levels: mm.supportsThinking ? levelsOf(p, mm.id) : [] })) : [],
       };
     }),
     // The Model page's local rows: each server, connected or not, and why its models aren't in the menu.
@@ -2308,7 +2313,7 @@ function panelState() {
       mics: mics.list, mic: config.mic ?? '', micAuto: mics.list.find((x) => x.id === mics.auto)?.name ?? '',
       download: NEEDS_MODEL && config.voice && !voiceReady() ? { status: voiceModel.status, pct: voiceModel.total ? Math.floor((voiceModel.done / voiceModel.total) * 100) : 0, size: sizeLabel() } : null,
     } : null,
-    sound: !!config.sound, volume: volumeNow(), actions: !!config.allowActions, skipAllow: !!config.skipAllow, lite: !!config.lite, hybrid: { on: !!config.hybrid, jobs: JOB_KINDS.map((j) => ({ ...j, value: parseSpec(config.heavy?.[j.kind])?.spec ?? '' })), active: routed?.spec ?? '' }, subagents: { on: !!config.subagents, delegate: DELEGATE_MODES.includes(config.delegate) ? config.delegate : 'ask', crew: SUBAGENTS.map((s) => { const c = activeCrew(config.crew, runnableSpec, hybridActive() ? config.heavy : null).find((x) => x.id === s.id); return { id: s.id, label: s.label, hint: s.hint, value: parseSpec(config.crew?.[s.id])?.spec ?? '', via: c?.via ?? '', uses: c?.spec.spec ?? '' }; }) }, efforts: Object.fromEntries(SLOTS.map((k) => [k, config.efforts?.[k] ?? ''])), fallbacks: { on: !!config.backups, slots: [0, 1].map((i) => parseSpec(config.fallbacks?.[i])?.spec ?? ''), limited: limits.list().filter((l) => !l.key.includes(':') && (isQuota(l.kind) || l.kind === 'busy')).map((l) => ({ label: PROVIDER_LABELS[l.key] ?? l.key, until: l.until })), unavailable: limits.list().filter((l) => !(isQuota(l.kind) || l.kind === 'busy')).map((l) => ({ label: PROVIDER_LABELS[l.key] ?? modelName(l.key.split(':').slice(1).join(':')) ?? l.key, why: becauseOf(l.kind), until: l.until })), using: routed && /^backup/.test(routed.slot ?? '') ? routed.spec : '' }, notch: notchMode(), notchReal: notchScreen, brief: { on: !!config.morningBrief, todoist: !!config.briefTodoist, canTodoist: HANDS_OK }, focus: HANDS_OK ? { until: focusBlock?.until ?? null, task: focusBlock?.task ?? '', list: distractionList(), custom: !!config.distractions } : null, sync: { dir: config.syncDir || '', at: syncInfo.at, error: syncInfo.error, paused: !!syncInfo.paused }, gameMode: HANDS_OK ? config.gameSidebar !== false : null,
+    sound: !!config.sound, volume: volumeNow(), actions: !!config.allowActions, skipAllow: !!config.skipAllow, lite: !!config.lite, hybrid: { on: !!config.hybrid, jobs: JOB_KINDS.map((j) => ({ ...j, value: parseSpec(config.heavy?.[j.kind])?.spec ?? '' })), active: routed?.spec ?? '' }, subagents: { on: !!config.subagents, delegate: DELEGATE_MODES.includes(config.delegate) ? config.delegate : 'ask', crew: SUBAGENTS.map((s) => { const c = activeCrew(config.crew, crewSpec, hybridActive() ? config.heavy : null).find((x) => x.id === s.id); return { id: s.id, label: s.label, hint: s.hint, value: parseSpec(config.crew?.[s.id])?.spec ?? '', via: c?.via ?? '', uses: c?.spec.spec ?? '' }; }) }, efforts: Object.fromEntries(SLOTS.map((k) => [k, config.efforts?.[k] ?? ''])), fallbacks: { on: !!config.backups, slots: [0, 1].map((i) => parseSpec(config.fallbacks?.[i])?.spec ?? ''), limited: limits.list().filter((l) => !l.key.includes(':') && (isQuota(l.kind) || l.kind === 'busy')).map((l) => ({ label: PROVIDER_LABELS[l.key] ?? l.key, until: l.until })), unavailable: limits.list().filter((l) => !(isQuota(l.kind) || l.kind === 'busy')).map((l) => ({ label: PROVIDER_LABELS[l.key] ?? modelName(l.key.split(':').slice(1).join(':')) ?? l.key, why: becauseOf(l.kind), until: l.until })), using: routed && /^backup/.test(routed.slot ?? '') ? routed.spec : '' }, notch: notchMode(), notchReal: notchScreen, brief: { on: !!config.morningBrief, todoist: !!config.briefTodoist, canTodoist: HANDS_OK }, focus: HANDS_OK ? { until: focusBlock?.until ?? null, task: focusBlock?.task ?? '', list: distractionList(), custom: !!config.distractions } : null, sync: { dir: config.syncDir || '', at: syncInfo.at, error: syncInfo.error, paused: !!syncInfo.paused }, gameMode: HANDS_OK ? config.gameSidebar !== false : null,
     login: login.supported ? { on: login.on } : null,
     update: { available: update.available, installing: update.installing, checking: update.checking, result: update.result, page: update.page, done: update.done },
     intro: !!intro,
@@ -2491,7 +2496,7 @@ async function onMenu(id, via) {
   // A specialist's model ('' = none: it follows hybrid models for its kind of job, or is not on the crew).
   else if (/^crew_(\w+):/.test(id)) {
     const [, who, spec] = id.match(/^crew_(\w+):(.*)$/s), h = parseSpec(spec);
-    if (!SUBAGENTS.some((x) => x.id === who) || (spec && !(h && runnableSpec(h.provider, h.model)))) return;
+    if (!SUBAGENTS.some((x) => x.id === who) || (spec && !(h && crewSpec(h.provider, h.model)))) return;
     config.crew = { ...config.crew, [who]: spec }; saveConfig(); menu();
   }
   else if (id === 'backups') { config.backups = !config.backups; routeBack(); saveConfig(); menu(); }

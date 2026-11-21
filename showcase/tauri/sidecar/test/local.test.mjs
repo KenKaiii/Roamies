@@ -53,11 +53,15 @@ const up = await connectLocal(auth, OLLAMA, { save: true, windows: measured, pro
 assert.equal(up.ok, true);
 assert.equal(up.all, 4);
 assert.deepEqual(saved, [['ollama', 'http://127.0.0.1:11434/v1']]);
-assert.deepEqual(getModelsForProvider('local').map((m) => m.id), ['local/ollama/qwen3.5:4b', 'local/ollama/gemma4:12b']);
+assert.deepEqual(up.models.map((m) => m.id), ['local/ollama/qwen3.5:4b', 'local/ollama/gemma4:12b'], 'the ones it can talk through');
+assert.equal(up.text, 1, 'and one that can only be a subagent');
+// A model that uses tools but can't see images is registered too, for subagents (#152); one without tools isn't.
+assert.deepEqual(getModelsForProvider('local').map((m) => m.id), ['local/ollama/qwen3.5:4b', 'local/ollama/llama3:8b', 'local/ollama/gemma4:12b']);
+assert.equal(getModel('local/ollama/llama3:8b').supportsImages, false);
 assert.equal(getModel('local/ollama/qwen3.5:4b').contextWindow, 32768);
 assert.deepEqual(getAuthStorageKeys('local', 'local/ollama/qwen3.5:4b'), ['local:ollama'], 'the model runs on the saved Ollama credential');
 await connectLocal(auth, OLLAMA, { probe: async () => ({ ...probe, models: probe.models.slice(1) }) });
-assert.deepEqual(getModelsForProvider('local').map((m) => m.id), ['local/ollama/gemma4:12b'], 'a removed model leaves the menu');
+assert.deepEqual(getModelsForProvider('local').map((m) => m.id), ['local/ollama/llama3:8b', 'local/ollama/gemma4:12b'], 'a removed model leaves the menu');
 assert.equal(saved.length, 1, 'a rescan saves nothing');
 
 // Too small a window gets a plain warning with the fix.

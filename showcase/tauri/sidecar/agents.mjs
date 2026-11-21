@@ -332,14 +332,16 @@ export function createAgents({ fork, ui, config, root, userName = 'The user', ru
     }
     a.returns = returnsOf(a);
     Object.assign(a, { state: 'working', told: true, started: now(), workMs: 0, workFrom: now(), turns: 0, tokens: { in: 0, out: 0 }, ask: null, model: { provider: md.provider, model: md.model, route: md.route } });
-    const images = [], given = [];
+    // A model that can't see images (a text-only subagent) gets the pictures as files only.
+    const images = [], given = [], sees = md.images !== false;
     for (const item of (Array.isArray(inputs) ? inputs : []).slice(0, 10)) {
       if (item === 'snap') {
         const img = config.image?.();
         if (!img) continue;
         const name = `snap-${Date.now()}.png`;
         await fs.promises.writeFile(path.join(a.dir, 'inputs', name), Buffer.from(img.data, 'base64'));
-        images.push(img); given.push(`inputs/${name} (the picture ${userName} sent; you can see it above)`);
+        if (sees) images.push(img);
+        given.push(`inputs/${name} (the picture ${userName} sent; ${sees ? 'you can see it above' : "your model can't see pictures"})`);
         continue;
       }
       const v = safety.checkRead(String(item).replace(/^~(?=$|\/|\\)/, home), home);
@@ -350,7 +352,7 @@ export function createAgents({ fork, ui, config, root, userName = 'The user', ru
       const dest = path.join(a.dir, 'inputs', path.basename(v.path));
       await fs.promises.copyFile(v.path, dest);
       const mt = IMAGE[path.extname(dest).toLowerCase()];
-      if (mt && st.size <= 4 << 20 && images.length < 3) images.push({ type: 'image', mediaType: mt, data: (await fs.promises.readFile(dest)).toString('base64') });
+      if (sees && mt && st.size <= 4 << 20 && images.length < 3) images.push({ type: 'image', mediaType: mt, data: (await fs.promises.readFile(dest)).toString('base64') });
       given.push(`inputs/${path.basename(dest)}`);
     }
     let before = '';
