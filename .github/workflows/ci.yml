@@ -178,22 +178,27 @@ jobs:
 
       # Under GNOME's window manager (Mutter, X11) the overlay must not end up maximized: Mutter auto-maximizes a new
       # resizable window covering most of the screen, and a maximized window above a fullscreen app keeps GNOME's top
-      # bar and dock up (#78). The overlay is the window that keeps itself above the others.
+      # bar and dock up (#78). Mutter 46 (Ubuntu 24.04's; newer ones have no X11 session) runs in a container on the
+      # same virtual screen. The overlay is the biggest Roamies window kept above the others.
       - name: Check the Linux overlay under Mutter
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get install -y mutter x11-utils
+          sudo apt-get install -y x11-utils
           cat > "$RUNNER_TEMP/mutter.sh" <<'SH'
           set -u
           export ROAMIES_DATA_DIR="$RUNNER_TEMP/roamies-mutter" XDG_CURRENT_DESKTOP=GNOME
           mkdir -p "$ROAMIES_DATA_DIR"
           echo '{"onboarded":true,"setupVersion":2,"voice":false}' > "$ROAMIES_DATA_DIR/sidekick.json"
-          mutter --x11 --replace > "$RUNNER_TEMP/mutter.log" 2>&1 &
-          for _ in $(seq 30); do xprop -root _NET_SUPPORTING_WM_CHECK | grep -q 'window id' && break; sleep 1; done
+          trap 'kill $pid 2>/dev/null; docker rm -f mutter >/dev/null 2>&1' EXIT
+          pid=
+          docker run -d --name mutter --network host -e DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix ubuntu:24.04 bash -c \
+            'apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends mutter dbus libgl1-mesa-dri >/dev/null && dpkg-query -W mutter && exec dbus-run-session -- mutter --x11 --replace' >/dev/null
+          wm=false
+          for _ in $(seq 240); do xprop -root _NET_SUPPORTING_WM_CHECK | grep -q 'window id' && { wm=true; break; }; sleep 1; done
+          docker logs mutter 2>&1 | tail -15
+          $wm || { echo "Mutter didn't start"; exit 1; }
           src-tauri/target/debug/roamies > "$RUNNER_TEMP/app-mutter.log" 2>&1 &
           pid=$!
-          trap 'kill $pid 2>/dev/null' EXIT
-          # The overlay: the biggest visible Roamies window kept above the others.
           overlay='' area=0
           for _ in $(seq 60); do
             sleep 1
@@ -208,8 +213,8 @@ jobs:
           for id in $(xdotool search --onlyvisible --name '^Roamies$' 2>/dev/null); do
             echo "window $id ($(xwininfo -id "$id" | awk '/Width:/{w=$2} /Height:/{h=$2} END{print w "x" h}')): $(xprop -id "$id" _NET_WM_STATE)"
           done
-          if [ -z "$overlay" ]; then
-            tail -30 "$RUNNER_TEMP/mutter.log"; tail -30 "$RUNNER_TEMP/app-mutter.log"; echo "No overlay window showed up under Mutter"; exit 1
+          if [ "$area" -le 1000000 ]; then
+            tail -30 "$RUNNER_TEMP/app-mutter.log"; echo "No overlay window showed up under Mutter"; exit 1
           fi
           state=$(xprop -id "$overlay" _NET_WM_STATE)
           size=$(xwininfo -id "$overlay" | awk '/Width:/{w=$2} /Height:/{h=$2} END{print w "x" h}')
@@ -218,7 +223,7 @@ jobs:
           # A pixel short of the screen (build_overlays).
           if [ "$size" != 1600x999 ]; then echo "The overlay is $size, not 1600x999"; exit 1; fi
           SH
-          dbus-run-session -- xvfb-run -a -s '-screen 0 1600x1000x24' bash "$RUNNER_TEMP/mutter.sh"
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1600x1000x24 -ac' bash "$RUNNER_TEMP/mutter.sh"
 
       # The debug app starts, starts its sidecar (its "start" log line) and keeps running.
       - name: Smoke test the Windows app
