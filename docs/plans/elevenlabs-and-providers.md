@@ -1,6 +1,6 @@
 # ElevenLabs voice, OpenCode and Antigravity providers
 
-Status: proposed, 2026-11-21.
+Status: implemented on `feat/elevenlabs-voice`, awaiting review. No PR until approved.
 
 ## What changes
 
