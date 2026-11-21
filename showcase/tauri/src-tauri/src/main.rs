@@ -1140,14 +1140,10 @@ fn build_overlays(app: &AppHandle) -> tauri::Result<()> {
         if mine.iter().any(|id| id == "\"sidekick\"") {
             *SIDEKICK_OVERLAY.lock().unwrap() = Some(label.clone());
         }
-        // COSMIC: built hidden, then shown unmanaged (linux.rs set_unmanaged).
-        #[cfg(target_os = "linux")]
-        let unmanaged = linux::unmanaged_overlay();
-        #[cfg(not(target_os = "linux"))]
-        let unmanaged = false;
+        // Linux: built hidden, then shown by linux::show_overlay.
         let w = WebviewWindowBuilder::new(app, label, WebviewUrl::App("desktop.html".into()))
             .title("Roamies")
-            .visible(!unmanaged)
+            .visible(!cfg!(target_os = "linux"))
             .transparent(true)
             .decorations(false)
             .shadow(false)
@@ -1166,9 +1162,7 @@ fn build_overlays(app: &AppHandle) -> tauri::Result<()> {
             .build()?;
         w.set_ignore_cursor_events(true)?;
         #[cfg(target_os = "linux")]
-        if unmanaged {
-            linux::set_unmanaged(&w, true, false);
-        }
+        linux::show_overlay(&w);
         #[cfg(target_os = "macos")]
         full_frame_rate(&w);
         #[cfg(target_os = "macos")]

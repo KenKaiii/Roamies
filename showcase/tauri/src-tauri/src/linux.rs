@@ -119,6 +119,35 @@ pub(crate) fn unmanaged_overlay() -> bool {
     })
 }
 
+/// Shows a new overlay, built hidden. tao makes a window non-resizable only once it's up, and Mutter (GNOME)
+/// auto-maximizes a resizable window covering most of the screen as it maps; a maximized window above a fullscreen
+/// app keeps GNOME's top bar and dock up (#78). So it's made non-resizable first, and un-maximized if a window
+/// manager maximizes it anyway. On COSMIC it goes up unmanaged.
+pub(crate) fn show_overlay(window: &tauri::WebviewWindow) {
+    let unmanaged = unmanaged_overlay();
+    let w = window.clone();
+    let _ = window.run_on_main_thread(move || {
+        use gtk::prelude::{GtkWindowExt, WidgetExt};
+        let Ok(gw) = w.gtk_window() else { return };
+        gw.set_resizable(false);
+        gw.connect_window_state_event(|gw, ev| {
+            if ev.new_window_state().contains(gtk::gdk::WindowState::MAXIMIZED) {
+                if trace() {
+                    eprintln!("overlay maximized by the window manager: unmaximizing");
+                }
+                gw.unmaximize();
+            }
+            gtk::glib::Propagation::Proceed
+        });
+        if !unmanaged {
+            gw.show_all();
+        }
+    });
+    if unmanaged {
+        set_unmanaged(window, true, false);
+    }
+}
+
 /// Makes the overlay override-redirect (on) or an ordinary window again, and shows it. The flag is read when the
 /// window is mapped, so it's taken down and put back up around the change. Only a managed window gets the keyboard
 /// on COSMIC, so typing turns it back into one for the while: `focus` then asks for the keyboard once it's up.
