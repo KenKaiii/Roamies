@@ -52,12 +52,13 @@ import { pickNotch } from './notch.mjs';
 import { DEFAULT_VOICE, FISH_CHOICES } from './fish.mjs';
 import { GEMINI_CHOICES, GEMINI_DEFAULT_VOICE, GEMINI_LOOK_VOICES, GEMINI_MODEL, GEMINI_VOICES } from './gemini.mjs';
 import { ELEVEN_CHOICES, ELEVEN_DEFAULT_VOICE, ELEVEN_LOOK_VOICES, ELEVEN_MODEL, ELEVEN_VOICES } from './elevenlabs.mjs';
+import { antigravityModels, startAntigravityProxy } from './antigravity.mjs';
 import { createSecrets, retryLoad, runInput } from './secrets.mjs';
 import { showTrayIcon } from './wintray.mjs';
 import { createActivity } from './activity.mjs';
 import { canCircle, canSnap, cleanMics, talkChords, hasHands, hasHotkeys, hasVoice, hasWakeWord, linuxSession, micTrouble, needsVoiceModel, platformLine, samePair, seesPointer, writeChord, writeChords } from './platform.mjs';
 import { openAuth, accountKeys, fallbackModel, keyCards, keyKinds, seesImages, signInCards } from './providers.mjs';
-import { OLLAMA, connectLocal, contextNote, downNote, forgetLocal, isSmallModel, newServer, noModelsNote, serverFor, serverList, syncLocal as syncServers, withWindow } from './local.mjs';
+import { OLLAMA, connectLocal, contextNote, downNote, forgetLocal, isSmallModel, newServer, noModelsNote, serverFor, serverList, setLocalExtra, syncLocal as syncServers, withWindow } from './local.mjs';
 import { activityLogs, buildReport, redact, reportDir, reportName, reveal, run, scrubConfig, tail } from './diagnostics.mjs';
 import { detailsText, explain } from './errors.mjs';
 import { aboutRoamies } from './about.mjs';
@@ -3006,6 +3007,12 @@ let retired = (async () => {
   return notes;
 })();
 await retired;
+// Antigravity (agy) is a local server the sidecar runs itself. When the CLI is there and signed in, its row joins
+// Ollama's and LM Studio's on the Model page; like them it starts disconnected, so nothing is sent or spent until
+// the user presses Connect.
+const agyModels = await antigravityModels({ timeout: 10_000 }).catch(() => []);
+const antigravity = agyModels.length ? await startAntigravityProxy().catch(() => null) : null;
+if (antigravity) setLocalExtra(antigravity);
 await refreshAuth();
 // Signed in with Claude, but this version's Claude Code isn't there yet (#101): fetched before the first request.
 if (oauthOn.get('anthropic')) claudeCode.start();

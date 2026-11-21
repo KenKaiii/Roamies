@@ -27,52 +27,58 @@ Status: proposed, 2026-11-21.
 shows both key cards and `catalogs.mjs` refreshes their model lists. No code change. The only gap is that the
 README never mentions it. This change adds it to the README provider line.
 
-**3. Antigravity becomes a model provider** (separate PR; see the gate below).
+**3. Antigravity joins as a local model server** (same PR as ElevenLabs now; no PR opened without approval).
 
 Antigravity has no public model API. The supported path is the official `agy` CLI, which the user already has
-signed in. The provider is therefore a thin bridge, not a key card:
+signed in. Roamies starts a small OpenAI-compatible server in the sidecar, adds it to the local servers list, and
+`agy` runs one turn per chat request:
 
-- `showcase/tauri/sidecar/antigravity.mjs`:
-  - detect `agy`, report connected when `agy models` returns the account's list, and expose those models.
-  - one chat turn spawns `agy -p --input-format stream-json --output-format stream-json --agent roamies-relay
-    --model <slug>` in a private temp workspace.
-  - the relay agent is a generated `.agents/agents/roamies-relay/agent.md` with `excludeDefaultComponents: true`
-    and Roamies' tools as an MCP server (the same in-process server `claudecode.mjs` already uses). Built-in
-    file/command tools stay off; if agy calls anything outside the inventory, the turn fails.
-  - NDJSON events map to the same `gg-agent` events `claudecode.mjs` emits.
-- `route.mjs` / `sidekick.mjs`: a new route (`antigravity`) beside `claude-code`; no `gg-core` change.
-- Panel: an "Antigravity" card with Connect/Disconnect (runs the signed-in check), its model list, and a note
-  that tools run through Roamies.
-- Tests: a fake `agy` binary that streams canned NDJSON (`test/fake-agy.mjs`); no quota is spent. A live check
-  is opt-in behind `ROAMIES_AGY_LIVE=1`.
+- `showcase/tauri/sidecar/antigravity.mjs` (the server; no separate MCP process).
+- Each turn gets a private workspace with a relay agent (`excludeDefaultComponents: true`, `mainAgent: true`,
+  `tools: [view_file]`), agy's own file/command/browser tools off, and a tool catalog rendered from the OpenAI
+  request. Permissions allow `read_file(<workspace>)` only, and deny write/command/web tools.
+- agy's custom-agent allowlist cannot include its MCP dispatcher (and no MCP tool is visible when it is set), so
+  the relay asks for Roamies tools in text with a fixed marker (`<<<ROAMIES_TOOL {...}>>>`). The streamer holds the
+  marker back, and a complete call becomes an OpenAI `tool_calls` response for Roamies to execute.
+- Screenshots and user images are written into that workspace and named in the prompt; the model opens them with
+  `read_file`. The image path is verified: a real `agy` turn read a staged 7319 image correctly, including a
+  screenshot arriving as a tool result.
+- Roamies executes the tool (safety included) and sends the next request, which flattens the history. Tool results
+  that carried pictures are staged the same way, so the next turn can see them.
+- `local.mjs` lists the running server under Local models; the existing local-server path probes, registers and
+  connects it, so its Gemini and Claude models appear with the others and screenshots work. (GPT-OSS is text-only,
+  so it isn't offered.) It starts disconnected, like Ollama.
+- Tests: `test/antigravity.test.mjs` drives a fake `agy` (text, tool calls, image staging, built-in refusal,
+  out-of-workspace read) with no quota; `test/local.test.mjs` covers the extra server row.
 
 ## Why
 
 The user wants one voice vendor (ElevenLabs), and wants the Antigravity subscription usable as a brain next
-to OpenCode. OpenCode already works; Antigravity does not exist in Roamies today.
+to OpenCode. OpenCode already works; Antigravity moves in as a local server so it can take images through the
+same screenshots Roamies already takes.
 
 ## What could go wrong
 
 - **ElevenLabs PCM format.** `pcm_24000` is listed for all tiers, but if a plan rejects it, fall back to
   `mp3_44100_128` plus an MP3 decoder. Check with a real key before merging.
 - **Antigravity is a subscription CLI, not an API.** Automating it may be subject to Google's terms, the CLI's
-  stream format can change, images are not supported, and one tool call per turn makes tool loops slower.
-  This is why it is a separate PR with a spike and a fake-CLI test suite.
+  stream format can change, and `agy` starts a fresh turn per request (about 5 s before it reads the prompt).
+  Images work only through the staged workspace and `read_file`, not as native prompt blocks.
 - **Secrets.** Neither provider may put a key in config or logs. ElevenLabs uses the existing secret store;
   Antigravity never reads agy's token files.
-- **Scope creep.** No ElevenLabs speech-to-text, no OpenCode CLI route, no voice cloning UI, no Antigravity
-  images.
+- **Scope creep.** No ElevenLabs speech-to-text, no OpenCode CLI route, no voice cloning UI.
 
 ## Verification
 
 - `cd showcase/tauri/sidecar && npm test` (new tests included).
 - Live ElevenLabs check with a real key (user supplies it in the panel): one spoken reply, bad-key path, model
   switch.
+- Live Antigravity check through the proxy: a plain answer, a staged screenshot read (7319), a tool call, and a
+  tool result carrying a screenshot (all four ran against the installed `agy` while building this).
 - Panel screenshots: Speaking page with the ElevenLabs card, Model page with OpenCode and Antigravity.
-- Antigravity: fake-CLI tests, then one opt-in real turn (`ROAMIES_AGY_LIVE=1`) before merge.
 
 ## Order
 
-1. ElevenLabs + README (ship together).
-2. Antigravity spike: confirm `agy` custom-agent relay and stream-json events against the installed `agy`.
-3. Antigravity bridge, panel and tests (separate PR).
+1. ElevenLabs + README (done).
+2. Antigravity proxy, local-server wiring and tests (done).
+3. Review, then one PR after the user approves it.

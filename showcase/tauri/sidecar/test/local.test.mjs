@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { LOCAL_API_KEY_PLACEHOLDER, getAuthStorageKeys, getModel, getModelsForProvider } from '@kenkaiiii/gg-core';
 import {
   LMSTUDIO, MAX_SERVERS, MIN_CONTEXT, OLLAMA, OLLAMA_KEY, connectLocal, contextNote, downNote, forgetLocal, localModels, newServer, noModelsNote,
-  serverFor, serverList, serverUrl, syncLocal,
+  serverFor, serverList, serverUrl, setLocalExtra, syncLocal,
 } from '../local.mjs';
 
 const model = (rawId, o = {}) => ({ rawId, endpointId: 'ollama', contextWindow: 4096, contextWindowKnown: false, supportsTools: true, supportsImages: true, supportsThinking: true, ...o });
@@ -155,5 +155,15 @@ assert.match(downNote(gpu, 'http://10.0.0.5:8000/v1 rejected the API key (HTTP 4
 assert.match(contextNote(4096, LMSTUDIO), /LM Studio gives this model only 4k.*Context Length/);
 assert.match(contextNote(8192, gpu), /GPU box says this model has only 8k/);
 assert.equal(contextNote(MIN_CONTEXT, gpu), '');
+
+// Antigravity is a server the sidecar runs itself: present while it listens, and never twice if a saved server has
+// the same id.
+const agy = { id: 'antigravity', label: 'Antigravity', baseUrl: 'http://127.0.0.1:47654/v1', kind: 'custom', supportsImages: true };
+setLocalExtra(agy);
+assert.deepEqual(serverList([]).map((s) => s.id), ['ollama', 'lmstudio', 'antigravity']);
+assert.equal(serverList([]).at(-1).supportsImages, true);
+assert.deepEqual(serverList([{ id: 'antigravity', label: 'Mine', baseUrl: 'http://127.0.0.1:9999/v1' }]).map((s) => s.id), ['ollama', 'lmstudio', 'antigravity'], 'the saved one wins');
+setLocalExtra(null);
+assert.deepEqual(serverList([]).map((s) => s.id), ['ollama', 'lmstudio']);
 
 console.log('local: ok');

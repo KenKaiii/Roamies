@@ -23,6 +23,8 @@ key) receives:
 
 **Fish Audio**, **ElevenLabs** or **Google** (Gemini), whichever you pick as the voice, receives the text of each reply to speak it, only if spoken replies are on. It uses your own key for that service (for Gemini, the Gemini key you added for the AI is used unless you save a separate one for the voice).
 
+**Google Antigravity** (`agy`) receives the conversation, the tool list and any screenshots the turn needs when you use one of its models. It runs on this computer under your Antigravity sign-in, and inference counts against that subscription. Screenshots are staged in a temporary folder that is removed after the turn.
+
 **GitHub** is used to check for and download updates, and to download a skill when you ask Roamies to install one
 (the link you gave, or the page it found for it).
 

@@ -1270,7 +1270,7 @@
         { id: 'moonshot', label: 'Kimi (Moonshot)', on: false, method: 'key', models: [], kinds: [
           { id: 'kimi-code', label: 'Kimi Code', billing: 'Uses your Kimi Code plan. Create the key in the Kimi Code Console.' },
           { id: 'moonshot', label: 'Moonshot', billing: 'Pay-per-token from platform.moonshot.ai.' }] },
-        { id: 'local', label: 'Local models', on: q.has('local'), method: 'local', models: q.has('local') ? [{ id: 'local/ollama/qwen3-vl:8b', name: 'qwen3-vl:8b (Ollama)', levels: [] }] : [],
+        { id: 'local', label: 'Local models', on: q.has('local'), method: 'local', models: q.has('local') ? [{ id: 'local/ollama/qwen3-vl:8b', name: 'qwen3-vl:8b (Ollama)', levels: [] }, { id: 'local/antigravity/gemini-3.8-flash-low', name: 'gemini-3.8-flash-low (Antigravity)', levels: [] }] : [],
           // A coding model that can't see images: only the subagent pickers offer it.
           textModels: q.has('local') ? [{ id: 'local/ollama/qwen3-coder:30b', name: 'qwen3-coder:30b (Ollama)', levels: [] }] : [] },
         ...['xAI', 'GLM (Z.ai)', 'MiniMax', 'Xiaomi', 'DeepSeek', 'Sakana', 'OpenRouter', 'Hugging Face'].map((label) => ({ id: label.toLowerCase().replace(/\W/g, ''), label, on: false, method: 'key', models: [] })),
@@ -1279,6 +1279,7 @@
       localServers: [
         { id: 'ollama', label: 'Ollama', custom: false, baseUrl: null, on: q.has('local'), note: '' },
         { id: 'lmstudio', label: 'LM Studio', custom: false, baseUrl: null, on: q.has('local'), note: q.has('local') ? "LM Studio isn't running." : '' },
+        ...(q.has('local') ? [{ id: 'antigravity', label: 'Antigravity', custom: false, baseUrl: null, on: true, note: '' }] : []),
         ...(q.has('local') ? [{ id: 'gpu-box', label: 'GPU box', custom: true, baseUrl: 'http://192.168.1.40:8000/v1', on: true, note: 'None marked as seeing images. Re-add to change.' }] : []),
       ],
       loggingIn: null,

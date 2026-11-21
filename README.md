@@ -38,7 +38,7 @@ voice, keeps track of what you said you'd do and nudges you when it's due.
 - **It remembers.** What you said you'd do, reminders down to the second (or on repeat: "every weekday at 9", "every 2 hours"), and what matters to you.
 - **It draws on your screen.** Rings the exact button to click, walks you through each step, and sketches answers beside what you're reading.
 - **It does the clicking.** Opens apps, sites and files, and on macOS and Windows clicks or types in other apps for you.
-- **Your subscriptions.** Sign in with Claude or ChatGPT, or use an API key (Gemini, Grok, Kimi Code, OpenCode and more).
+- **Your subscriptions.** Sign in with Claude or ChatGPT, or use an API key (Gemini, Grok, Kimi Code, OpenCode and more). Antigravity models join the list when its CLI is signed in.
 
 | Pick your Roamie | What you get                                            |
 | ---------------- | ------------------------------------------------------- |
@@ -190,6 +190,11 @@ or start it with `OLLAMA_CONTEXT_LENGTH=32768`. Roamies warns you if it's too sm
 **LM Studio:** install it from [lmstudio.ai](https://lmstudio.ai), download a vision model (Qwen3-VL 8B or larger),
 turn on its server (**Developer → Start Server**, or `lms server start`), load the model with **Context Length** set to
 32k or more, and press **Connect** next to LM Studio.
+
+**Antigravity:** if the official [Antigravity CLI](https://antigravity.google/docs/cli/install) (`agy`) is installed and
+signed in, Roamies starts it as a local model server by itself. Its Gemini and Claude models appear under
+*Local models* on the Model page. Screenshots are staged as files for it, so it can still see your screen. Inference
+counts against your Antigravity subscription, and everything runs through `agy` on this computer.
 
 **Any other server:** press **Add server** next to *Another server*, then give it a name, its address (for example
 `http://127.0.0.1:8080/v1`; Roamies adds `/v1` if you leave it off), and its API key if it needs one. Most servers

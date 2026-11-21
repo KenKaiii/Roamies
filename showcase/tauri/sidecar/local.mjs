@@ -35,12 +35,19 @@ export const localModels = (probes, windows = new Map()) => toolModels(probes, w
 const okServer = (s) => s && typeof s === 'object' && typeof s.id === 'string' && /^[a-z0-9][a-z0-9-]{0,39}$/.test(s.id)
   && !BUILT_IN.some((b) => b.id === s.id) && typeof s.label === 'string' && typeof s.baseUrl === 'string';
 
+/** A server the sidecar itself runs (Antigravity through agy): listed while it listens, never saved with the user's. */
+let extra = null;
+export const setLocalExtra = (server) => { extra = server ?? null; };
+
 /** Ollama, LM Studio, then the servers the user added (`config.localServers`: { id, label, baseUrl, images }). */
-export const serverList = (saved) => [...BUILT_IN, ...(Array.isArray(saved) ? saved : []).filter(okServer).slice(0, MAX_SERVERS).map((s) => ({
-  id: s.id, label: s.label, baseUrl: s.baseUrl, kind: 'custom', custom: true,
-  // Off means "let the server say" (llama.cpp reports it), not "never".
-  ...(s.images === true ? { supportsImages: true } : {}),
-}))];
+export const serverList = (saved) => {
+  const list = Array.isArray(saved) ? saved : [];
+  return [...BUILT_IN, ...(extra && !list.some((s) => s?.id === extra.id) ? [extra] : []), ...list.filter(okServer).slice(0, MAX_SERVERS).map((s) => ({
+    id: s.id, label: s.label, baseUrl: s.baseUrl, kind: 'custom', custom: true,
+    // Off means "let the server say" (llama.cpp reports it), not "never".
+    ...(s.images === true ? { supportsImages: true } : {}),
+  }))];
+};
 
 /** The server a local model id runs on, from the list. */
 export const serverFor = (servers, modelId) => servers.find((s) => s.id === parseLocalModelId(modelId ?? '')?.endpointId);
