@@ -13,10 +13,10 @@ class FakeVoice {
   abort() { this.aborted = true; }
   rebind(cbs) { Object.assign(this, cbs); return true; }
 }
-const setup = (acct = { ok: true, credit: 4.5 }, beatPhrases = [], bundled = () => null) => {
+const setup = (acct = { ok: true, credit: 4.5 }, beatPhrases = [], bundled = () => null, more = {}) => {
   made.length = 0;
   const out = [], problems = [];
-  const sp = createSpeaker({ emit: (m) => out.push(m), onProblem: (p) => problems.push(p), FishVoiceImpl: FakeVoice, account: async () => acct, beatPhrases, bundled });
+  const sp = createSpeaker({ emit: (m) => out.push(m), onProblem: (p) => problems.push(p), FishVoiceImpl: FakeVoice, account: async () => acct, beatPhrases, bundled, ...more });
   return { sp, out, problems };
 };
 const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -113,8 +113,9 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
   assert.equal(r.beat(), true);
   assert.ok(BEATS.includes(live.said[0]));
 }
-{ // Drama 3 fails before any audio with credit left → S2.1 Pro, and the one that worked is kept for the next reply.
-  const { sp, problems } = setup();
+{ // Drama 3 fails before any audio with credit left → S2.1 Pro, kept for the next replies, then back to Drama 3 (#127).
+  let t = 1_000_000;
+  const { sp, problems } = setup(undefined, [], () => null, { now: () => t });
   sp.setKey('k'); await tick();
   const r = sp.start(); r.say('Hi.'); r.end();
   const v = made.slice(made.length - 1); // this reply's sockets (an earlier test's beat warm-up can add to made)
@@ -124,6 +125,9 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
   v[1].onAudio(new Uint8Array([0, 0])); v[1].onEnd();
   assert.equal(sp.model, 's2.1-pro'); assert.deepEqual(problems, []);
   sp.start(); assert.equal(made.at(-1).model, 's2.1-pro');
+  t += 9 * 60_000; sp.start(); assert.equal(made.at(-1).model, 's2.1-pro', 'still within ten minutes');
+  t += 60_000; sp.start(); assert.equal(made.at(-1).model, 'drama-3', 'back to the pick after ten minutes');
+  assert.equal(sp.model, 'drama-3');
 }
 { // Every model fails before audio → tried once on each, then one problem report.
   const { sp, problems } = setup();

@@ -522,6 +522,49 @@ fn autostart_on(entry: &str) -> bool {
     !entry.lines().map(|l| l.trim().to_ascii_lowercase().replace(' ', "")).any(|l| l == "hidden=true" || l == "x-gnome-autostart-enabled=false")
 }
 
+/// The program an autostart entry starts: the first word of its Exec line, with autostart_entry's quoting undone.
+fn exec_program(entry: &str) -> Option<String> {
+    let value = entry.lines().map(str::trim_start).find_map(|l| l.strip_prefix("Exec="))?.trim();
+    // Exec is a string value first: its own escapes come off before the quoting does.
+    let mut s = String::new();
+    let mut chars = value.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            s.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('s') => s.push(' '),
+            Some('n') => s.push('\n'),
+            Some('t') => s.push('\t'),
+            Some('r') => s.push('\r'),
+            Some(n) => s.push(n),
+            None => s.push('\\'),
+        }
+    }
+    let mut program = String::new();
+    let mut chars = s.chars();
+    if s.starts_with('"') {
+        chars.next();
+        loop {
+            match chars.next()? {
+                '"' => break,
+                '\\' => program.push(chars.next()?),
+                c => program.push(c),
+            }
+        }
+    } else {
+        program.extend(chars.take_while(|c| !c.is_whitespace()));
+    }
+    Some(program.replace("%%", "%"))
+}
+
+/// An entry that's on but starts a program file that's gone: the AppImage was moved or renamed after the entry was
+/// written, so logging in would start nothing. A command that isn't a path (the user's own) is left alone.
+fn points_nowhere(entry: &str, exists: impl Fn(&Path) -> bool) -> bool {
+    autostart_on(entry) && exec_program(entry).is_some_and(|p| Path::new(&p).is_absolute() && !exists(Path::new(&p)))
+}
+
 fn autostart_file() -> Option<PathBuf> {
     let config = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).filter(|p| p.is_absolute()).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
     Some(config.join("autostart").join("roamies.desktop"))
@@ -529,7 +572,7 @@ fn autostart_file() -> Option<PathBuf> {
 
 /// Open at Login: an entry in ~/.config/autostart, which GNOME, KDE and the other XDG desktops all run. It starts
 /// the AppImage file when this is one (its inner binary lives in a mount that's gone after it quits), else this
-/// binary. `set`: None just reports. Returns (supported, on).
+/// binary. `set`: None reports, after pointing an entry whose program is gone at this copy. Returns (supported, on).
 pub(crate) fn login_item(set: Option<bool>, installed: bool) -> (bool, bool) {
     let program = appimage().or_else(|| std::env::current_exe().ok());
     let (Some(file), Some(entry)) = (autostart_file(), program.and_then(|p| autostart_entry(&p.to_string_lossy()))) else { return (false, false) };
@@ -548,7 +591,14 @@ pub(crate) fn login_item(set: Option<bool>, installed: bool) -> (bool, bool) {
         Some(false) => {
             let _ = std::fs::remove_file(&file);
         }
-        None => {}
+        None => {
+            if std::fs::read_to_string(&file).is_ok_and(|e| points_nowhere(&e, |p| p.exists())) {
+                eprintln!("open at login: the entry started a program that's gone; it starts this copy now");
+                if let Err(e) = std::fs::write(&file, &entry) {
+                    eprintln!("open at login: {e}");
+                }
+            }
+        }
     }
     (true, std::fs::read_to_string(&file).is_ok_and(|e| autostart_on(&e)))
 }
@@ -618,6 +668,20 @@ mod tests {
         assert_eq!(exec_quoted("/opt/back\\slash").as_deref(), Some("\"/opt/back\\\\\\\\slash\""));
         assert_eq!(exec_quoted("/opt/two\nlines"), None);
         assert_eq!(autostart_entry(""), None);
+    }
+
+    #[test]
+    fn an_entry_whose_appimage_moved_is_pointed_at_this_copy() {
+        for p in ["/home/kai/Apps/Roamies 0.1.49.AppImage", "/opt/a$b/50%/q\"t/b`t", "/opt/back\\slash", "/usr/bin/roamies"] {
+            assert_eq!(exec_program(&autostart_entry(p).unwrap()).as_deref(), Some(p), "{p}");
+        }
+        assert_eq!(exec_program("[Desktop Entry]\nExec=/opt/roamies --hidden\n").as_deref(), Some("/opt/roamies"));
+        assert_eq!(exec_program("[Desktop Entry]\nTryExec=/opt/roamies\n"), None);
+        let old = autostart_entry("/home/kai/Downloads/Roamies_0.1.49_amd64.AppImage").unwrap();
+        assert!(points_nowhere(&old, |_| false), "the AppImage is gone");
+        assert!(!points_nowhere(&old, |_| true), "it's still there");
+        assert!(!points_nowhere(&format!("{old}Hidden=true\n"), |_| false), "switched off stays off");
+        assert!(!points_nowhere("[Desktop Entry]\nExec=env GDK_SCALE=2 /opt/roamies\n", |_| false), "the user's own command");
     }
 
     #[test]

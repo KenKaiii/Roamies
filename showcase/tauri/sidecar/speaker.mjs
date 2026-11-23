@@ -47,6 +47,8 @@ export const BEATS = [
   'Moment.', 'Okay, checking.', 'Sure, checking.', 'Okie-dokie.',
 ];
 const RECENT = 8; // a beat isn't picked again until this many others have played
+// After a model failed and a cheaper one took over, replies go back to the user's pick once this has passed.
+const BACK_TO_PICK_MS = 10 * 60_000;
 const PREWARM_MS = 20_000; // a socket opened ahead of a reply that nothing takes is closed after this
 // VoiceStudio: how much of a reply is spoken, in characters (its text is always all shown). 0: no cap.
 export const STUDIO_CAPS = { short: 160, medium: 320, full: 0 };
@@ -86,7 +88,11 @@ export function createSpeaker({ emit, onProblem = () => {}, log = () => {}, Fish
   keepWarmMs = KEEP_WARM_MS, keepWarmIdleMs = KEEP_WARM_IDLE_MS, studioQuietMs = STUDIO_QUIET_MS, now = () => Date.now(), setTimer = (f, ms) => setTimeout(f, ms), clearTimer = (h) => clearTimeout(h) }) {
   const all = { ...PROVIDERS, fish: { ...PROVIDERS.fish, Voice: FishVoiceImpl, account }, ...providers };
   let P = all.fish; // the service in use
-  let key = null, voice = P.defaultVoice, pref = P.pick ?? P.models[0], model = pref, seq = 0, current = null, checking = null;
+  let key = null, voice = P.defaultVoice, pref = P.pick ?? P.models[0], model = pref, seq = 0, current = null, checking = null, downAt = 0;
+  // A stand-in model (not the free tier, which the account check manages) gives way to the pick after a while.
+  const backToPick = () => {
+    if (model !== pref && model !== P.freeModel && now() - downAt >= BACK_TO_PICK_MS) { model = pref; log('speech_model', { model, why: 'back to the pick' }); }
+  };
   // The pick and the cheaper ones after it (models run from priciest to free).
   const chain = () => P.models.slice(Math.max(0, P.models.indexOf(pref)));
   let beats = new Map(), recent = [], warming = null; // phrase → [base64 PCM], for the current key, voice and model
@@ -255,6 +261,7 @@ export function createSpeaker({ emit, onProblem = () => {}, log = () => {}, Fish
     // VoiceStudio: its engine is woken with a throwaway word when the last request is old enough (and no reply runs).
     if (localOn) { if (!current && now() - lastReq > studioQuietMs) ping(); return; }
     if (!key || P.id !== 'fish') return;
+    backToPick();
     const w = prewarmed;
     if (w && w.key === key && w.voice === voice && w.model === model && w.p === P && w.v.state !== 'done') return;
     dropPrewarm();
@@ -287,6 +294,7 @@ export function createSpeaker({ emit, onProblem = () => {}, log = () => {}, Fish
     if (localOn) return startLocal();
     if (!key) return null;
     stopAll();
+    backToPick();
     const id = `s${++seq}`, said = [];
     let ended = false, tries = 0, v = null, heard = false, done = false, beat = false, t0 = Date.now();
     // The face follows the voice: a sentence whose feeling differs from the last one's (speech.mjs cueFeel) is marked
@@ -329,7 +337,7 @@ export function createSpeaker({ emit, onProblem = () => {}, log = () => {}, Fish
       const cbs = {
         onAudio: (pcm) => {
           if (done) return;
-          if (!heard) { heard = true; if (m !== model) model = m; log('speech_first_audio', { id, model: m, ms: Date.now() - t0 }); }
+          if (!heard) { heard = true; if (m !== model) { model = m; downAt = now(); } log('speech_first_audio', { id, model: m, ms: Date.now() - t0 }); }
           emit({ kind: 'speech', id, rate: P.play ?? P.rate, pcm: Buffer.from(pcm.buffer, pcm.byteOffset, pcm.byteLength).toString('base64') });
         },
         onEnd: () => finish(true),
