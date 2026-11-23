@@ -1125,6 +1125,7 @@
     const scroll = $('pane-' + tab).closest('.body').scrollTop;
     head();
     const pane = $(`pane-${tab}`);
+    if (!Object.hasOwn(PANES, tab)) tab = 'home'; // show() only sets page names; this keeps PANES[tab] one of them
     const same = render.tab === tab; render.tab = tab;
     const before = new Set([...pane.querySelectorAll('[data-anim]')].filter(shown).map((n) => n.dataset.anim));
     // A page with a list fits it to the room left and pages it; any other page scrolls.

@@ -884,8 +884,28 @@ def atspi_ui(win):
 # ---------------------------------------------------------------- OCR
 
 
+def temp_png():
+    """A new .png file only this user can read, for grim or convert to write over. mkstemp makes it, so no other
+    program can take the name between choosing it and writing it (mktemp's race)."""
+    fd, path = tempfile.mkstemp(suffix=".png")
+    os.close(fd)
+    return path
+
+
+def drop(path):
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
+def wrote(r, path):
+    """The command succeeded and left a picture (an empty file is what mkstemp made)."""
+    return r.returncode == 0 and os.path.exists(path) and os.path.getsize(path) > 0
+
+
 def capture_png(win=None, screen=False, cursor=False):
-    tmp = tempfile.mktemp(suffix=".png")
+    tmp = temp_png()
     cmd = ["grim"]
     if cursor:
         cmd.append("-c")
@@ -893,7 +913,8 @@ def capture_png(win=None, screen=False, cursor=False):
         x, y, w, h = win["bounds"]
         cmd += ["-g", f"{x},{y} {w}x{h}"]
     r = sh(cmd + [tmp])
-    if r.returncode != 0 or not os.path.exists(tmp):
+    if not wrote(r, tmp):
+        drop(tmp)
         return None
     return tmp
 
@@ -936,11 +957,12 @@ def browser_sidebar(win):
         return []
     x, y, w, h = win["bounds"]
     sw = min(380, w)
-    tmp = tempfile.mktemp(suffix=".png")
+    tmp = temp_png()
     r = sh(["grim", "-g", f"{x},{y} {sw}x{h}", tmp])
-    if r.returncode != 0 or not os.path.exists(tmp):
+    if not wrote(r, tmp):
+        drop(tmp)
         return []
-    big = tempfile.mktemp(suffix=".png")
+    big = temp_png()
     try:
         sh(["convert", tmp, "-resize", "200%", big])
         scale = scale_for(win["bounds"]) * 2
@@ -972,7 +994,7 @@ def ocr_ui(win):
         words = tsv_words(png, win["bounds"][:2], scale)
         if len(words) < 4:
             # Dark themes and thin terminal fonts read better inverted; try once more.
-            alt = tempfile.mktemp(suffix=".png")
+            alt = temp_png()
             try:
                 sh(["convert", png, "-colorspace", "Gray", "-negate", "-normalize", alt])
                 more = tsv_words(alt, win["bounds"][:2], scale)
@@ -1753,14 +1775,11 @@ TYPE_TEST_TEXT = ("Hello, World! This is a long typing test: 1234567890.\n\n"
 def cmd_selftest_type():
     """Type the same long string into a Wayland terminal and an XWayland terminal, then compare the files."""
     results = []
+    work = tempfile.mkdtemp(prefix="roamies-type-")  # private to this user, unlike a fixed name in /tmp
     for label, x11 in (("wayland", False), ("xwayland", True)):
         title = "TypeSelf" + label
-        target = f"/tmp/roamies-type-{label}.txt"
-        try:
-            os.unlink(target)
-        except Exception:
-            pass
-        args = ["kitty", "--title", title, "sh", "-c", f"cat > {target}"]
+        target = os.path.join(work, f"{label}.txt")
+        args = ["kitty", "--title", title, "sh", "-c", 'cat > "$0"', target]
         if x11:
             args = ["env", "-u", "WAYLAND_DISPLAY"] + args
         subprocess.Popen(["setsid"] + args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -1785,6 +1804,7 @@ def cmd_selftest_type():
         except Exception:
             got = ""
         results.append({"where": label, "ok": got == TYPE_TEST_TEXT, "expected": TYPE_TEST_TEXT, "got": got[:800]})
+    shutil.rmtree(work, ignore_errors=True)
     out({"ok": all(r.get("ok") for r in results), "text": TYPE_TEST_TEXT, "results": results})
 
 
