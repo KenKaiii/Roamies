@@ -184,7 +184,7 @@
     return new Date(at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
   };
   const REDUCED = matchMedia('(prefers-reduced-motion: reduce)');
-  const tokens = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
+  const tokens = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
   // Why pick each voice model: a line under the choice, and more in its tooltip with the cost.
   const WHY = { 'drama-3': 'More emotion. Slower, and costs more.', 's2.1-pro': 'Natural pace. Less emotion, costs less.' };
   const WHY_LONG = {
@@ -369,7 +369,40 @@
           state.busy ? btn('Stop', () => act('stop'), { k: 'stop' }) : btn('New chat', () => act('new'), { k: 'new', disabled: !state.canNew, aria: 'Start a new conversation' }),
           mac ? null : btn(`Show ${state.name}`, () => act('show', true), { k: 'show' }))),
       recentList(),
+      usageGroup(),
     ].flat();
+  }
+  // Tokens used over time: today's input, output and cache hits, the last week as bars, and the 7- and 30-day
+  // totals. From usage.jsonl in the data folder, which only ever holds counts and timings.
+  function usageGroup() {
+    const u = state.usage ?? state.usageTotals?.month;
+    if (!u || (!u.requests && !u.tokens)) return null;
+    const card = (name, value) => el('div', { className: 'usage-card' },
+      el('span', { className: 'k', textContent: name }),
+      el('span', { className: 'v', textContent: value }));
+    const days = (state.usageHistory ?? []).slice(-7);
+    const max = Math.max(1, ...days.map((d) => d.tokens));
+    const week = state.usageTotals?.week, month = state.usageTotals?.month;
+    const totals = week && month ? `7 days ${tokens(week.tokens)} · 30 days ${tokens(month.tokens)}` : state.usage ? 'Today' : '30 days';
+    // The week as one row of short columns, so Recent keeps its room on Home; each day's count is in its tooltip.
+    const day = (d) => {
+      const name = new Date(`${d.day}T00:00:00`).toLocaleDateString(undefined, { weekday: 'short' }), said = `${name}: ${tokens(d.tokens)} tokens`;
+      const bar = el('span', { className: 'usage-bar' });
+      bar.style.height = d.tokens ? `${Math.max(8, Math.round((d.tokens / max) * 100))}%` : '0';
+      return el('li', { className: 'usage-day', 'data-tip': said },
+        el('span', { className: 'usage-track', 'aria-hidden': 'true' }, bar),
+        el('span', { className: 'd', 'aria-hidden': 'true', textContent: name.slice(0, 2) }),
+        el('span', { className: 'sr-only', textContent: said }));
+    };
+    return el('div', { className: 'group usage-group' },
+      el('div', { className: 'usage-row' },
+        el('div', { className: 'ghead' }, el('h2', { textContent: 'Tokens' }), el('p', { textContent: totals })),
+        days.some((d) => d.tokens) ? el('ul', { className: 'usage-week', 'aria-label': 'Tokens used each day, last 7 days' }, days.map(day)) : null),
+      el('div', { className: 'usage-cards' },
+        card('Input', tokens(u.input)),
+        card('Output', tokens(u.out)),
+        card('Cache hits', tokens(u.cacheRead)),
+        card('Requests', String(u.requests))));
   }
   function recentList() {
     const { box, nav } = paged('recent', state.recent, (r) => el('li', { className: `item ${r.kind}` },
@@ -378,7 +411,7 @@
       el('span', { className: 'meta', textContent: ago(r.at) })), { label: 'Recent' });
     return [
       el('div', { className: 'group paged' }, el('div', { className: 'ghead' }, el('h2', { textContent: 'Recent' })), box),
-      foot(state.usage ? el('p', { className: 'usage', textContent: `Today: ${state.usage.requests} request${state.usage.requests === 1 ? '' : 's'} · ${tokens(state.usage.tokens)} tokens` }) : null, nav),
+      foot(null, nav),
     ];
   }
 
@@ -958,17 +991,32 @@
     const list = state.connections ?? [];
     const { box, nav } = paged('connections', list, (x) => {
       const bad = x.state === 'error' || x.state === 'needs-key' || x.state === 'needs-login';
-      return el('li', { className: 'acct' }, el('div', { className: 'setting' },
-        el('span', { id: `lbl-mcp-${x.name}` }, el('span', { className: 'acct-name' }, x.name, x.state === 'connected' ? el('span', { className: 'led on', role: 'img', 'aria-label': 'Connected', 'data-tip': 'Connected' }) : null),
-          el('small', { className: bad ? 'late' : '', textContent: (CONN_STATE[x.state] ?? CONN_STATE.idle)(x), title: x.where })),
-        el('span', { className: 'row-btns' },
-          x.state === 'needs-login' ? link('Sign in', () => act(`mcp:login:${x.name}`, true), { k: `mcp:login:${x.name}`, aria: `Sign in to ${x.name}` }) : null,
-          armed('Remove', 'Confirm', `mcp:remove:${x.name}`, `mcp:remove:${x.name}`, `Remove the ${x.name} connection and its keys`),
+      // Two lines: the connection and its switch, then its approval and actions (one row was too tight at 560px).
+      const always = state.trustAll || x.trust === 'always';
+      return el('li', { className: 'acct conn' },
+        el('div', { className: 'setting' },
+          el('span', { id: `lbl-mcp-${x.name}` }, el('span', { className: 'acct-name' }, x.name, x.state === 'connected' ? el('span', { className: 'led on', role: 'img', 'aria-label': 'Connected', 'data-tip': 'Connected' }) : null),
+            el('small', { className: bad ? 'late' : '', textContent: (CONN_STATE[x.state] ?? CONN_STATE.idle)(x), title: x.where })),
           el('button', { className: 'px switch', type: 'button', role: 'switch', 'aria-checked': String(!!x.enabled), 'aria-labelledby': `lbl-mcp-${x.name}`, 'data-k': `mcp:sw:${x.name}`,
-            on: { click: () => act(`mcp:${x.enabled ? 'off' : 'on'}:${x.name}`) } }))));
+            on: { click: () => act(`mcp:${x.enabled ? 'off' : 'on'}:${x.name}`) } })),
+        el('div', { className: 'conn-acts' },
+          el('label', { className: 'conn-trust' }, el('span', { textContent: 'Approval' }),
+            el('span', { className: 'px field select' },
+              el('select', { 'aria-label': `Approval for ${x.name}`, 'data-k': `mcp:trust:${x.name}`, disabled: !!state.trustAll,
+                title: state.trustAll ? 'Allow every connection is on' : null,
+                on: { change: (e) => act(`mcp:trust:${x.name}:${e.target.value}`) } },
+                el('option', { value: 'ask', textContent: 'Ask first', selected: !always }),
+                el('option', { value: 'always', textContent: 'Always allow', selected: always })))),
+          el('span', { className: 'row-btns' },
+            x.state === 'needs-login' ? link('Sign in', () => act(`mcp:login:${x.name}`, true), { k: `mcp:login:${x.name}`, aria: `Sign in to ${x.name}` }) : null,
+            armed('Remove', 'Confirm', `mcp:remove:${x.name}`, `mcp:remove:${x.name}`, `Remove the ${x.name} connection and its keys`))));
     }, { label: 'Connections', empty: 'No apps connected yet.' });
     return {
-      body: [group(null, 'Apps like Linear and Notion I can use for you.', null), el('div', { className: 'group paged' }, box)],
+      body: [
+        group(null, 'Apps like Linear and Notion I can use for you.', null,
+          toggle('Allow every connection', 'No asking first. Deleting, sending or paying still asks.', !!state.trustAll, () => act('mcp:trustall'), 'trustall')),
+        el('div', { className: 'group paged' }, box),
+      ],
       foot: foot(btn('Connect an app', () => act('askconnect', true), { k: 'askconnect' }), nav),
     };
   }
@@ -1271,14 +1319,17 @@
         { at: at - 9.2 * 60e3, kind: 'did', text: 'Looked at your screen' },
         { at: at - 9.4 * 60e3, kind: 'ask', text: 'what does this error mean' },
       ],
-      usage: { requests: 14, tokens: 31240 },
+      usage: { requests: 14, tokens: 31240, input: 18400, cacheRead: 96500, cacheWrite: 2140, out: 10700 },
+      usageHistory: [8, 0, 12, 41, 27, 5, 0, 19, 64, 38, 22, 0, 47, 31].map((k, i) => ({ day: new Date(at - (13 - i) * 864e5).toLocaleDateString('en-CA'), tokens: k * 1000, requests: Math.round(k / 2) })),
+      usageTotals: { week: { tokens: 1_420_000, requests: 141 }, month: { tokens: 2_310_000, requests: 230 } },
+      trustAll: false,
       facts: [{ id: 'f1', text: 'Prefers short answers in the morning' }, { id: 'f2', text: 'Working on the Roamies 1.0 launch, due end of month' }, { id: 'f3', text: 'Has a cat called Miso' }],
       commitments: [{ id: 'c1', text: 'Send the launch email', when: 'Fri 7 Nov, 10:00', overdue: false }, { id: 'c2', text: 'Book the dentist', when: 'Mon 3 Nov, 09:00', overdue: true }],
       jobs: [{ id: 'j1a2b3c', title: 'Tech news', paused: false, next: 'Thu 6 Nov, 08:00', repeat: 'weekdays', last: 'Last: Summed up 6 stories on AI chips and a Mac update', bad: false },
         { id: 'j4d5e6f', title: 'Tidy Downloads', paused: true, next: 'Paused', repeat: 'Fri', last: "Didn't run: Allow File Edits & Commands is off", bad: true }],
       skills: [{ slug: 'export-figma-frames', name: 'Export Figma frames', description: 'When they want frames out of Figma as PNGs at 2x.' },
         { slug: 'weekly-invoice', name: 'Weekly invoice', description: 'When making the Friday invoice in Numbers from the hours sheet.' }], learnSkills: true,
-      connections: [{ name: 'linear', remote: true, where: 'https://mcp.linear.app/mcp', enabled: true, state: 'connected', toolCount: 23, error: null },
+      connections: [{ name: 'linear', remote: true, where: 'https://mcp.linear.app/mcp', enabled: true, state: 'connected', toolCount: 23, error: null, trust: 'always' },
         { name: 'notion', remote: true, where: 'https://mcp.notion.com/mcp', enabled: true, state: 'needs-login', toolCount: 0, error: 'Requires login.' },
         { name: 'everything', remote: false, where: 'npx -y @modelcontextprotocol/server-everything', enabled: true, state: 'error', toolCount: 0, error: 'spawn npx ENOENT' },
         { name: 'files', remote: false, where: 'npx -y @modelcontextprotocol/server-filesystem ~/Desktop', enabled: false, state: 'off', toolCount: 0, error: null }],
@@ -1361,6 +1412,8 @@
       const gone = [[/^skill:forget:(.+)$/, 'skills', (x, v) => x.slug === v], [/^mcp:remove:(.+)$/, 'connections', (x, v) => x.name === v], [/^job:remove:(.+)$/, 'jobs', (x, v) => x.id === v],
         [/^forget:(.+)$/, 'facts', (x, v) => x.id === v], [/^(?:done|drop):(.+)$/, 'commitments', (x, v) => x.id === v]].find(([re]) => re.test(id));
       if (gone) { const v = id.match(gone[0])[1]; s[gone[1]] = s[gone[1]].filter((x) => !gone[2](x, v)); setTimeout(() => window.__panel({ kind: 'state', state: s }), Number(q.get('lag') ?? 120)); }
+      if (id.startsWith('mcp:trust:')) { const [, , name, mode] = id.split(':'); s.connections = s.connections.map((x) => (x.name === name ? { ...x, trust: mode } : x)); setTimeout(() => window.__panel({ kind: 'state', state: s }), 120); }
+      if (id === 'mcp:trustall') { s.trustAll = !s.trustAll; setTimeout(() => window.__panel({ kind: 'state', state: s }), 120); }
       if (id.startsWith('look:')) { s.look = id.slice(5); s.name = s.looks.find(([v]) => v === s.look)?.[1] ?? s.name; setTimeout(() => window.__panel({ kind: 'state', state: s }), 120); }
       return null;
     };

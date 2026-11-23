@@ -176,6 +176,8 @@
     // scoots to the closest spot that's clear of the cursor; dropping it somewhere makes that home.
     // byCursor: the cursor position it popped up beside, while it's still there for that request.
     const station = { x: null, y: null, flee: 0, moving: false, quietUntil: 0, held: false, byCursor: null };
+    // Pinned by the user (a tool or a drag): one fixed spot on this screen; no following, fleeing or roaming.
+    let pinSpot = null;
     // The pen: while a drawing holds it, the Sidekick is its cursor form and goes only where the drawing moves its
     // tip (no station, following, fleeing, idle acts or native follower). tip: the arrow's tip, in overlay px.
     // home: where it was when taken, to go back to when the cursor isn't on this screen. tw: running moves (resolved on the agent's clock). idle: a
@@ -353,6 +355,7 @@
 
     // A new request (talking, typing, summoning): come over to the cursor if it's somewhere else now.
     const comeToCursor = () => {
+      if (pinSpot) return; // pinned: it stays where the user put it
       if (R.sidebar?.on) return; // game mode: it stays in its panel
       const p = presence.ptr;
       if (!p || !visible() || pen.held || m.dragging || m.flung) return;
@@ -370,6 +373,7 @@
     // Appear beside the cursor. With the cursor on another screen: at home, unless the cursor is there
     // now, then at the nearest spot that's clear of it.
     const spot = () => {
+      if (pinSpot) { setStation(pinSpot.x, pinSpot.y); return [pinSpot.x, pinSpot.y]; }
       // Game mode (sidebar.js): at the top of the panel at the screen's edge, never beside a cursor that isn't there.
       const dock = R.sidebar?.dock?.();
       if (dock) { setStation(dock[0], dock[1]); station.atDock = true; return dock; }
@@ -976,9 +980,21 @@
       },
       // Make (x, y) home and move there now, e.g. to restore where the user last left it.
       place: (x, y) => {
-        setStation(x, y); m.x = x; m.y = y; m.vx = m.vy = 0; m.mode = 'rest'; m.rest = 1;
+        setStation(x, y); k.teleport(+x, +y); m.mode = 'rest'; m.rest = 1;
         station.moving = false; station.flee = 0; station.quietUntil = now + 1;
       },
+      // Keep it in one spot on this screen: no following the cursor, no hopping away, no roaming. A drag moves the pin.
+      pin: (x, y) => {
+        pinSpot = { x: +x, y: +y };
+        setStation(+x, +y); station.byCursor = null;
+        m.anchor = { x: +x, y: +y, r: 0 };
+        fol.on = false; m.drive = null;
+        // Snap there now: the tail, hands and ears go with it, instead of trailing behind as if it walked.
+        k.teleport(+x, +y); m.mode = 'rest'; m.rest = 1;
+        station.moving = false; station.flee = 0; station.quietUntil = now + 1;
+      },
+      unpin: () => { pinSpot = null; if (m.anchor) m.anchor.r = k.R * 0.35; },
+      get pinned() { return pinSpot ? { ...pinSpot } : null; },
       setAuto: (on, idle) => { presence.auto = !!on; if (idle) presence.idle = idle; presence.lastActive = now; },
       // A request is in progress: the Sidekick stays up for the whole turn, between its thoughts, tools and replies.
       working: (on) => { presence.working = !!on; presence.lastActive = now; },
@@ -1219,13 +1235,15 @@
           const held = m.dragging || m.flung;
           // Game mode turned on while it's up: off to the panel at the screen's edge, once (it can still be dragged).
           const dock = R.sidebar?.dock?.();
-          if (dock && !station.atDock && !held && !pen.held) { setStation(dock[0], dock[1]); m.goTo(dock[0], dock[1]); station.moving = true; station.atDock = true; }
+          if (dock && !pinSpot && !station.atDock && !held && !pen.held) { setStation(dock[0], dock[1]); m.goTo(dock[0], dock[1]); station.moving = true; station.atDock = true; }
           else if (!dock && station.atDock) station.atDock = false;
           if (held && !station.held) station.from = [m.x, m.y];
           // Dropped somewhere new: that's home now, and the cursor gets a moment to move off.
           // A plain click (press without moving it) isn't a move.
           if (station.held && !held && station.from && Math.hypot(m.x - station.from[0], m.y - station.from[1]) > k.R * 0.5) {
             setStation(m.x, m.y); station.quietUntil = now + 2.5; station.moving = false;
+            // Dragged while pinned: that new spot is the pin now.
+            if (pinSpot) { pinSpot = { x: m.x, y: m.y }; m.anchor = { x: m.x, y: m.y, r: 0 }; }
           }
           station.held = held;
           // A fullscreen game pinned the cursor (host.js): leave the spot beside it or under it, clear of where it's pinned.
@@ -1236,11 +1254,11 @@
           }
           // Popped up beside the cursor: it goes where the cursor goes (until it's dragged somewhere).
           if (pen.held) { fol.on = false; m.drive = held ? null : penDrive; station.flee = 0; }
-          else if (!held && station.byCursor && presence.ptr) { follow(env, dt); station.flee = 0; }
+          else if (!held && !pinSpot && station.byCursor && presence.ptr) { follow(env, dt); station.flee = 0; }
           else { fol.on = false; m.drive = null; }
           nativeStep(dt, self);
           // While drawing, stay put: the user's cursor is supposed to come over here.
-          if (!held && env.mouse && !pen.held && !station.byCursor) {
+          if (!pinSpot && !held && env.mouse && !pen.held && !station.byCursor) {
             const cx = env.mouse.x, cy = env.mouse.y, dBody = Math.hypot(cx - m.x, cy - m.y);
             // Pointing right at it or its bubble means "I want this"; hovering around it means "you're in my way".
             const onIt = dBody < m.radius * 1.1 || (b && hitBubble(b, cx, cy));

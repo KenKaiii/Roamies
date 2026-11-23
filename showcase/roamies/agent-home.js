@@ -301,6 +301,8 @@
   }
   const anyLive = () => [...rows.values()].some((r) => !r.leaving);
   let goneT = 0;
+  // The summon toggle sent the whole corner away: rows and shelves keep going underneath, unseen.
+  let away = false;
   function showHome() {
     if (anyLive()) {
       clearTimeout(goneT);
@@ -408,7 +410,7 @@
     setTimeout(() => h.c.remove(), 220);
   }
   function launch(row, from) {
-    if (reduce() || (!from && !hatch)) { endHatch(); openRow(row); return; }
+    if (away || reduce() || (!from && !hatch)) { endHatch(); openRow(row); return; }
     row.hidden = true;
     const f = hatch ?? flyCanvas(from);
     if (hatch === f) hatch = null;
@@ -456,8 +458,11 @@
   // ---------- events from the sidecar ----------
   const api = {
     send: null,
-    hatch(at) { mount(); startHatch(at); },
+    hatch(at) { mount(); if (!away) startHatch(at); },
     hatchOff: endHatch,
+    // Ctrl+Alt+S: the corner goes with the sidekick and comes back on the next summon, even if agents ran meanwhile.
+    hide() { away = true; endHatch(); col.style.display = 'none'; },
+    show() { away = false; col.style.display = ''; place(); showHome(); },
     event(e, { from = null } = {}) {
       mount();
       const a = e.agent;

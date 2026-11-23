@@ -27,6 +27,8 @@
   window.__roamieBuddy = (m) => { Roamie.wake?.(); Roamie.buddy.onEvent?.(m); };
   // handsBusy: Roamies is acting in another app (it may take the real cursor), so clicks always go through.
   let hot = null, cursor = null, handsBusy = false;
+  // A pinned Roamie: the request last applied, so a screen size or scale change puts it back on the right corner.
+  let pinAsk = null;
   // Linux ("x11" or "wayland", set by the shell): clicks are let through by region instead (below).
   const LINUX = !!window.ROAMIE_LINUX;
   const setHot = (h) => { if (!LINUX && h !== hot) { hot = h; invoke('set_hot', { hot: h }).catch(() => { hot = null; }); } };
@@ -493,6 +495,8 @@
     dispatchEvent(new Event('resize')); // the screen's scale may differ even when its size doesn't
     for (const m of q) window.__roamieHost(m);
   };
+  addEventListener('resize', () => { if (pinAsk) requestAnimationFrame(() => pinAt(pinAsk)); });
+
   window.__roamieMoved = () => {
     dropAutoListen();
     const a = getAgent();
@@ -503,6 +507,27 @@
     if (held) return;
     held = { q: [], t: setTimeout(flush, 150) };
     addEventListener('resize', () => requestAnimationFrame(() => requestAnimationFrame(flush)), { once: true });
+  };
+
+  // Pin the Roamie: a corner (top-right, bottom-left, ...) or screen px, kept clear of the work area edges.
+  const pinAt = (m) => {
+    const a = getAgent();
+    if (!a) return null;
+    pinAsk = m.release ? null : m;
+    if (m.release) { a.unpin?.(); return null; }
+    const S = Roamie.safe ?? {};
+    const r = a.pos?.r ?? 36;
+    const pad = Number.isFinite(m.margin) ? Math.max(0, m.margin) : 14;
+    const c = String(m.corner || '').toLowerCase();
+    // Its whole drawing, not just the body: the same room agent.js keeps (spotOK), with the bubble above it.
+    const side = r * 1.6, top = r * 1.8, low = r * 1.5;
+    const L = (S.left || 0) + side, Rt = innerWidth - (S.right || 0) - side, T = (S.top || 0) + top, B = innerHeight - (S.bottom || 0) - low;
+    let x = Number.isFinite(m.x) ? m.x : /right/.test(c) ? Rt - pad : /left/.test(c) ? L + pad : innerWidth / 2;
+    let y = Number.isFinite(m.y) ? m.y : /bottom/.test(c) ? B - pad : /top/.test(c) ? T + pad : innerHeight / 2;
+    x = Math.max(L, Math.min(Rt, x));
+    y = Math.max(T, Math.min(B, y));
+    a.pin?.(Math.round(x), Math.round(y));
+    return { x: Math.round(x), y: Math.round(y) };
   };
 
   window.__roamieHost = (m) => {
@@ -520,6 +545,7 @@
       return;
     }
     if (!getAgent()) return;
+    if (m.kind === 'avatar_pin') { pinAt(m); return; }
     if (m.kind === 'agents') {
       // A launch flies out of the visible Roamie (or from the cursor); the hatch, when there is one, wins.
       const a = getAgent();
@@ -553,11 +579,13 @@
         return;
       }
       const a = getAgent();
-      if (m.show || !a.visible) { if (a.show({ summoned: true })) a.act('wave'); }
+      if (m.show || !a.visible) { if (a.show({ summoned: true })) a.act('wave'); Roamie.agentHome?.show?.(); }
       else {
         // Sent away mid-answer: it stops talking too, like Esc (#108).
         if (responding || Roamie.voiceOut?.playing()) { send({ type: 'menu', id: 'stop', via: 'hide' }); Roamie.voiceOut?.stop(); }
         a.hide();
+        // The agents' corner is part of the same summon: it leaves too, and comes back with the next one.
+        Roamie.agentHome?.hide?.();
       }
       return;
     }
@@ -577,7 +605,7 @@
   // way out once the Roamie has gone). Cards left on screen have their own close button and don't hold Esc. The
   // reminders card does while it shows (it goes by itself in a few seconds).
   // A voice turn counts too: on macOS the sidekick steps away while the mic is on and until the answer shows.
-  const up = () => !!(getAgent()?.visible || Roamie.notch?.active || ask || Roamie.panel?.isOpen || Roamie.ink?.playing || Roamie.ink?.loose || Roamie.ink?.reminding || hearing || waveTurn || Roamie.voiceOut?.playing());
+  const up = () => !!(getAgent()?.visible || responding || Roamie.notch?.active || ask || Roamie.panel?.isOpen || Roamie.ink?.playing || Roamie.ink?.loose || Roamie.ink?.reminding || hearing || waveTurn || Roamie.voiceOut?.playing());
   function onEsc() {
     dropAutoListen();
     const a = getAgent();

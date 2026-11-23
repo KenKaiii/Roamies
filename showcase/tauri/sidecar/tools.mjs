@@ -251,7 +251,7 @@ export function oneYesNoAtATime(ask) {
   };
 }
 
-export function createTools({ allowActions, ui, ask, openUrl, onCommitments, focus = null, firedReminders = () => [], showList, fmtWhen, commitmentsText, userName, onPlan = () => {}, speak = () => false, onHandoff = () => {}, watchClicks = () => {}, onInkGone = () => {}, askShell = async () => ({ ok: false, error: 'Roamies isn\'t running.' }), workdir = HOME, own = null, sideSearch = async () => null, pointScale = () => 'pixels', skipAllow = () => false, jobs = null, skills = null }) {
+export function createTools({ allowActions, ui, ask, openUrl, onCommitments, focus = null, firedReminders = () => [], showList, fmtWhen, commitmentsText, userName, onPlan = () => {}, speak = () => false, onHandoff = () => {}, watchClicks = () => {}, onInkGone = () => {}, askShell = async () => ({ ok: false, error: 'Roamies isn\'t running.' }), workdir = HOME, own = null, sideSearch = async () => null, pointScale = () => 'pixels', skipAllow = () => false, jobs = null, skills = null, saveAvatarPin = () => {} }) {
   // Relative paths (and run_command) start in workdir: ~/Roamies for the chat, its own folder for an agent.
   const at = (p) => { const s = String(p ?? ''); return /^~(?=$|\/|\\)/.test(s) || path.isAbsolute(s) || /^[a-z]:[\\/]/i.test(s) ? s : path.join(workdir, s); };
   const where = workdir === HOME ? "the user's home folder" : `its working folder (${workdir})`;
@@ -771,6 +771,27 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, foc
       name: 'take_screenshot',
       description: "Look at the screen, only for what words can't show (images, layout, colours). target: 'front' (the window they're in: the default for 'this' or 'here'), an app name ('browser', 'Figma'; works behind other windows), 'window:<id>' from list_windows, or 'screen' (only when it must be everything).",
       parameters: z.object({ target: z.string().optional() }), execute: screenshot,
+    },
+    {
+      name: 'pin_avatar',
+      description: "Keep the Roamie in one place on the screen instead of letting it follow the cursor and roam: 'stay in the top right' means {corner:'top-right'}. corner: top-left, top-right, bottom-left, bottom-right or center (add margin for the gap from the edge, default 14). Or put it anywhere with x and y in screen pixels. release: true frees it to follow the cursor again. It stays pinned until moved or released, including across restarts.",
+      parameters: z.object({
+        corner: z.enum(['top-left', 'top-right', 'bottom-left', 'bottom-right', 'center']).optional(),
+        x: z.number().optional(), y: z.number().optional(), margin: z.number().optional(), release: z.boolean().optional(),
+      }),
+      execute: async ({ corner, x, y, margin, release }) => {
+        if (release) {
+          saveAvatarPin(null);
+          ui({ kind: 'avatar_pin', release: true });
+          return 'The Roamie is free again: it follows the cursor and roams the screen.';
+        }
+        if (!corner && !Number.isFinite(x) && !Number.isFinite(y)) throw new Error('Give a corner (top-right, bottom-left, ...) or x and y in screen pixels.');
+        const pin = { corner: corner ?? null, x: Number.isFinite(x) ? Math.round(x) : null, y: Number.isFinite(y) ? Math.round(y) : null, margin: Number.isFinite(margin) ? Math.round(margin) : null };
+        saveAvatarPin(pin);
+        ui({ kind: 'avatar_pin', ...pin });
+        const where = pin.corner ? pin.corner.replace('-', ' ') : `${pin.x ?? 'the middle'}, ${pin.y ?? 'the middle'}`;
+        return `Pinned the Roamie to ${where}. It stays there until you move or release it.`;
+      },
     },
     // The hands helper's tools: on macOS always (they explain what's missing), elsewhere when the helper is there.
     ...(process.platform === 'darwin' || HANDS ? [

@@ -176,6 +176,25 @@ console.log('mcp ok');
   await assert.rejects(T.use_connection.execute({ server: 'notes', tool: 'search_notes', args: '[1]' }), /JSON object/);
   await assert.rejects(T.use_connection.execute({ server: 'notes', tool: 'search_notes', args: 'nope' }), /JSON object/);
 
+  // Always allow for one connection: its ordinary tools run without the bubble, and another connection still asks.
+  {
+    asked.length = 0;
+    const trusted = Object.fromEntries(createMcpTools({ mcp: m, ask, isYes, skipAllow: () => false, trusted: (s) => s === 'linear', userName: 'Ken', checkCall: checkMcpCall }).map((t) => [t.name, t]));
+    assert.equal(await trusted.use_connection.execute({ server: 'linear', tool: 'ping', args: '{}' }), 'ran ping {}');
+    assert.equal(asked.length, 0, 'trusted connection: no ask');
+    answers = [null];
+    await assert.rejects(trusted.use_connection.execute({ server: 'notes', tool: 'delete_note', args: '{}' }), /Ken said no/);
+    assert.equal(asked.length, 1, 'the other connection still asks');
+  }
+  // Always allow never covers a tool that deletes, sends or pays: that one still asks.
+  {
+    asked.length = 0;
+    const all = Object.fromEntries(createMcpTools({ mcp: m, ask, isYes, skipAllow: () => false, trusted: () => true, userName: 'Ken', checkCall: checkMcpCall }).map((t) => [t.name, t]));
+    answers = [null];
+    await assert.rejects(all.use_connection.execute({ server: 'notes', tool: 'delete_note', args: '{}' }), /Ken said no/);
+    assert.equal(asked.length, 1, 'a destructive tool asks even on an always-allowed connection');
+  }
+
   // Removing asks (skippable), then deletes.
   skip = false; answers = ['yes'];
   assert.equal(await T.remove_connection.execute({ name: 'notes3' }), 'Removed notes3.');

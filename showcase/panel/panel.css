@@ -381,3 +381,27 @@ html, body { height: 100%; background: transparent; }
 
 /* Arabic and Hebrew in a list (dir=auto on the text): the Arabic font first, for its own word spacing. */
 .item .text:dir(rtl) { font-family: "Roamies Arabic RTL", var(--mono); }
+
+/* Token use over time (Home): today's four counts, then the last week as short columns (one muted fill: the
+   view's one accent fill stays on Ask). Kept short so Recent keeps its rows at the panel's 560px. */
+.pane.paged > .usage-group { flex: none; padding-bottom: var(--gut); } /* last on Home, where no footer gives the bottom its room */
+.usage-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--step); align-items: end; }
+.usage-cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.usage-card { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: 6px 7px; border: 1px solid var(--line); }
+.usage-card .k { font-size: var(--t-small); line-height: 1.3; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.usage-card .v { font-size: var(--t-body); line-height: 1.3; color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.usage-week { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(7, 16px); gap: 5px; }
+.usage-day { display: grid; justify-items: center; gap: 3px; }
+.usage-track { display: flex; align-items: flex-end; width: 100%; height: 30px; border-bottom: 1px solid var(--line-hi); }
+.usage-bar { display: block; width: 100%; background: var(--accent-lo); }
+.usage-day .d { font-size: 10px; line-height: 1.2; color: var(--ink-3); }
+
+/* Connections: each one on two lines, its name and switch, then its approval choice and actions. */
+.conn { gap: 6px; padding: 8px 0; border-bottom: 1px dashed var(--line); }
+.conn:last-child { border-bottom: 0; }
+.conn-acts { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.conn-acts .row-btns { margin-inline-start: auto; }
+.conn-trust { display: inline-flex; align-items: center; gap: 8px; min-width: 0; font-size: var(--t-small); line-height: 1.3; color: var(--ink-3); }
+.conn-trust .field.select { flex: none; }
+.conn-trust select { flex: none; padding: 5px 26px 5px 8px; font-size: var(--t-small); line-height: 1.25; background-position: right 9px center; }
+.conn-trust select:disabled { color: var(--ink-3); cursor: default; }

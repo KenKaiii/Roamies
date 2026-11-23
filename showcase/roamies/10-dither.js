@@ -537,7 +537,7 @@
         o, m, face, sq, hands, PAL, L, th, put, disc, line, setPx, spawn, S, startAct,
         get P() { return P; }, get R() { return R; }, get gw() { return gw; }, get gh() { return gh; }, get t() { return t; },
         get busy() { return !!act; },
-        appear, vanish,
+        appear, vanish, teleport,
         stopAct: () => { if (act) { act = null; nextAct = rand(3, 6); } },
         get morphing() { return !!mo; },
         blink: (mid) => blink(mid),

@@ -113,7 +113,11 @@ function fixShapes(m) {
   return out;
 }
 function tidyMark(m) {
+  // A bare string is a kind on its own ("check"): some models send that.
+  if (typeof m === 'string' && m.trim()) return { kind: m.trim() };
   if (!isObj(m)) return m;
+  // at, to and tie given as words are a text place.
+  for (const k of ['at', 'to', 'tie']) if (typeof m[k] === 'string' && m[k].trim()) m = { ...m, [k]: { text: m[k].trim() } };
   // An empty field (text: "") is one left out, not a mistake to send back.
   if (Object.values(m).includes('')) m = Object.fromEntries(Object.entries(m).filter(([, v]) => v !== ''));
   m = fixShapes(m);
@@ -222,6 +226,19 @@ export function checkDraw(args) {
 }
 
 const quoted = (list) => list.map((s) => `"${s}"`).join(', ');
+// The closest id, when a model writes "node-1" for "node1" or drops a character: a suggestion, never a substitution.
+const cleanId = (s) => String(s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+function nearId(id, ids) {
+  const c = cleanId(id);
+  if (!c) return null;
+  let best = null, bd = Infinity;
+  for (const k of ids) {
+    const d = editDistance(c, cleanId(k));
+    if (d < bd) { bd = d; best = k; }
+  }
+  const max = c.length <= 2 ? 0 : Math.max(1, Math.floor(c.length / 3));
+  return best && best !== id && bd <= max ? best : null;
+}
 // Ids that must be there and be different: nodes of a flow, vertices of a figure.
 function idProblems(list, what) {
   const seen = new Set(), out = [];
@@ -277,7 +294,13 @@ const CHECKS = {
   geometry(m) {
     const vs = m.vertices ?? [], ids = new Set(vs.map((v) => v.id));
     if (vs.length < 2) return ['needs vertices (at least 2, each {id, x, y} in your own units, y up).'];
-    const out = idProblems(vs, 'vertices'), known = (id, who) => { if (!ids.has(id)) out.push(`${who}: no vertex has the id "${id}" (vertices: ${quoted([...ids])}).`); };
+    const out = idProblems(vs, 'vertices'), known = (id, who) => {
+      if (ids.has(id)) return;
+      const s = nearId(id, [...ids]);
+      const nospace = String(id).replace(/\s+/g, '');
+      const why = /\s/.test(String(id)) && ids.has(nospace) ? ` (ids can't contain spaces; write "${nospace}")` : s ? `; did you mean "${s}"` : '';
+      out.push(`${who}: no vertex has the id "${id}"${why} (vertices: ${quoted([...ids])}).`);
+    };
     if (!m.lines?.length && !m.circles?.length) out.push('needs lines ({from, to}) or circles ({at, r}) between its vertices.');
     (m.lines ?? []).forEach((l, k) => { known(l.from, `line ${k + 1}`); known(l.to, `line ${k + 1}`); if (l.from === l.to) out.push(`line ${k + 1} goes from "${l.from}" to itself.`); });
     (m.angles ?? []).forEach((a, k) => { for (const id of [a.at, a.from, a.to]) known(id, `angle ${k + 1}`); if (a.at === a.from || a.at === a.to || a.from === a.to) out.push(`angle ${k + 1}: at (its corner), from and to (a point on each arm) must be three different vertices.`); });
@@ -662,7 +685,10 @@ export function checkFlow(m) {
   if (!links.length) out.push('needs links (each {from, to}: the ids of two nodes).');
   if (m.dir === 'up') out.push('dir for a flow is down or right.');
   links.forEach((l, k) => {
-    for (const end of [l.from, l.to]) if (!ids.has(end)) out.push(`link ${k + 1}: no node has the id "${end}" (nodes: ${quoted([...ids])}).`);
+    for (const end of [l.from, l.to]) if (!ids.has(end)) {
+      const s = nearId(end, [...ids]);
+      out.push(`link ${k + 1}: no node has the id "${end}"${s ? `; did you mean "${s}"` : ''} (nodes: ${quoted([...ids])}).`);
+    }
     if (l.from === l.to) out.push(`link ${k + 1} goes from "${l.from}" to itself.`);
   });
   return out;
