@@ -1113,6 +1113,8 @@
 
   // ---------------------------------------------------------------- render
   const PANES = { home, memory, abilities: abilitiesPage, model: modelPage, appearance: appearancePage, speaking: speakingPage, listening: listeningPage, shortcuts: shortcutsPage, general: generalPage, about: aboutPage, whatsnew: whatsNewPage };
+  // Pages by tab name, in a Map so no name can reach an object's built-in methods.
+  const PAGES = new Map(Object.entries(PANES));
   // focusKey: what to focus after (a data-k, or an element id); otherwise whatever had focus keeps it.
   function render(focusKey, animate = false) {
     if (!state) return;
@@ -1128,9 +1130,7 @@
     const same = render.tab === tab; render.tab = tab;
     const before = new Set([...pane.querySelectorAll('[data-anim]')].filter(shown).map((n) => n.dataset.anim));
     // A page with a list fits it to the room left and pages it; any other page scrolls.
-    // show() only ever sets a page name; checked here too, where the page is called.
-    let page = PANES.home;
-    if (Object.prototype.hasOwnProperty.call(PANES, tab) && typeof PANES[tab] === 'function') page = PANES[tab];
+    const page = PAGES.get(tab) ?? PAGES.get('home');
     const draw = () => { pane.replaceChildren(...page().flat().filter(Boolean));
     pane.classList.toggle('paged', !!pane.querySelector('.pagebox')); keepGone(); };
     draw();
