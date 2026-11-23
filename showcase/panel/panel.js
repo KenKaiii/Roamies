@@ -1125,11 +1125,13 @@
     const scroll = $('pane-' + tab).closest('.body').scrollTop;
     head();
     const pane = $(`pane-${tab}`);
-    if (!Object.hasOwn(PANES, tab)) tab = 'home'; // show() only sets page names; this keeps PANES[tab] one of them
     const same = render.tab === tab; render.tab = tab;
     const before = new Set([...pane.querySelectorAll('[data-anim]')].filter(shown).map((n) => n.dataset.anim));
     // A page with a list fits it to the room left and pages it; any other page scrolls.
-    const draw = () => { pane.replaceChildren(...PANES[tab]().flat().filter(Boolean));
+    // show() only ever sets a page name; checked here too, where the page is called.
+    let page = PANES.home;
+    if (Object.prototype.hasOwnProperty.call(PANES, tab) && typeof PANES[tab] === 'function') page = PANES[tab];
+    const draw = () => { pane.replaceChildren(...page().flat().filter(Boolean));
     pane.classList.toggle('paged', !!pane.querySelector('.pagebox')); keepGone(); };
     draw();
     // Lists show as many rows as fit: drawn once to measure, again if a different number fits.
