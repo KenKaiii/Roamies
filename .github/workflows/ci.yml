@@ -191,8 +191,13 @@ jobs:
           echo '{"onboarded":true,"setupVersion":2,"voice":false}' > "$ROAMIES_DATA_DIR/sidekick.json"
           trap 'kill $pid 2>/dev/null; docker rm -f mutter >/dev/null 2>&1' EXIT
           pid=
-          docker run -d --name mutter --network host -e DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix ubuntu:24.04 bash -c \
-            'apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends mutter dbus libgl1-mesa-dri >/dev/null && dpkg-query -W mutter && exec dbus-run-session -- mutter --x11 --replace' >/dev/null
+          # The image's apt only knows archive.ubuntu.com and security.ubuntu.com, which stalled for hours from the
+          # runners on 2026-11-23 (they took the connection and never answered). The runner's own apt goes through a
+          # mirror list (/etc/apt/apt-mirrors.txt, the Azure mirror first), so the container gets that list too. Without
+          # the file it keeps its own sources.
+          docker run -d --name mutter --network host -e DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix \
+            -v /etc/apt/apt-mirrors.txt:/etc/apt/apt-mirrors.txt:ro ubuntu:24.04 bash -c \
+            '[ -s /etc/apt/apt-mirrors.txt ] && sed -i "s|^URIs: .*|URIs: mirror+file:/etc/apt/apt-mirrors.txt|" /etc/apt/sources.list.d/ubuntu.sources; apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends mutter dbus libgl1-mesa-dri >/dev/null && dpkg-query -W mutter && exec dbus-run-session -- mutter --x11 --replace' >/dev/null
           wm=false
           for _ in $(seq 240); do xprop -root _NET_SUPPORTING_WM_CHECK | grep -q 'window id' && { wm=true; break; }; sleep 1; done
           docker logs mutter 2>&1 | tail -15
