@@ -1130,7 +1130,8 @@
     const same = render.tab === tab; render.tab = tab;
     const before = new Set([...pane.querySelectorAll('[data-anim]')].filter(shown).map((n) => n.dataset.anim));
     // A page with a list fits it to the room left and pages it; any other page scrolls.
-    const page = PAGES.get(tab) ?? PAGES.get('home');
+    const found = PAGES.get(tab);
+    const page = typeof found === 'function' ? found : home;
     const draw = () => { pane.replaceChildren(...page().flat().filter(Boolean));
     pane.classList.toggle('paged', !!pane.querySelector('.pagebox')); keepGone(); };
     draw();
