@@ -50,23 +50,16 @@ if [ "$(uname)" = "Darwin" ] && [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
   APPLE_SIGNING_IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null | sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -1)"
   export APPLE_SIGNING_IDENTITY="${APPLE_SIGNING_IDENTITY:--}"
 fi
-# Linux: build the GTK layer-shell overlay host. Cargo leaves it beside the app binary, which is where the
-# app looks for it, and it goes in binaries/ so Tauri bundles it as an external binary.
+# Linux: build the GTK layer-shell overlay host. It's one of this package's binaries (src/bin), so Cargo leaves it
+# beside the app binary, which is where the app looks for it, and Tauri bundles it with the app (not as an external
+# binary too: rpm refuses the same file twice).
 case "$TRIPLE" in
   *-linux-*)
-    # The app's build script (tauri-build) insists that every external binary is already there before it lets anything
-    # in the package build, this host included. So it starts as an empty file, and the real host is copied over it
-    # right after it is built (before the app itself builds and bundles).
-    mkdir -p binaries
-    : > "binaries/roamies-overlay-$TRIPLE"
     if [ "$MODE" = dev ]; then
       cargo build --locked ${TARGET:+--target "$TARGET"} --bin roamies-overlay
-      HOST_BIN="target/debug/roamies-overlay"; [ -n "$TARGET" ] && HOST_BIN="target/$TARGET/debug/roamies-overlay"
     else
       cargo build --release --locked ${TARGET:+--target "$TARGET"} --bin roamies-overlay
-      HOST_BIN="target/release/roamies-overlay"; [ -n "$TARGET" ] && HOST_BIN="target/$TARGET/release/roamies-overlay"
-    fi
-    cp "$HOST_BIN" "binaries/roamies-overlay-$TRIPLE" ;;
+    fi ;;
 esac
 # ./build.sh release --target <triple> builds for one target (used by the release workflow).
 if [ "$MODE" = "dev" ]; then cargo build; else cargo tauri build ${TAURI_BUNDLES:+--bundles $TAURI_BUNDLES} "$@"; fi

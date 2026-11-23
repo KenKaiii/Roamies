@@ -7,8 +7,7 @@
     "externalBin": [
       "binaries/roamies-voice",
       "binaries/roamies-hands",
-      "binaries/roamies-node",
-      "binaries/roamies-overlay"
+      "binaries/roamies-node"
     ],
     "linux": {
       "appimage": {
