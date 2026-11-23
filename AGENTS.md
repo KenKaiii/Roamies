@@ -10,11 +10,18 @@ commands and JSON, over Win32, UI Automation and Windows OCR). Only hands-win's 
 From a Mac, `cargo xwin check --target x86_64-pc-windows-msvc` type-checks the Windows code with the real SDK.
 
 Linux (beta) uses the same voice helper (`voice-win` builds for Linux too: ALSA mic, talk keys over X11, and a
-`toggle` command for `roamies --talk` on Wayland) and no hands helper. Its shell code is `src-tauri/src/linux.rs`:
-every window is an X11 window (`GDK_BACKEND=x11` on Wayland, through XWayland), the overlay lets clicks through by
-region (the page reports its click areas, `host.js` → `set_hit_rects`) instead of following the cursor, and
-screenshots, copying, Open at Login and AppImage-only updates live there. Debug aids: `ROAMIES_TRACE=1` prints the
-overlay's click areas, and in debug builds `ROAMIES_TEST_AUDIO=<wav>` stands in for the microphone.
+`toggle` command for `roamies --talk` on Wayland). Its hands helper, `src-tauri/hands-linux/roamies-hands`, is a
+Python script for Hyprland only (Hyprland, AT-SPI, ydotool; its README lists what it needs): the sidecar offers its
+tools only when `HYPRLAND_INSTANCE_SIGNATURE` is set, and `roamies-hands selftest-safety` (run in CI) checks its
+`HANDS_OFF` list. The shell code is `src-tauri/src/linux.rs`: every window is an X11 window (`GDK_BACKEND=x11` on
+Wayland, through XWayland), the overlay lets clicks through by region (the page reports its click areas, `host.js` →
+`set_hit_rects`) instead of following the cursor, and screenshots, copying, Open at Login and AppImage-only updates
+live there. On a Wayland compositor with layer-shell (Hyprland, not GNOME) the overlay runs instead in
+`roamies-overlay` (`src-tauri/src/bin/roamies-overlay.rs`), a GTK layer-shell host that loads the same
+`dist/desktop.html` and talks to the app over stdin/stdout. The app falls back to the X11 overlay when the host or
+`dist` is missing, the compositor has no layer-shell, or the host fails three times. The host covers one monitor,
+and Esc-to-hide isn't wired there yet. Debug aids: `ROAMIES_TRACE=1` prints the overlay's click areas, and in debug
+builds `ROAMIES_TEST_AUDIO=<wav>` stands in for the microphone.
 
 ## Commands
 
@@ -37,7 +44,8 @@ stopping the release; `latest.json` lists Linux only when its AppImage is there.
 
 - Every tool that touches files, commands, URLs or other apps goes through `showcase/tauri/sidecar/safety.mjs`
   (tested in `test/safety.test.mjs`); the hands helpers also refuse to type or click in the apps in `HANDS_OFF`
-  (by bundle id in `hands/main.swift`, by program name in `hands-win/src/logic.rs`).
+  (by bundle id in `hands/main.swift`, by program name in `hands-win/src/logic.rs`, by program or window class in
+  `hands-linux/roamies-hands`).
   Add a test case with every rule change.
 - In-app updates read `latest.json` from the newest published release, signed with the key in the
   `TAURI_SIGNING_PRIVATE_KEY` secret. Keep `plugins.updater.pubkey` in `tauri.conf.json` matching it.
