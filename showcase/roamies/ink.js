@@ -600,7 +600,7 @@
   // Where a new card goes. Only a few cards stay up at once and none sits on another: the oldest close to make way
   // (the sidecar hears each one). Regression: eight cards at once left no room, and the last was drawn over the first.
   // A drawing that goes by itself (the tour, the setup showcase) keeps all of its cards.
-  const MAX_CARDS = 8;
+  const MAX_CARDS = 20;
   function roomFor(w, h, part) {
     const old = () => [...new Set(marks.filter((q) => q.alive && q.card && !q.local && !q.pinned && !q.leaving && q.part !== part && !drawnBy.has(q.part)).sort((a, b) => a.born - b.born).map((q) => q.part))];
     const shut = (id) => { R.ink.send?.({ type: 'ink_closed', part: id }); fadeOut(partMarks(id), 0.25); };
