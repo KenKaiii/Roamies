@@ -262,6 +262,22 @@ fn other_input_down() -> bool {
 /// Windows: leaves an overlay out of every capture, so Roamies never shows up in its own screenshots, area snaps
 /// or the pictures it reads text from.
 #[cfg(target_os = "windows")]
+fn set_no_activate(w: &WebviewWindow, on: bool) {
+    #[link(name = "user32")]
+    extern "system" {
+        fn GetWindowLongW(hwnd: isize, index: i32) -> i32;
+        fn SetWindowLongW(hwnd: isize, index: i32, new_long: i32) -> i32;
+    }
+    if let Ok(h) = w.hwnd() {
+        unsafe {
+            let ex = GetWindowLongW(h.0 as isize, -20);
+            let next = if on { ex | 0x08000000 } else { ex & !0x08000000 };
+            if next != ex { SetWindowLongW(h.0 as isize, -20, next); }
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
 fn exclude_from_capture(w: &WebviewWindow) {
     #[link(name = "user32")]
     extern "system" {
@@ -270,6 +286,21 @@ fn exclude_from_capture(w: &WebviewWindow) {
     // WDA_EXCLUDEFROMCAPTURE (Windows 10 2004 and later).
     if let Ok(h) = w.hwnd() {
         unsafe { SetWindowDisplayAffinity(h.0 as isize, 0x11) };
+    }
+    set_no_activate(w, true);
+    #[link(name = "comctl32")]
+    extern "system" {
+        fn SetWindowSubclass(hwnd: isize, pfn: unsafe extern "system" fn(isize, u32, usize, isize, usize, usize) -> isize, id: usize, data: usize) -> i32;
+        fn DefSubclassProc(hwnd: isize, msg: u32, wp: usize, lp: isize) -> isize;
+    }
+    unsafe extern "system" fn no_activate_proc(hwnd: isize, msg: u32, wp: usize, lp: isize, _id: usize, _data: usize) -> isize {
+        if msg == 0x0021 && !TYPING.load(Ordering::Relaxed) {
+            return 3; // MA_NOACTIVATE: process click without stealing foreground focus
+        }
+        DefSubclassProc(hwnd, msg, wp, lp)
+    }
+    if let Ok(h) = w.hwnd() {
+        unsafe { SetWindowSubclass(h.0 as isize, no_activate_proc, 1, 0) };
     }
 }
 
@@ -355,6 +386,8 @@ fn sidecar_send(app: AppHandle, msg: Value) {
 fn set_typing(app: AppHandle, window: WebviewWindow, on: bool) {
     let was = TYPING.swap(on, Ordering::Relaxed);
     let _ = window.set_focusable(on);
+    #[cfg(target_os = "windows")]
+    set_no_activate(&window, !on);
     // COSMIC: the unmanaged overlay can't get the keyboard, so it's an ordinary window while typing (linux.rs).
     #[cfg(target_os = "linux")]
     if linux::unmanaged_overlay() && was != on {
