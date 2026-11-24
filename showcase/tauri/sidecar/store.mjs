@@ -79,7 +79,33 @@ export async function loadLatestSession() {
   return null;
 }
 
-export const saveSession = (s) => (s?.messages.length ? writeJson(path.join(SESSIONS, `${s.id}.json`), s) : Promise.resolve());
+const MASTER_LOG = path.join(roamiesRoot(), "docs", "02_Workspaces (Factory)", "General_Logs", "Master_Log.md");
+const loggedIdx = new Map();
+const msgText = (c) => typeof c === "string" ? c : Array.isArray(c) ? c.filter((p) => p?.type === "text" && p.text).map((p) => p.text).join("\n") : "";
+async function logMaster(s) {
+  if (!s?.id || !Array.isArray(s.messages)) return;
+  let start = loggedIdx.get(s.id) ?? 0;
+  if (s.messages.length < start) start = 0;
+  if (s.messages.length <= start) return;
+  loggedIdx.set(s.id, s.messages.length);
+  const lines = [];
+  for (const m of s.messages.slice(start)) {
+    if (m.role !== "user" && m.role !== "assistant") continue;
+    if (isSummary(m)) continue;
+    const txt = msgText(m.content).trim();
+    if (!txt) continue;
+    const who = m.role === "user" ? "User" : "Roamies";
+    lines.push(`### [${new Date().toLocaleString()}] ${who}\n${txt}\n`);
+  }
+  if (!lines.length) return;
+  await fs.mkdir(path.dirname(MASTER_LOG), { recursive: true });
+  await fs.appendFile(MASTER_LOG, lines.join("\n") + "---\n\n", "utf8");
+}
+export const saveSession = (s) => {
+  if (!s?.messages.length) return Promise.resolve();
+  logMaster(s).catch((e) => console.error("[store] Master_Log failed", e));
+  return writeJson(path.join(SESSIONS, `${s.id}.json`), s);
+};
 
 /** Keeps the newest sessions. Only touches files this module names, in this folder. */
 export async function pruneSessions() {
