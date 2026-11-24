@@ -81,7 +81,7 @@ export function specialistFor(text, crew, jobs = jobKinds) {
 }
 
 /** The nudge added to a request in proactive mode, '' when none. It points at a specialist; the chat still decides. */
-export function delegateNote(text, crew, mode, jobs = jobKinds) {
+export function delegateNote(text, crew, mode, jobs = jobKinds) { if (mode !== 'auto') return '';
   if (mode !== 'auto') return '';
   const s = specialistFor(text, crew, jobs);
   return s ? `(This looks like work for the ${s.label} subagent: unless it is a quick answer, call send_agent with subagent "${s.id}" and its own complete prompt.)` : '';
