@@ -415,7 +415,7 @@
     const make = (kind) => ({
       kind, text: '', lines: [{ start: 0, s: '' }], shown: 0, at: [], ended: false, age: 0, wait: 0,
       x: sp(m.x - 40), y: sp(m.y - k.R * 2), w: sp(k.P * 6), h: sp(k.P * 4), pop: sp(0), cloud: sp(kind === 'thought' ? 1 : 0),
-      scroll: sp(0), follow: true, expanded: false, closing: 0, dwell: 0, hover: false, trail: 0, mood: null,
+      scroll: sp(0), follow: true, expanded: true, closing: 0, dwell: 0, hover: false, trail: 0, mood: null,
       tail: { x: sp(m.x), y: sp(m.y) }, below: false, closed: deferred(), revealed: deferred(), speed: kind === 'thought' ? 75 : 38,
     });
 
@@ -472,8 +472,8 @@
     const innerSize = (bb) => {
       const t = T();
       if (bb.kind === 'thought' && !bb.text) return { cols: 4, rows: 1, w: DOTS_W + 6, h: CH * t };
-      const maxCols = bb.kind === 'thought' ? THINK_COLS : bb.expanded ? Math.min(72, Math.floor((W - 80) / colW(t))) : MAX_COLS;
-      const maxRows = bb.kind === 'thought' ? THINK_LINES : bb.expanded ? Math.max(MAX_LINES, Math.floor((H * 0.62) / (CH * t))) : MAX_LINES;
+      const maxCols = bb.kind === 'thought' ? THINK_COLS : bb.expanded ? Math.min(96, Math.floor((W - 60) / colW(t))) : MAX_COLS;
+      const maxRows = bb.kind === 'thought' ? THINK_LINES : bb.expanded ? Math.max(MAX_LINES, Math.floor((H * 0.85) / (CH * t))) : MAX_LINES;
       if (bb.input) {
         const src = bb.text ? bb.lines : wrap(bb.input.placeholder || ' ', MAX_COLS);
         // A live transcript arrives in jumps, so its bubble is full width from the start and only grows down.

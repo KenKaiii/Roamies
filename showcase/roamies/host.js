@@ -487,7 +487,7 @@
       if (m.cancelled || !heardText) { waveTurn = false; if (notchOn() && !responding && !ask) N().close(); }
       // Heard, but no turn ever started (or it never ended): don't leave 'Thinking' up for good.
       // Only for this take: a newer one (talking again within the 20 s) keeps its capsule.
-      else if (notchOn()) { const take = listenTake; setTimeout(() => { if (take === listenTake && !responding && !ask && Roamie.notch?.active) N().close(); }, 20000); }
+      // kept open until manually closed
       heardText = false;
       listen?.close(); listen = null;
       if (heard) { const h = heard; setTimeout(() => { if (heard === h) { h.close(); heard = null; } }, 4000); }

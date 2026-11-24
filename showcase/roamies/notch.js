@@ -28,7 +28,7 @@
   // Fillet where the capsule meets the top edge, flowing into the screen like the notch's own corners.
   const FILLET = 9;
   // Compact: the notch plus a wing either side for the globe and the status. Open: wide enough to read.
-  const WING = 88, OPEN_W = 680, MAX_BODY = 24 * 20;
+  const WING = 88, OPEN_W = Math.min(920, Math.round(window.innerWidth * 0.72)), MAX_BODY = Math.round(window.innerHeight * 0.85);
   // Drop: the pill's height, and how far below the notch it floats.
   // GAP is past the goo's reach, so the neck always breaks once the pill has settled.
   const DROP_ROW = 40, GAP = 15;
