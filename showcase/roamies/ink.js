@@ -1260,7 +1260,7 @@
       const room = maxW - 2 * EDGE_X - n * 2 * PX;
       let cap = Math.max(...natural);
       while (cap > 56 && natural.reduce((a, v) => a + Math.min(v, cap), 0) > room) cap -= 4;
-      const ws = natural.map((v) => Math.min(v, cap)), xs = [];
+      const baseWs = natural.map((v) => Math.min(v, cap)), sumBase = baseWs.reduce((a, b) => a + b, 0) || 1, extra = Math.max(0, room - sumBase), ws = baseWs.map((v) => v + Math.floor(extra * (v / sumBase))), xs = [];
       let cx = EDGE_X + PX; for (const cw of ws) { xs.push(cx); cx += cw + 2 * PX; }
       const heads = cols.map((h, ci) => wrapRows(h.toUpperCase(), ws[ci], TH)), headH = Math.max(...heads.map((r) => r.length)) * 13 + 14;
       const rows = m.rows.map((r) => r.map((v, ci) => (yn(v) ? { yn: yn(v), rows: [''] } : { rows: wrapRows(v, ws[ci], font(ci)) })));
@@ -1269,9 +1269,11 @@
     };
     let L = lay(460);
     for (const wide of [600, 760]) if (L.h > maxCardH() || L.deep > 3) L = lay(Math.min(wide, scr()[2] - scr()[0] - 40));
-    const { w, xs, heads, headH, rows, rowH, h } = L;
-    const glyphs = rows.map((r) => r.map((cell) => (cell.yn > 0 ? [tickPts()] : cell.yn < 0 ? crossPts() : null)));
-    await card(m, w, h, function (b, l, t, x, y, age) {
+    let curW = L.w;
+    const glyphs = L.rows.map((r) => r.map((cell) => (cell.yn > 0 ? [tickPts()] : cell.yn < 0 ? crossPts() : null)));
+    await card(m, L.w, L.h, function (b, l, t, x, y, age) {
+      if (this.w && Math.abs(this.w - curW) > 1) { curW = this.w; L = lay(curW); this.grow?.(L.h); }
+      const w = this.w || L.w, { xs, heads, headH, rows, rowH } = L;
       let yy = y + 6;
       heads.forEach((r, ci) => r.forEach((line, k) => typed(b, line, x + xs[ci], yy + 15 + k * 13, TH, DIM, age / 0.3)));
       yy += headH;
@@ -1279,7 +1281,6 @@
       rows.forEach((cells, ri) => {
         const a = age - 0.2 - ri * 0.09;
         if (a > 0) cells.forEach((cell, ci) => {
-          // yes and no as a tick and a cross: told apart by shape, not only by colour.
           if (cell.yn) glyphs[ri][ci].forEach((pts, k) => pen(b, l, this, placed(this, `g${ri}.${ci}.${k}`, pts, x + xs[ci], Math.round(yy + rowH[ri] / 2 - 5)), strokeAt(a - k * 0.12, 0.2), tone(cell.yn > 0 ? 'lime' : 'coral'), { key: `g${ri}.${ci}.${k}`, w: 2.6 }));
           else wrapped(b, cell.rows, x + xs[ci], yy + 6 + 12, LH, font(ci), TEXT, a / 0.3);
         });
@@ -2127,10 +2128,10 @@
   const cached = (map, key, make) => (map.has(key) ? map.get(key) : (map.set(key, make()), map.get(key)));
   const shift = (pts, x, y) => pts.map(([px, py]) => [px + x, py + y]);
   // Rows in card coordinates (from the card's top left), cut to the screen's height with "+N more".
-  function remLayout(x, y) {
+  function remLayout(x, y, rw = REM.m?.w ?? REM_W) {
     const { today, later } = REM.data, all = [...today, ...later];
     const whenW = Math.min(96, Math.max(0, ...all.map((i) => textW(remWhen(i), SMALL))));
-    const tw = REM_W - 40 - (whenW ? whenW + 12 : 0) - 16, rows = [];
+    const tw = rw - 40 - (whenW ? whenW + 12 : 0) - 16, rows = [];
     let yy = 26 + 8;
     const head = (label, n, gap) => { if (gap) yy += 8; rows.push({ head: label, n, gap, y: yy, h: 26 }); yy += 26; };
     const item = (i) => { const lines = wrapRows(i.text, tw, BODY, 3), h = lines.length * 19 + 10; rows.push({ i, lines, when: remWhen(i), y: yy, h }); yy += h; };
@@ -2156,7 +2157,7 @@
     return { rows, h: yy + 10 };
   }
   function remDraw(b, l, t) {
-    const x = this.x, y = this.y, w = REM_W, h = this.h, cw = this.ready ? w : this.cw, ch = this.ready ? h : this.ch;
+    const x = this.x, y = this.y, w = this.w ?? REM_W, h = this.h, cw = this.ready ? w : this.cw, ch = this.ready ? h : this.ch;
     if (cw < 4) return;
     chrome(b, x, y, cw, ch);
     if (!this.ready) return;
@@ -2212,13 +2213,16 @@
     await fontsReady();
     if (remOpen()) { remRelayout(); return; }
     const L0 = remLayout(0, 0), [x, y] = place(REM_W, L0.h, REM_PART);
-    const c = REM.m = add({ z: 2, part: REM_PART, local: true, card: true, kind: 'reminders', x, y, cw: 0, ch: 0, p: 1, ready: false, opened: Infinity,
-      box() { return [this.x - 4, this.y - 4, REM_W + 8, this.h + 14]; },
+    const c = REM.m = add({ z: 2, part: REM_PART, local: true, card: true, kind: 'reminders', x, y, ox: x, oy: y, w: REM_W, cw: 0, ch: 0, p: 1, ready: false, opened: Infinity,
+      extend(nh) { this.h = clamp(nh, 90, maxCardH()); this.ch = this.h; touch(0.2); },
+      extendW(nw, shiftX = 0) { const old = this.w ?? REM_W; this.w = clamp(nw, 210, Math.max(480, scr()[2] - scr()[0] - 24)); const dw = this.w - old; if (shiftX) this.dx = (this.dx || 0) - dw * (this.k ?? 1); this.cw = this.w; remRelayout(); },
+      box() { const rw = this.w ?? REM_W; return [this.x - 4, this.y - 4, rw + 8, this.h + 14]; },
       draw: remDraw,
       hits() {
-        const { x: cx, y: cy } = this;
-        return [...this.rows.filter((r) => r.i).map((r) => ({ rect: [cx, cy + r.y, REM_W, r.h], kind: 'tick', id: r.i.id, done: r.i.done, part: REM_PART })),
-          { rect: [cx + REM_W - 28, cy + this.h - 28, 28, 28], kind: 'resize', part: REM_PART }, { rect: [cx + REM_W - 28, cy + 2, 26, 22], kind: 'close', part: REM_PART }, { rect: [cx + REM_W - 56, cy + 2, 24, 22], kind: 'pin', part: REM_PART }, { rect: [cx, cy, REM_W - 58, 26], kind: 'drag', part: REM_PART }, { rect: [cx, cy, REM_W, this.h], kind: 'card', part: REM_PART }];
+        const { x: cx, y: cy } = this, rw = this.w ?? REM_W;
+        return [...this.rows.filter((r) => r.i).map((r) => ({ rect: [cx, cy + r.y, rw, r.h], kind: 'tick', id: r.i.id, done: r.i.done, part: REM_PART })),
+          { rect: [cx + rw - 28, cy + this.h - 28, 28, 28], kind: 'resize', part: REM_PART }, { rect: [cx, cy + this.h - 10, rw - 28, 10], kind: 'extend', part: REM_PART }, { rect: [cx + rw - 10, cy + 26, 10, Math.max(10, this.h - 54)], kind: 'extend-r', part: REM_PART }, { rect: [cx, cy + 26, 10, Math.max(10, this.h - 36)], kind: 'extend-l', part: REM_PART },
+          { rect: [cx + rw - 28, cy + 2, 26, 22], kind: 'close', part: REM_PART }, { rect: [cx + rw - 56, cy + 2, 24, 22], kind: 'pin', part: REM_PART }, { rect: [cx, cy, rw - 58, 26], kind: 'drag', part: REM_PART }, { rect: [cx, cy, rw, this.h], kind: 'card', part: REM_PART }];
       },
     });
     Object.assign(c, remLayout(x, y));

@@ -443,7 +443,7 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, foc
 
   // ---------- drawing on screen (the draw tool) ----------
   // The overlay plays a drawing a beat at a time; each beat's places are looked up just before it's sent, so a
-  // walkthrough's next step is found on the screen as it is after the click. A drawing stays until it's cleared or the
+  // walkthrough's next step is found on the screen as it is after the click. ALWAYS prioritize calling draw with exact schema syntax for tables ({ kind: "table", title, columns: ["Col1", "Col2"], rows: [["val1", "val2"]] }), checklists ({ kind: "list", title, items: ["item 1", "item 2"] }), and structured notes ({ kind: "card", title, heading, text, items })—never output raw markdown tables in chat. A drawing stays until it's cleared or the
   // screen changes: a new drawing in a later request replaces it (unless it edits it), the front window switching,
   // moving or closing clears it, so does a click there that changes what it shows (a link, button, tab, menu item, a
   // double-click that opens something: the user's or the agent's own), the page or document in it changing (another
