@@ -583,7 +583,7 @@
     const taken = [...up.map((m) => grow(markBox(m), 6)), ...markedNow().map((r) => grow(r, 10)), ...pillsNow(), ...(panel ? [grow(panel, 6)] : [])];
     const roomL = !!winRect && winRect[0] - S[0] >= w + 28, roomR = !!winRect && S[2] - (winRect[0] + winRect[2]) >= w + 28;
     // A window that fills the screen leaves no room beside it: then cards go over it like on an empty screen.
-    const overWin = !winRect || (!roomL && !roomR);
+    const overWin = true;
     const fits = (x) => x >= S[0] + 8 && x + w <= S[2] - 8 && (overWin || x >= winRect[0] + winRect[2] || x + w <= winRect[0]);
     const xs = [];
     if (side) { const x = S[2] - Math.max(w, side.width - 32) / 2 - w / 2 - 16; for (let y = top; y + h <= bot; y += 12) { const r = [x, y, w, h]; if (!taken.some((q) => overlap(r, q) > 0)) return r; } if (!strict) return [x, top, w, h]; }
@@ -606,7 +606,7 @@
     const shut = (id) => { R.ink.send?.({ type: 'ink_closed', part: id }); fadeOut(partMarks(id), 0.25); };
     if (!drawnBy.has(part)) for (const id of old().slice(0, -(MAX_CARDS - 1))) shut(id);
     for (;;) {
-      const r = place(w, h, part, true), id = r ? null : old()[0];
+      const r = place(w, h, part, old().length < MAX_CARDS), id = r ? null : (old().length >= MAX_CARDS ? old()[0] : null);
       if (r || id == null) return r ?? place(w, h, part);
       shut(id);
     }
