@@ -26,7 +26,7 @@ case "$TRIPLE" in
     mkdir -p src-tauri/vcruntime
     sys32="$(cygpath -u "${SYSTEMROOT:-C:\\Windows}")/System32"
     for dll in msvcp140.dll msvcp140_1.dll vcruntime140.dll vcruntime140_1.dll; do cp "$sys32/$dll" src-tauri/vcruntime/; done
-    for h in voice hands; do
+    for h in voice hands; do [ -f "src-tauri/binaries/roamies-$h-$TRIPLE.exe" ] && continue;
       cargo build --release --locked --manifest-path "src-tauri/$h-win/Cargo.toml" --target "$TRIPLE"
       cp "src-tauri/$h-win/target/$TRIPLE/release/roamies-$h.exe" "src-tauri/binaries/roamies-$h-$TRIPLE.exe"
     done ;;
@@ -62,4 +62,4 @@ case "$TRIPLE" in
     fi ;;
 esac
 # ./build.sh release --target <triple> builds for one target (used by the release workflow).
-if [ "$MODE" = "dev" ]; then cargo build; else cargo tauri build ${TAURI_BUNDLES:+--bundles $TAURI_BUNDLES} "$@"; fi
+if [ "$MODE" = "dev" ]; then cargo build; else cargo tauri build --bundles "${TAURI_BUNDLES:-nsis}" "$@"; fi
