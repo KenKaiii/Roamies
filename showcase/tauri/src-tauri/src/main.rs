@@ -262,25 +262,6 @@ fn other_input_down() -> bool {
 /// Windows: leaves an overlay out of every capture, so Roamies never shows up in its own screenshots, area snaps
 /// or the pictures it reads text from.
 #[cfg(target_os = "windows")]
-fn set_no_activate(w: &WebviewWindow, on: bool) {
-    #[link(name = "user32")]
-    extern "system" {
-        fn GetWindowLongW(hwnd: isize, index: i32) -> i32;
-        fn SetWindowLongW(hwnd: isize, index: i32, new_long: i32) -> i32;
-    }
-    if let Ok(h) = w.hwnd() {
-        unsafe {
-            let ex = GetWindowLongW(h.0 as isize, -20);
-            let next = if on { ex | 0x08000000 } else { ex & !0x08000000 };
-            if next != ex { SetWindowLongW(h.0 as isize, -20, next); }
-        }
-    }
-}
-
-#[cfg(target_os = "windows")]
-static LAST_FG: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
-
-#[cfg(target_os = "windows")]
 fn exclude_from_capture(w: &WebviewWindow) {
     #[link(name = "user32")]
     extern "system" {
@@ -290,7 +271,6 @@ fn exclude_from_capture(w: &WebviewWindow) {
     if let Ok(h) = w.hwnd() {
         unsafe { SetWindowDisplayAffinity(h.0 as isize, 0x11) };
     }
-    set_no_activate(w, true);
 }
 
 /// Cursor entered or left something clickable: flip click-through.
@@ -304,29 +284,7 @@ fn set_hot(window: WebviewWindow, hot: bool) {
     #[cfg(target_os = "macos")]
     let hot = hot && !fullscreen::GAME.load(Ordering::Relaxed);
     OVERLAY_HOT.store(hot, Ordering::Relaxed);
-    #[cfg(target_os = "windows")]
-    if !TYPING.load(Ordering::Relaxed) {
-        #[link(name = "user32")]
-        extern "system" {
-            fn GetForegroundWindow() -> isize;
-            fn SetForegroundWindow(hwnd: isize) -> i32;
-        }
-        if hot {
-            let fg = unsafe { GetForegroundWindow() };
-            let own = window.hwnd().map(|h| h.0 as isize).unwrap_or(0);
-            if fg != 0 && fg != own {
-                LAST_FG.store(fg, Ordering::Relaxed);
-            }
-        } else {
-            let prev = LAST_FG.load(Ordering::Relaxed);
-            if prev != 0 {
-                unsafe { SetForegroundWindow(prev) };
-            }
-        }
-    }
     let _ = window.set_ignore_cursor_events(!hot);
-    #[cfg(target_os = "windows")]
-    if !TYPING.load(Ordering::Relaxed) { set_no_activate(&window, true); }
 }
 
 /// Linux: the parts of this overlay that take clicks, as [x, y, w, h, …] in CSS px (host.js). Everything else
@@ -397,8 +355,6 @@ fn sidecar_send(app: AppHandle, msg: Value) {
 fn set_typing(app: AppHandle, window: WebviewWindow, on: bool) {
     let was = TYPING.swap(on, Ordering::Relaxed);
     let _ = window.set_focusable(on);
-    #[cfg(target_os = "windows")]
-    set_no_activate(&window, !on);
     // COSMIC: the unmanaged overlay can't get the keyboard, so it's an ordinary window while typing (linux.rs).
     #[cfg(target_os = "linux")]
     if linux::unmanaged_overlay() && was != on {
@@ -1401,8 +1357,6 @@ fn build_overlays(app: &AppHandle) -> tauri::Result<()> {
             .position(pos.x, pos.y)
             .inner_size(size.width, size.height)
             .initialization_script(init);
-        #[cfg(target_os = "windows")]
-        let b = b.additional_browser_args("--disable-direct-composition");
         // Linux: a fixed size from the start, so it's never resizable as it maps (fix_overlay_size, #78).
         #[cfg(target_os = "linux")]
         let b = b.min_inner_size(size.width, size.height).max_inner_size(size.width, size.height);

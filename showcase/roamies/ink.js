@@ -2214,7 +2214,6 @@
       box() { return [this.x - 4, this.y - 4, REM_W + 8, this.h + 14]; },
       draw: remDraw,
       hits() {
-        if (this.ready) { b.fillStyle = this.hoverGrip ? HOT : rgba(ACC, 0.55); for (let k = 0; k < 3; k++) for (let j = 0; j <= k; j++) b.fillRect(this.x + REM_W - 6 - j * 4, this.y + this.h - 14 + k * 4, 2, 2); }
         const { x: cx, y: cy } = this;
         return [...this.rows.filter((r) => r.i).map((r) => ({ rect: [cx, cy + r.y, REM_W, r.h], kind: 'tick', id: r.i.id, done: r.i.done, part: REM_PART })),
           { rect: [cx + REM_W - 28, cy + this.h - 28, 28, 28], kind: 'resize', part: REM_PART }, { rect: [cx + REM_W - 28, cy + 2, 26, 22], kind: 'close', part: REM_PART }, { rect: [cx + REM_W - 56, cy + 2, 24, 22], kind: 'pin', part: REM_PART }, { rect: [cx, cy, REM_W - 58, 26], kind: 'drag', part: REM_PART }, { rect: [cx, cy, REM_W, this.h], kind: 'card', part: REM_PART }];
@@ -2339,6 +2338,7 @@
     // comes to the front (cards move by their top bar). Not a quiz (a click between two options isn't "go away"),
     // and not the reminders card or a drawing that goes by itself, which still move by the body.
     else if (h.kind === 'card' && h.m.keep) return;
+    else if (h.kind === 'card') return;
     else if (h.kind === 'drag' || h.kind === 'card') { drag = { part: h.part, x: e.clientX, y: e.clientY, ms: partMarks(h.part), start: partMarks(h.part).map((m) => [m.dx, m.dy]) }; sfx('grab'); touch(); }
   }, true);
   addEventListener('pointermove', (e) => {

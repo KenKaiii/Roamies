@@ -31,7 +31,8 @@
   let pinAsk = null;
   // Linux ("x11" or "wayland", set by the shell): clicks are let through by region instead (below).
   const LINUX = !!window.ROAMIE_LINUX;
-  const setHot = (h) => { if (!LINUX && h !== hot) { hot = h; invoke('set_hot', { hot: h }).catch(() => { hot = null; }); } };
+  let hotOff = 0;
+  const setHot = (h) => { if (LINUX) return; if (h) { clearTimeout(hotOff); hotOff = 0; if (hot !== true) { hot = true; invoke('set_hot', { hot: true }).catch(() => { hot = null; }); } } else if (hot !== false && !hotOff) { hotOff = setTimeout(() => { hotOff = 0; hot = false; invoke('set_hot', { hot: false }).catch(() => { hot = null; }); }, 350); } };
   window.__roamiePtr = (x, y, t) => {
     if (!window.Roamie?.ptr) return;
     cursor = [x, y];
@@ -622,7 +623,6 @@
     if (hearing) { hearing = false; send({ type: 'listen_cancel' }); return; }
     if (responding || Roamie.voiceOut?.playing()) { send({ type: 'menu', id: 'stop', via: 'esc' }); Roamie.voiceOut?.stop(); return; }
     // A drawing on screen: Esc takes it all away (and the sidecar forgets its parts).
-    if (Roamie.ink?.busy) { Roamie.ink.clear({ all: true }); send({ type: 'ink_cleared' }); return; }
     if (Roamie.panel?.isOpen) Roamie.panel.close();
     endTalk(); listen?.close(); listen = null;
     Roamie.notch?.close();
