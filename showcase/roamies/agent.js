@@ -393,7 +393,7 @@
       const [x, y] = spot();
       k.appear(entrance(), x, y);
     };
-    const MAX_COLS = 38, MAX_LINES = 7, THINK_COLS = 28, THINK_LINES = 1, METER = 7;
+    const MAX_COLS = 64, MAX_LINES = 22, THINK_COLS = 28, THINK_LINES = 1, METER = 7;
     // Bubble text: Martian Mono (0.7 em per letter), sized to the bubble's line grid.
     const fontPx = (t) => Math.round(CH * t * 0.64 * 2) / 2;
     const colW = (t) => fontPx(t) * 0.7 + 0.35;
@@ -596,7 +596,7 @@
         if (!bb.hover && !bb.expanded && !R.voiceOut?.playing()) bb.dwell += dt;
         // Long enough to read, about 200 words a minute (#143: capped at 4.5 s, long replies closed mid-read).
         const linger = clamp(1.1 + bb.text.split(/\s+/).filter(Boolean).length / 3.3, 1.3, 30);
-        if (bb.kind === 'speech' && bb.dwell > linger) close(bb);
+        // kept open until manually closed
         if (bb.kind === 'thought' && bb.dwell > 0.4) close(bb);
       }
     };

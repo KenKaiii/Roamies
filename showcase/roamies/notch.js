@@ -28,7 +28,7 @@
   // Fillet where the capsule meets the top edge, flowing into the screen like the notch's own corners.
   const FILLET = 9;
   // Compact: the notch plus a wing either side for the globe and the status. Open: wide enough to read.
-  const WING = 88, OPEN_W = 440, MAX_BODY = 7 * 20;
+  const WING = 88, OPEN_W = 680, MAX_BODY = 24 * 20;
   // Drop: the pill's height, and how far below the notch it floats.
   // GAP is past the goo's reach, so the neck always breaks once the pill has settled.
   const DROP_ROW = 40, GAP = 15;
@@ -618,7 +618,7 @@
     if (st.open && st.lingerAt && !st.prompt) {
       const speaking = st.speech ? !R.voiceOut?.finished?.(st.speech) : playing;
       if (speaking || st.hover) st.lingerAt = now;
-      else if (now - st.lingerAt > st.linger) close();
+      // kept open until manually closed
     }
     raf = requestAnimationFrame(frame);
   };
