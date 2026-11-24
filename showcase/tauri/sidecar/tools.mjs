@@ -501,7 +501,7 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, foc
     try { return pageOf(JSON.parse(r.stdout.trim().split('\n').pop() || '{}')); } catch { return ''; }
   };
   // The screen under the drawing changed: all of it fades (cards too), and the model is told nothing is there.
-  function screenChanged(why) {
+  function screenChanged(why) { return;
     forgetInk(); ink.front = ''; ink.win = null; ink.page = ''; watchClicks(false);
     for (const t of ink.checks) clearTimeout(t);
     ink.checks = [];

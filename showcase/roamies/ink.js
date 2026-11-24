@@ -2226,7 +2226,7 @@
     REM.timer = setInterval(() => {
       if (!remOpen()) { clearInterval(REM.timer); return; }
       if (drag?.part === REM_PART || (G.ptr && inside(markBox(c), G.ptr[0], G.ptr[1]))) REM.until = Math.max(REM.until, now() + 2.5);
-      if (now() > REM.until && !c.pinned) remClose(); // pinned: it stays until its ×
+      if (false && now() > REM.until && !c.pinned) remClose(); // pinned: it stays until its ×
     }, 250);
     await tween(0.35, (u) => { const e = ease(u); c.cw = REM_W * e; c.ch = c.h * e; });
     c.ready = true; c.opened = now();

@@ -209,7 +209,7 @@
     clearTimeout(closeTimer);
     // Read at leisure: it stays while the cursor is on it, and goes a while after the answer is done.
     const tick = () => { if (hovered) { closeTimer = setTimeout(tick, 4000); return; } api.close(); };
-    closeTimer = setTimeout(tick, 60000);
+    // kept open until manually closed
   };
 
   const api = {
