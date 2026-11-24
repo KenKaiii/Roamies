@@ -683,7 +683,7 @@
       },
       hits() {
         const out = bar ? [{ rect: [x + w - 28, y + 2, 26, 22], kind: 'close', part: m.part }, { rect: [x + w - 54, y + 2, 22, 22], kind: 'full', part: m.part }, { rect: [x + w - 82, y + 2, 24, 22], kind: 'pin', part: m.part }, { rect: [x + w - 106, y + 2, 22, 22], kind: 'save', part: m.part, title: o.title || m.kind }, { rect: [x, y, w - 108, bar], kind: 'drag', part: m.part }] : [{ rect: [x, y, w, Math.min(h, 24)], kind: 'drag', part: m.part }];
-        if (!this.full) out.unshift({ rect: [x + w - 28, y + h - 28, 28, 28], kind: 'resize', part: m.part });
+        if (!this.full) out.unshift({ rect: [x + w - 28, y + h - 28, 28, 28], kind: 'resize', part: m.part }, { rect: [x, y + h - 10, w - 28, 10], kind: 'extend', part: m.part });
         // Links scrolled out of view can't be clicked.
         const more = (this.more?.() ?? []).filter((q) => q.rect[1] >= y + bar && q.rect[1] + q.rect[3] <= y + h);
         return [...more, ...out, { rect: [x, y, w, h], kind: 'card', part: m.part }];
@@ -698,6 +698,7 @@
       if (over > 0 && !c.full) c.dy -= Math.min(over, Math.max(0, y + c.dy - S[1] - 4));
       touch(1.2);
     };
+    c.extend = (nh) => { h = clamp(nh, Math.min(90, full), Math.max(full, maxCardH())); c.h = h; c.scrollMax = Math.max(0, full - h); c.sy = Math.min(c.sy, c.scrollMax); if (c.p >= 1) c.ch = h; touch(0.2); };
     await fly(x, y); sfx('expand');
     await tween(0.45, (u) => { const e = ease(u); c.cw = w * e; c.ch = h * e; penApi()?.set?.(x + c.cw * k, y + c.ch * k); });
     c.p = 1; c.done = now(); touch(1.5); syncClearAll();
@@ -2315,7 +2316,7 @@
     if (m) { m.hover = h.kind === 'button' || h.kind === 'link' || h.kind === 'clearall'; m.hoverClose = h.kind === 'close'; m.hoverFull = h.kind === 'full'; m.hoverSave = h.kind === 'save'; m.hoverPin = h.kind === 'pin'; m.hoverGrip = h.kind === 'resize'; m.hoverId = h.kind === 'tick' || h.kind === 'pick' ? h.id : null; m.setHover?.(h.kind === 'button'); }
     if (hovered !== m || m) touch(0.2);
     hovered = m;
-    document.documentElement.style.cursor = h && (h.kind === 'button' || h.kind === 'close' || h.kind === 'full' || h.kind === 'save' || h.kind === 'pin' || h.kind === 'link' || h.kind === 'clearall' || h.kind === 'tick' || h.kind === 'pick') ? 'pointer' : h?.kind === 'drag' ? 'grab' : h?.kind === 'resize' ? 'nwse-resize' : 'default';
+    document.documentElement.style.cursor = h && (h.kind === 'button' || h.kind === 'close' || h.kind === 'full' || h.kind === 'save' || h.kind === 'pin' || h.kind === 'link' || h.kind === 'clearall' || h.kind === 'tick' || h.kind === 'pick') ? 'pointer' : h?.kind === 'drag' ? 'grab' : h?.kind === 'resize' ? 'nwse-resize' : h?.kind === 'extend' ? 'ns-resize' : 'default';
   };
   const ours = (e) => !!hitAt(e.clientX, e.clientY) || !!drag || !!sizing;
   addEventListener('pointerdown', (e) => {
@@ -2332,6 +2333,7 @@
     else if (h.kind === 'full') toggleFull(h.m);
     else if (h.kind === 'save') saveCard(h.m, h.title);
     else if (h.kind === 'resize') { sizing = { m: h.m }; sfx('grab'); touch(); }
+    else if (h.kind === 'extend' && h.m.extend) { sizing = { m: h.m, extend: true }; sfx('grab'); touch(); }
     // A full-screen card stays up when its body is clicked (there's nothing under it to be after).
     else if (h.kind === 'card' && h.m.full) return;
     // A click on a card's body: they're after what's under it, so the drawing goes, as it does when another window
@@ -2346,6 +2348,7 @@
     // Resizing: the corner follows the pointer, keeping the card's shape (it zooms from its top left).
     if (sizing) {
       const m = sizing.m, left = m.ox + m.dx, top = m.oy + m.dy;
+      if (sizing.extend) { m.extend((e.clientY - top) / (m.k ?? 1)); touch(0.2); return; }
       m.k = clamp(Math.max((e.clientX - left) / m.w, (e.clientY - top) / m.h), 0.6, maxK(m));
       touch(0.2); return;
     }

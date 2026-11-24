@@ -2187,7 +2187,7 @@ fn main() {
             snapshot::watch_screenshots(app.handle().clone());
             #[cfg(target_os = "macos")]
             fullscreen::watch(app.handle().clone());
-            spawn_sidecar(app.handle()); #[cfg(target_os = "windows")] { let h = app.handle().clone(); std::thread::spawn(move || loop { std::thread::sleep(std::time::Duration::from_secs(2)); if crate::sidecar::QUITTING.load(std::sync::atomic::Ordering::SeqCst) { break; } for (l, w) in h.webview_windows() { if is_overlay(&l) { let _ = w.set_always_on_top(true); } } }); }
+            spawn_sidecar(app.handle()); #[cfg(target_os = "windows")] { let h = app.handle().clone(); std::thread::spawn(move || loop { std::thread::sleep(std::time::Duration::from_secs(2)); if crate::sidecar::QUITTING.load(std::sync::atomic::Ordering::SeqCst) { break; } for (l, w) in h.webview_windows() { if is_overlay(&l) && !w.is_always_on_top().unwrap_or(true) { let _ = w.set_always_on_top(true); } } }); }
             Ok(())
         })
         .build(tauri::generate_context!())

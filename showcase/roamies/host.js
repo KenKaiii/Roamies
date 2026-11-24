@@ -31,8 +31,7 @@
   let pinAsk = null;
   // Linux ("x11" or "wayland", set by the shell): clicks are let through by region instead (below).
   const LINUX = !!window.ROAMIE_LINUX;
-  let hotOff = 0;
-  const setHot = (h) => { if (LINUX) return; if (h) { clearTimeout(hotOff); hotOff = 0; if (hot !== true) { hot = true; invoke('set_hot', { hot: true }).catch(() => { hot = null; }); } } else if (hot !== false && !hotOff) { hotOff = setTimeout(() => { hotOff = 0; hot = false; invoke('set_hot', { hot: false }).catch(() => { hot = null; }); }, 350); } };
+  const setHot = (h) => { if (!LINUX && h !== hot) { hot = h; invoke('set_hot', { hot: h }).catch(() => { hot = null; }); } };
   window.__roamiePtr = (x, y, t) => {
     if (!window.Roamie?.ptr) return;
     cursor = [x, y];
