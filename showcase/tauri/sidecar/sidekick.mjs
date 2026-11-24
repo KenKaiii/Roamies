@@ -41,6 +41,7 @@ import { describeMarks } from './marks.mjs';
 import { faviconFor } from './draw.mjs';
 import { QUESTIONS, openNote, answerTurn, wantsSkip, endsChat, splitTurn, plain, stripNote, tourBeats, goalFrom, showcaseBeats } from './intro.mjs';
 import { SpeechText, CueFilter, VOICE_CUES, LISTEN_SECS, listenWait, listensAfter } from './speech.mjs';
+import { LIVE_IDLE, LIVE_WAIT, liveLine, saysGoodbye, wantsLive } from './live.mjs';
 import { createSpeaker, voiceProblemText, voiceWhy } from './speaker.mjs';
 import { LITE_BUDGET, LITE_TOOLS, LITE_TURNS, liteSystem } from './lite.mjs';
 import { handoffNote } from './quote.mjs';
@@ -850,7 +851,7 @@ const livePrompt = (context = '') => {
   lastFactIds = facts.map((f) => f.id);
   const open = commitmentsText(), done = doneTodayText(), working = agents.liveText(), scheduled = jobsText(fmtWhen), learned = skillIndex(), linked = mcp.liveText();
   const turn = `Live state (current as of this moment):
-${frontNow ? `${frontNow}\n` : ''}${lookLine(session?.looks, config.look ?? 'classic', nameOfLook, userName)}${inkLine()}${focusLine()}${crewLine()}${linked ? `- Connections (connection_tools shows a server's tools, use_connection calls one):\n${linked}\n` : ''}- Editing files, running commands and controlling other apps: ${config.allowActions ? 'ALLOWED' : `switched OFF (tell the user to turn on "Allow File Edits & Commands" on the General page in ${PANEL} if they want it)`}.${config.allowActions && config.skipAllow ? ' Allow prompts are skipped: confirmations go ahead automatically, so be extra careful.' : ''}
+${frontNow ? `${frontNow}\n` : ''}${liveLine(live)}${lookLine(session?.looks, config.look ?? 'classic', nameOfLook, userName)}${inkLine()}${focusLine()}${crewLine()}${linked ? `- Connections (connection_tools shows a server's tools, use_connection calls one):\n${linked}\n` : ''}- Editing files, running commands and controlling other apps: ${config.allowActions ? 'ALLOWED' : `switched OFF (tell the user to turn on "Allow File Edits & Commands" on the General page in ${PANEL} if they want it)`}.${config.allowActions && config.skipAllow ? ' Allow prompts are skipped: confirmations go ahead automatically, so be extra careful.' : ''}
 ${VOICE_OK ? `- Voice: ${!config.voice ? 'off' : voiceReady() ? `on; ${HOTKEYS_OK ? `${userName} holds ${talkWords()} to talk` : `${userName} presses the key they bound to ${BIND.talk} to start talking and again to send (a pause sends too)`}${config.autoListen ? (config.listenEvery ? `. Auto-listen is on for every reply: after each spoken reply the mic opens by itself for ${listenSecs()} seconds, so they can just keep talking` : '. Auto-listen is on: when your reply to a spoken question ends with a question, the mic opens by itself for their answer') : ''}${!WAKE_OK ? '. There is no wake word on this computer: to talk they use the talk keys' : ''}${WAKE_OK && config.wakeWord ? `. Wake word is on: ${userName} can also say "Hey ${wakeName(config)}" to start talking hands-free, and what they say right after it is the request (a request that still starts with "Hey ${wakeName(config)}" is them waking you, not calling you by another name: never correct it)${config.wakeName ? ` (they chose "${config.wakeName}" as the wake word; your own name is unchanged)` : ''}` : ''}` : `on, but the speech model isn't downloaded yet (${voiceModel.status === 'downloading' ? 'downloading now' : `the Listening page in ${PANEL}`})`}.` : ''}
 - Shortcuts: ${HOTKEYS_OK ? `${keys().write ? `type a question to you: a quick tap of ${writeWords()} (press both and let go), which opens a text field beside the cursor (Enter sends, Shift+Enter adds a line, Esc or another tap closes it)` : `the tap that opens a text field to type a question is turned off (the Ask button in ${PANEL} still opens it; the Shortcuts page there turns the tap back on)`}; show or hide you ${keyWords(keys().summon)}` : `on this Wayland desktop no app can have global shortcuts, so ${userName} binds keys to these commands in their desktop's keyboard settings: ${BIND.summon} (show or hide you), ${BIND.ask} (ask you), ${BIND.list} (the list), ${BIND.talk} (talk) and ${BIND.panel} (the panel)`}${SNAP_OK ? `; ask about an area ${keyWords(keys().snap)}` : ''}${CIRCLE_OK ? "; while holding the talk keys, moving the cursor round something circles it (no clicking; it snaps shut with a click when the circle closes, and loose lines don't count) and you'll see what they circled" : ''}${HOTKEYS_OK ? `; show the list ${keyWords(keys().list)}` : ''}.${HANDS_OK ? '' : ' Asking about an area, reading app windows, finding things on screen by their words and working other apps need the Roamies app, which isn\'t running here; draw there with x, y from a screenshot.'}`;
   const memory = `${open ? `Open commitments:\n${open}` : 'No open commitments.'}${done ? `\nDone today (ticked off on the list or by you; still shown struck through until midnight):\n${done}` : ''}
@@ -1451,6 +1452,28 @@ function holdWake(on) {
 }
 const listenSecs = () => listenWait(config.listenSecs);
 const autoListenOn = () => VOICE_OK && !!config.voice && !!config.autoListen && voiceReady() && !intro;
+// ---------- live conversation (live.mjs) ----------
+// Started by the wake word (or "let's talk"), it listens again after every reply until they say goodbye, press Esc or
+// stop talking. waiting: a listen after a reply is open; heard: words came in it.
+const live = { on: false, ending: false, waiting: false, heard: false, startedAt: 0, turns: 0 };
+const liveOK = () => VOICE_OK && !!config.voice && !!config.liveVoice && voiceReady() && !intro;
+function startLive(why) {
+  if (live.on || !liveOK()) return;
+  Object.assign(live, { on: true, ending: false, waiting: false, heard: true, startedAt: Date.now(), last: Date.now(), turns: 0 });
+  // A safety net: whatever path a turn takes, a conversation with nothing going on for a minute is over (the overlay
+  // would otherwise keep hiding what's heard).
+  clearInterval(live.timer);
+  live.timer = setInterval(() => { if (busy || voiceBusy) live.last = Date.now(); else if (Date.now() - live.last > LIVE_IDLE) endLive('idle'); }, 5000);
+  logLine('live', { start: why });
+  ui({ kind: 'live', on: true, spoken: VOICE_ON() });
+}
+function endLive(why) {
+  if (!live.on) return;
+  logLine('live', { end: why, turns: live.turns, secs: Math.round((Date.now() - live.startedAt) / 1000) });
+  clearInterval(live.timer);
+  Object.assign(live, { on: false, ending: false, waiting: false, timer: null });
+  ui({ kind: 'live', on: false });
+}
 // The agents' news waits for a quiet moment (desk.tick): nothing running or queued, not listening, the last reply
 // typed out and said (reply_said, or 90 s), no field open, and none of that changing for 1.5 s.
 let voiceBusy = false, saidPending = false, saidCap = null;
@@ -1476,7 +1499,7 @@ async function prompt(text, image = null, note = '', byVoice = false, news = nul
   const notReady = await readyAgent();
   // Told once its turn starts, however it goes: the corner and the live state still have the result, so no retries.
   desk.started(news);
-  if (notReady) return say(notReady, 'concerned');
+  if (notReady) { endLive('not ready'); return say(notReady, 'concerned'); }
   busy = true; quiet = false; autoTurn = null;
   saidPending = true; clearTimeout(saidCap); stir();
   holdWake(true);
@@ -1629,7 +1652,9 @@ async function prompt(text, image = null, note = '', byVoice = false, news = nul
     ink.endRequest();
     // Asked by voice and answered with a question: the overlay opens the mic once the reply has been typed and said.
     // A reminder nudge, with "Listen after reminders" on: the same hands-free listen, for "snooze 10 minutes".
-    const listen = !stalled && !controller.signal.aborted && ((byVoice && autoListenOn() && listensAfter(lastReply, config.listenEvery)) || (listenAfter && snoozeListenOn())) ? { turn, speech: voice?.id ?? null } : null;
+    const liveNext = live.on && !live.ending && byVoice;
+    const listen = !stalled && !controller.signal.aborted && ((byVoice && autoListenOn() && listensAfter(lastReply, config.listenEvery)) || liveNext || (listenAfter && snoozeListenOn())) ? { turn, speech: voice?.id ?? null } : null;
+    if (live.on && byVoice) { live.turns++; if (live.ending) endLive('bye'); else if (stalled || controller.signal.aborted) endLive('stopped'); }
     autoTurn = listen ? turn : null;
     rated = !stalled && !controller.signal.aborted && !!turnWords && learn.ok + learn.bad > 0;
     const rate = rated && learningOn();
@@ -2343,7 +2368,7 @@ function panelState() {
     geminiModel: config.geminiModel, geminiModels: GEMINI_CHOICES,
     studio: tts().local ? studioState() : null,
     voice: VOICE_OK ? {
-      on: !!config.voice, lang: speechLangId(), langOnline: langInfo && langInfo.id === speechLangId() ? langInfo.online : null, studioSpeak: config.studioSpeak === 'full' || config.studioSpeak === 'medium' ? config.studioSpeak : 'short', keys: HOTKEYS_OK ? talkSymbols() : null, ready: voiceReady(), mac: MAC, mute: config.muteWhileTalking !== false, autoListen: !!config.autoListen, listenEvery: !!config.listenEvery, listenSecs: listenSecs(), listenChoices: LISTEN_SECS, snoozeListen: !!config.snoozeListen, wake: WAKE_OK, wakeWord: !!config.wakeWord, wakeName: wakeName(config),
+      on: !!config.voice, lang: speechLangId(), langOnline: langInfo && langInfo.id === speechLangId() ? langInfo.online : null, studioSpeak: config.studioSpeak === 'full' || config.studioSpeak === 'medium' ? config.studioSpeak : 'short', keys: HOTKEYS_OK ? talkSymbols() : null, ready: voiceReady(), mac: MAC, mute: config.muteWhileTalking !== false, autoListen: !!config.autoListen, liveVoice: !!config.liveVoice, listenEvery: !!config.listenEvery, listenSecs: listenSecs(), listenChoices: LISTEN_SECS, snoozeListen: !!config.snoozeListen, wake: WAKE_OK, wakeWord: !!config.wakeWord, wakeName: wakeName(config),
       // The mic picker: what the voice helper lists, the pick ('' is automatic) and the mic automatic uses now.
       mics: mics.list, mic: config.mic ?? '', micAuto: mics.list.find((x) => x.id === mics.auto)?.name ?? '',
       download: NEEDS_MODEL && config.voice && !voiceReady() ? { status: voiceModel.status, pct: voiceModel.total ? Math.floor((voiceModel.done / voiceModel.total) * 100) : 0, size: sizeLabel() } : null,
@@ -2409,11 +2434,18 @@ let mics = { list: [], auto: '' };
 const micPick = () => send({ type: 'voice_mic', id: config.mic ?? '' });
 function onVoice(m) {
   if (m.type === 'voice_state') { voiceBusy = m.state === 'listening' || m.state === 'processing'; stir(); }
+  // Live conversation: a take the wake word started begins one (when it's switched on); a listen after a reply that
+  // ends with no words ends it (they went quiet, or pressed Esc).
+  if (m.type === 'voice_state' && m.state === 'listening' && m.mode === 'wake') startLive('wake');
+  if (m.type === 'voice_state' && m.state === 'idle' && live.on && live.waiting) setTimeout(() => { if (live.on && live.waiting && !live.heard && !busy) endLive('quiet'); }, 800);
   if (m.type === 'voice_state' && m.state === 'listening') { interruptQuietly('listening'); speech.stop(); warmUp(); if (VOICE_ON()) speech.prewarm(); } // talking over it stops it
   else if (m.type === 'voice_state' && m.state === 'processing') frontSoon = { at: Date.now(), p: whereNow() };
   else if (m.type === 'voice' && m.text?.trim()) {
     // Key release to the words arriving (mic tail and the recogniser finishing), to see what that step costs.
     if (typeof m.ms === 'number') logLine('voice_final', { ms: m.ms, via: String(m.via ?? ''), chars: m.text.trim().length });
+    live.heard = true; live.waiting = false;
+    if (!live.on && wantsLive(m.text)) startLive('asked');
+    else if (live.on && saysGoodbye(m.text)) live.ending = true;
     onSpoken(m.text.trim(), m.area);
   }
   else if (m.type === 'voice_state' && m.state === 'idle' && snap?.waitingVoice) snap.waitingVoice = false;
@@ -2422,6 +2454,7 @@ function onVoice(m) {
   else if (m.type === 'voice_lang') { langInfo = { id: String(m.id ?? ''), engine: String(m.engine ?? ''), online: !!m.online }; logLine('speech_lang', langInfo); panel(); }
   else if (m.type === 'voice_error') {
     if (m.code === 'nothing_heard' && snap) { snap.waitingVoice = false; return; }
+    if (m.code === 'nothing_heard' && live.on) { endLive('quiet'); return; } // the conversation just ran out: no telling-off
     if (m.code === 'model_missing') startVoiceDownload();
     else if (m.code === 'permission' && !MAC) {
       say('Windows is blocking the microphone. In the Privacy settings I just opened, turn on microphone access and "Let desktop apps access your microphone".', 'concerned');
@@ -2496,7 +2529,7 @@ function onWriteTap() {
 async function onMenu(id, via) {
   if (id === 'show') ui({ kind: 'summon', show: true });
   else if (id === 'ask') await typeToAsk();
-  else if (id === 'stop') { const cancelled = busy; if (busy) logLine('stopped', { by: via === 'esc' ? 'esc' : 'stop' }); endIntro(); controller?.abort(); speech.stop(); ink.stop(cancelled); holdWake(false); }
+  else if (id === 'stop') { endLive(via === 'esc' ? 'esc' : 'stop'); const cancelled = busy; if (busy) logLine('stopped', { by: via === 'esc' ? 'esc' : 'stop' }); endIntro(); controller?.abort(); speech.stop(); ink.stop(cancelled); holdWake(false); }
   else if (id === 'new') {
     endIntro();
     freshSession('new'); menu();
@@ -2700,6 +2733,7 @@ async function onMenu(id, via) {
   else if (id.startsWith('mic:') && VOICE_OK) { config.mic = id.slice(4, 304); saveConfig(); micPick(); menu(); }
   else if (id === 'mutetalk') { config.muteWhileTalking = config.muteWhileTalking === false; saveConfig(); voiceConfig(); menu(); }
   else if (id === 'autolisten') { config.autoListen = !config.autoListen; saveConfig(); menu(); }
+  else if (id === 'livevoice') { config.liveVoice = !config.liveVoice; if (!config.liveVoice) endLive('off'); saveConfig(); agentStale = true; menu(); }
   else if (id === 'listenevery') { config.listenEvery = !config.listenEvery; saveConfig(); agentStale = true; menu(); }
   else if (id.startsWith('listensecs:') && LISTEN_SECS.includes(Number(id.slice(11)))) { config.listenSecs = Number(id.slice(11)); saveConfig(); menu(); }
   else if (id === 'snoozelisten') { config.snoozeListen = !config.snoozeListen; saveConfig(); menu(); }
@@ -2961,14 +2995,15 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   else if (m.type === 'write_tap') onWriteTap();
   else if (m.type === 'auto_listen') {
     // Still the latest reply, nothing running since, and still switched on: listen once, hands-free.
-    if (m.turn !== autoTurn || busy || !(autoListenOn() || snoozeListenOn())) return;
+    if (m.turn !== autoTurn || busy || !(autoListenOn() || snoozeListenOn() || live.on)) return;
     autoTurn = null;
-    logLine('auto_listen', { turn: m.turn });
-    send({ type: 'listen', wait: autoListenOn() ? listenSecs() : 8 });
+    logLine('auto_listen', { turn: m.turn, live: live.on });
+    if (live.on) { live.waiting = true; live.heard = false; }
+    send({ type: 'listen', wait: live.on ? LIVE_WAIT : autoListenOn() ? listenSecs() : 8 });
   }
   else if (m.type === 'feedback') { if (m.good === true) onFeedback('good', '', 'button'); else wrongButton().catch((e) => console.error('feedback', e)); }
-  else if (m.type === 'reply_said') { if (!busy) { holdWake(false); saidPending = false; clearTimeout(saidCap); stir(); } }
-  else if (m.type === 'listen_cancel') { autoTurn = null; send({ type: 'listen_cancel' }); } // Esc while the mic is on
+  else if (m.type === 'reply_said') { live.last = Date.now(); if (!busy) { holdWake(false); saidPending = false; clearTimeout(saidCap); stir(); } }
+  else if (m.type === 'listen_cancel') { autoTurn = null; endLive('esc'); send({ type: 'listen_cancel' }); } // Esc while the mic is on
   // A link clicked on the research card: web and mail links only.
   else if (m.type === 'open_link') { const v = checkLink(m.url); if (v.level === SAFE) openUrl(String(m.url)); else console.error('open_link blocked:', v.reason); }
   else if (m.type === 'list_toggle') toggleItem(String(m.id)).catch((e) => console.error('list', e));

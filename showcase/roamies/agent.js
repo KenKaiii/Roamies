@@ -449,6 +449,9 @@
         k.S('pop');
       }
       b.mood = opts.mood ?? null;
+      // ghost (a reply in a live conversation, host.js): heard, not read, so its bubble isn't drawn. It's still there
+      // underneath, so the mouth, the pacing and the voice keep in step with the words. Prompts and errors never are.
+      b.ghost = b.kind === 'speech' && !!opts.ghost;
       // point: hand target in body radii (e.g. [0.3, -1.6] points up) held while the bubble is open.
       b.point = opts.point ?? null;
       if (b.mood === 'happy') face.set('happy', 0.9);
@@ -612,6 +615,7 @@
     };
     const TAIL_SIDE = { above: 'bottom', below: 'top', right: 'left', left: 'right' };
     const drawBubble = (ctx, bb) => {
+      if (bb.ghost) return; // heard, not read (open())
       const fade = bb.closing ? clamp(1 - bb.closing / 0.3, 0, 1) : clamp(bb.age / 0.22, 0, 1);
       const f = (bb.frame = bubbleBox(bb));
       if (fade <= 0 || f.w < 12 || f.h < 10) return;
@@ -695,6 +699,7 @@
 
     // ---- the bubble's words: real type, crisp at any size ----
     const drawText = (ctx, env, bb) => {
+      if (bb.ghost) return;
       const ph = bb.input && !bb.text;
       const fr = bb.frame;
       if (!fr || (!bb.text && !bb.input)) return;
@@ -842,7 +847,7 @@
       ctx.restore();
     };
 
-    const hitBubble = (bb, x, y) => bb && !bb.closing && x >= bb.x.x && x <= bb.x.x + bb.w.x && y >= bb.y.x && y <= bb.y.x + bb.h.x;
+    const hitBubble = (bb, x, y) => bb && !bb.closing && !bb.ghost && x >= bb.x.x && x <= bb.x.x + bb.w.x && y >= bb.y.x && y <= bb.y.x + bb.h.x;
 
     // Back beside the cursor wherever it is now (they may have moved on meanwhile), else where it was when taken.
     const penHome = () => R.sidebar?.dock?.() ?? (presence.ptr && besideCursor(fol.side < 0 ? 'left' : 'right', presence.ptr)) ?? pen.home ?? [m.x, m.y];

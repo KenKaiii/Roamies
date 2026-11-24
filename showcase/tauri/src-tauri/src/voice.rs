@@ -290,7 +290,8 @@ fn handle_voice(app: &AppHandle, msg: Value) {
     match msg.get("type").and_then(Value::as_str) {
         Some("state") => {
             to_overlays(app, &ui);
-            to_sidecar(app, &json!({ "type": "voice_state", "state": msg.get("state") }));
+            // mode: what started a take ("hold", "handsfree", "wake"); the wake word starts a live conversation (live.mjs).
+            to_sidecar(app, &json!({ "type": "voice_state", "state": msg.get("state"), "mode": msg.get("mode") }));
         }
         Some("partial") | Some("level") => to_overlays(app, &ui),
         Some("final") => {
