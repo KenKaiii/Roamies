@@ -278,6 +278,9 @@ fn set_no_activate(w: &WebviewWindow, on: bool) {
 }
 
 #[cfg(target_os = "windows")]
+static LAST_FG: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+
+#[cfg(target_os = "windows")]
 fn exclude_from_capture(w: &WebviewWindow) {
     #[link(name = "user32")]
     extern "system" {
@@ -288,20 +291,6 @@ fn exclude_from_capture(w: &WebviewWindow) {
         unsafe { SetWindowDisplayAffinity(h.0 as isize, 0x11) };
     }
     set_no_activate(w, true);
-    #[link(name = "comctl32")]
-    extern "system" {
-        fn SetWindowSubclass(hwnd: isize, pfn: unsafe extern "system" fn(isize, u32, usize, isize, usize, usize) -> isize, id: usize, data: usize) -> i32;
-        fn DefSubclassProc(hwnd: isize, msg: u32, wp: usize, lp: isize) -> isize;
-    }
-    unsafe extern "system" fn no_activate_proc(hwnd: isize, msg: u32, wp: usize, lp: isize, _id: usize, _data: usize) -> isize {
-        if msg == 0x0021 && !TYPING.load(Ordering::Relaxed) {
-            return 3; // MA_NOACTIVATE: process click without stealing foreground focus
-        }
-        DefSubclassProc(hwnd, msg, wp, lp)
-    }
-    if let Ok(h) = w.hwnd() {
-        unsafe { SetWindowSubclass(h.0 as isize, no_activate_proc, 1, 0) };
-    }
 }
 
 /// Cursor entered or left something clickable: flip click-through.
@@ -315,7 +304,29 @@ fn set_hot(window: WebviewWindow, hot: bool) {
     #[cfg(target_os = "macos")]
     let hot = hot && !fullscreen::GAME.load(Ordering::Relaxed);
     OVERLAY_HOT.store(hot, Ordering::Relaxed);
+    #[cfg(target_os = "windows")]
+    if !TYPING.load(Ordering::Relaxed) {
+        #[link(name = "user32")]
+        extern "system" {
+            fn GetForegroundWindow() -> isize;
+            fn SetForegroundWindow(hwnd: isize) -> i32;
+        }
+        if hot {
+            let fg = unsafe { GetForegroundWindow() };
+            let own = window.hwnd().map(|h| h.0 as isize).unwrap_or(0);
+            if fg != 0 && fg != own {
+                LAST_FG.store(fg, Ordering::Relaxed);
+            }
+        } else {
+            let prev = LAST_FG.load(Ordering::Relaxed);
+            if prev != 0 {
+                unsafe { SetForegroundWindow(prev) };
+            }
+        }
+    }
     let _ = window.set_ignore_cursor_events(!hot);
+    #[cfg(target_os = "windows")]
+    if !TYPING.load(Ordering::Relaxed) { set_no_activate(&window, true); }
 }
 
 /// Linux: the parts of this overlay that take clicks, as [x, y, w, h, …] in CSS px (host.js). Everything else
@@ -1390,6 +1401,8 @@ fn build_overlays(app: &AppHandle) -> tauri::Result<()> {
             .position(pos.x, pos.y)
             .inner_size(size.width, size.height)
             .initialization_script(init);
+        #[cfg(target_os = "windows")]
+        let b = b.additional_browser_args("--disable-direct-composition");
         // Linux: a fixed size from the start, so it's never resizable as it maps (fix_overlay_size, #78).
         #[cfg(target_os = "linux")]
         let b = b.min_inner_size(size.width, size.height).max_inner_size(size.width, size.height);

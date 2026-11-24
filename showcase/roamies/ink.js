@@ -683,7 +683,7 @@
       },
       hits() {
         const out = bar ? [{ rect: [x + w - 28, y + 2, 26, 22], kind: 'close', part: m.part }, { rect: [x + w - 54, y + 2, 22, 22], kind: 'full', part: m.part }, { rect: [x + w - 82, y + 2, 24, 22], kind: 'pin', part: m.part }, { rect: [x + w - 106, y + 2, 22, 22], kind: 'save', part: m.part, title: o.title || m.kind }, { rect: [x, y, w - 108, bar], kind: 'drag', part: m.part }] : [{ rect: [x, y, w, Math.min(h, 24)], kind: 'drag', part: m.part }];
-        if (!this.full) out.unshift({ rect: [x + w - 18, y + h - 18, 18, 18], kind: 'resize', part: m.part });
+        if (!this.full) out.unshift({ rect: [x + w - 28, y + h - 28, 28, 28], kind: 'resize', part: m.part });
         // Links scrolled out of view can't be clicked.
         const more = (this.more?.() ?? []).filter((q) => q.rect[1] >= y + bar && q.rect[1] + q.rect[3] <= y + h);
         return [...more, ...out, { rect: [x, y, w, h], kind: 'card', part: m.part }];
@@ -1938,7 +1938,7 @@
     stop();
     R.ink.send?.({ type: 'ink_cleared' });
     sfx('dematerialize');
-    fadeOut(marks.filter((m) => m.alive && !m.local && !m.pinned));
+    fadeOut(marks.filter((m) => m.alive && !m.local && !m.pinned && m.kind !== "card"));
   }
   function clearEverything() {
     stop();
@@ -2214,9 +2214,10 @@
       box() { return [this.x - 4, this.y - 4, REM_W + 8, this.h + 14]; },
       draw: remDraw,
       hits() {
+        if (this.ready) { b.fillStyle = this.hoverGrip ? HOT : rgba(ACC, 0.55); for (let k = 0; k < 3; k++) for (let j = 0; j <= k; j++) b.fillRect(this.x + REM_W - 6 - j * 4, this.y + this.h - 14 + k * 4, 2, 2); }
         const { x: cx, y: cy } = this;
         return [...this.rows.filter((r) => r.i).map((r) => ({ rect: [cx, cy + r.y, REM_W, r.h], kind: 'tick', id: r.i.id, done: r.i.done, part: REM_PART })),
-          { rect: [cx + REM_W - 28, cy + 2, 26, 22], kind: 'close', part: REM_PART }, { rect: [cx + REM_W - 56, cy + 2, 24, 22], kind: 'pin', part: REM_PART }, { rect: [cx, cy, REM_W - 58, 26], kind: 'drag', part: REM_PART }, { rect: [cx, cy, REM_W, this.h], kind: 'card', part: REM_PART }];
+          { rect: [cx + REM_W - 28, cy + this.h - 28, 28, 28], kind: 'resize', part: REM_PART }, { rect: [cx + REM_W - 28, cy + 2, 26, 22], kind: 'close', part: REM_PART }, { rect: [cx + REM_W - 56, cy + 2, 24, 22], kind: 'pin', part: REM_PART }, { rect: [cx, cy, REM_W - 58, 26], kind: 'drag', part: REM_PART }, { rect: [cx, cy, REM_W, this.h], kind: 'card', part: REM_PART }];
       },
     });
     Object.assign(c, remLayout(x, y));
@@ -2338,7 +2339,6 @@
     // comes to the front (cards move by their top bar). Not a quiz (a click between two options isn't "go away"),
     // and not the reminders card or a drawing that goes by itself, which still move by the body.
     else if (h.kind === 'card' && h.m.keep) return;
-    else if (h.kind === 'card' && !h.m.local && !drawnBy.has(h.part)) clearDrawing();
     else if (h.kind === 'drag' || h.kind === 'card') { drag = { part: h.part, x: e.clientX, y: e.clientY, ms: partMarks(h.part), start: partMarks(h.part).map((m) => [m.dx, m.dy]) }; sfx('grab'); touch(); }
   }, true);
   addEventListener('pointermove', (e) => {

@@ -618,7 +618,7 @@
     if (st.open && st.lingerAt && !st.prompt) {
       const speaking = st.speech ? !R.voiceOut?.finished?.(st.speech) : playing;
       if (speaking || st.hover) st.lingerAt = now;
-      // kept open until manually closed
+      else if ((st.folded || st.mode === 'tool') && now - st.lingerAt > 6000) close();
     }
     raf = requestAnimationFrame(frame);
   };
