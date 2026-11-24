@@ -13,7 +13,7 @@ import { ASK, BLOCK, checkDrawAction, checkFetch, checkOpen, checkRead, checkWri
 import { CARDS, DrawArgs, drawModelSchema, LIMITS, checkDraw, createLists, createParts, createPhotos, describeParts, faviconFor, pickTextMatch, quizNote, readSecs, resolveTargets, unjson } from './draw.mjs';
 import { plain } from './intro.mjs';
 import { linuxSession, seesPointer } from './platform.mjs';
-import { addCommitment, forgetFact, getCommitment, parseDue, parseRepeat, repeatLabel, updateCommitment } from './store.mjs';
+import { addCommitment, forgetFact, getCommitment, parseDue, parseRepeat, repeatLabel, updateCommitment , loadPlan, savePlan } from './store.mjs';
 import { snoozeTarget, snoozeUntil } from './snooze.mjs';
 import { addJob, getJob, jobsText, removeJob, updateJob } from './jobs.mjs';
 import { deleteSkill, fetchSkills, installSkill, listSkills, readSkill, readSkillFile, saveSkill, screenSkill, skillFiles } from './skills.mjs';
@@ -1317,6 +1317,38 @@ A drawing stays until it's cleared, the window changes or the next one replaces 
     const r = await Promise.race([hands('locate', 'front').catch(() => null), new Promise((res) => setTimeout(() => res(null), 1500))]);
     const b = r?.window?.bounds;
     return Array.isArray(b) && b.length === 4 && b.every(Number.isFinite) ? b : null;
+  }
+  tools.push({
+    name: "plan_task",
+    description: "Break a complex or multi-step request into a hierarchical plan with subgoals and epistemic unknowns before acting, or update/clear the active plan. Set clear: true when the goal is finished.",
+    parameters: z.object({
+      goal: z.string().min(1).max(200).optional(),
+      subgoals: z.array(z.object({ id: z.string().max(16), text: z.string().max(160), status: z.enum(["pending", "active", "done"]) })).max(12).optional(),
+      unknowns: z.array(z.string().max(160)).max(8).optional(),
+      clear: z.boolean().optional(),
+    }),
+    execute: async ({ goal, subgoals, unknowns, clear }) => {
+      if (clear) { await savePlan(null); return "Active plan cleared."; }
+      const cur = loadPlan() ?? {};
+      const next = { goal: goal ?? cur.goal ?? "Task", subgoals: subgoals ?? cur.subgoals ?? [], unknowns: unknowns ?? cur.unknowns ?? [], updatedAt: Date.now() };
+      await savePlan(next);
+      return `Plan saved: ${next.goal} (${next.subgoals.filter((g) => g.status === "done").length}/${next.subgoals.length} done${next.unknowns.length ? `; ${next.unknowns.length} unknown(s) to resolve first` : ""}).`;
+    },
+  });
+  const ttlCache = new Map();
+  for (const t of tools) {
+    if ((t.name === "web_search" || t.name === "web_fetch") && typeof t.execute === "function") {
+      const orig = t.execute.bind(t);
+      t.execute = async (args, ctx) => {
+        const key = t.name + ":" + JSON.stringify(args ?? {});
+        const hit = ttlCache.get(key);
+        if (hit && hit.exp > Date.now()) return hit.val;
+        const val = await orig(args, ctx);
+        ttlCache.set(key, { val, exp: Date.now() + 15 * 60_000 });
+        if (ttlCache.size > 200) ttlCache.delete(ttlCache.keys().next().value);
+        return val;
+      };
+    }
   }
   return { tools, hands, whereNow, frontNow, frontBounds, ink: inkEvents, nextTurn: () => ++turn };
 }

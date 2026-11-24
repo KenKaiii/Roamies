@@ -586,3 +586,25 @@ export async function takeDueReminders(now = Date.now()) {
   await saveMemory();
   return fired.map((c, i) => ({ ...c, missed: missed.has(c.id), next: due[i].repeat && due[i].status === 'open' && due[i].due !== c.due ? due[i].due : null }));
 }
+
+
+const PLAN_FILE = path.join(DIR, "active-plan.json");
+const STRATEGY_FILE = path.join(roamiesRoot(), "Strategy.md");
+export const loadPlan = () => readJson(PLAN_FILE);
+export const savePlan = (p) => (p ? writeJson(PLAN_FILE, p) : fs.unlink(PLAN_FILE).catch(() => {}));
+export function planAndStrategyText() {
+  const out = [];
+  try {
+    if (existsSync(STRATEGY_FILE)) {
+      const s = readFileSync(STRATEGY_FILE, "utf8").trim().slice(0, 4000);
+      if (s) out.push("Strategy.md rules (must align with these before acting):\n" + s);
+    }
+  } catch {}
+  const p = loadPlan();
+  if (p?.goal) {
+    const subs = (p.subgoals ?? []).map((g) => `  - [${g.status === "done" ? "x" : g.status === "active" ? ">" : " "}] ${g.id}: ${g.text}`).join("\n");
+    const unk = (p.unknowns ?? []).length ? `\n  Unknowns to resolve first: ${p.unknowns.join("; ")}` : "";
+    out.push(`Active Hierarchical Plan — Goal: ${p.goal}${subs ? "\n" + subs : ""}${unk}`);
+  }
+  return out.join("\n");
+}
