@@ -382,7 +382,10 @@
       case 'draw':
         endTalk();
         if (notchOn()) N().yieldTo('Showing you');
-        Roamie.ink?.play(e);
+        const p = Roamie.ink?.play(e);
+        const settleDraw = () => { if (notchOn() && !responding && !ask) N().done?.(); };
+        if (p && typeof p.finally === "function") p.finally(() => setTimeout(settleDraw, 600));
+        else setTimeout(settleDraw, 3200);
         break;
       case 'ink_clear': Roamie.ink?.clear(e); break;
       case 'ink_stale': Roamie.ink?.stale(); break;

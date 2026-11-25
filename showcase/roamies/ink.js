@@ -2190,10 +2190,12 @@
     b.fillStyle = 'rgba(120,255,226,0.06)'; b.fillRect(x + 2, y + 2, w - 4, 24);
     b.fillStyle = DEEP; b.fillRect(x + 2, y + 26, w - 4, 1);
     [0, 1].forEach((k) => { b.fillStyle = k ? DEEP : ACC; b.fillRect(x + 12 + k * 12, y + 11, 5, 5); });
-    typed(b, 'reminders', x + w / 2, y + 17, `500 10px ${MONO}`, DIM, (t - this.opened) / 0.4, { anchor: 'middle' });
+    typed(b, 'reminders', x + 36 + (w - 36 - 60) / 2, y + 17, `500 10px ${MONO}`, DIM, (t - this.opened) / 0.4, { anchor: 'middle' });
     pinIcon(b, x + w - 44, y + 13, this);
     const cx = x + w - 18, cyy = y + 13;
     b.fillStyle = this.hoverClose ? HOT : DIM; for (let k = -3; k <= 3; k++) { b.fillRect(cx + k - 1, cyy + k - 1, 2, 2); b.fillRect(cx + k - 1, cyy - k - 1, 2, 2); }
+    b.fillStyle = this.hoverGrip ? HOT : rgba(ACC, 0.45); for (let k = 0; k < 3; k++) for (let j = 0; j <= k; j++) b.fillRect(x + w - 6 - j * 4, y + h - 14 + k * 4, 2, 2);
+    b.fillStyle = this.hoverGripL ? HOT : rgba(ACC, 0.45); for (let k = 0; k < 3; k++) for (let j = 0; j <= k; j++) b.fillRect(x + 4 + j * 4, y + h - 14 + k * 4, 2, 2);
     for (const c of [b, l]) { c.save(); c.beginPath(); c.rect(x + 2, y + 27, w - 4, h - 29); c.clip(); }
     try {
       for (const r of this.rows) {
@@ -2226,10 +2228,10 @@
     } finally { b.restore(); l.restore(); }
   }
   function remRelayout() {
-    const c = REM.m, S = scr(), L = remLayout(c.x, c.y);
+    const c = REM.m, S = scr(), L = remLayout(c.x, c.y, c.w ?? REM_W);
     // Grown taller than the room below it: up a little, then laid out again where it now sits.
     const y = clamp(c.y, S[1] + 4, Math.max(S[1] + 4, S[3] - L.h - 64));
-    if (y !== c.y) { c.y = y; Object.assign(c, remLayout(c.x, c.y)); } else Object.assign(c, L);
+    if (y !== c.y) { c.y = y; Object.assign(c, remLayout(c.x, c.y, c.w ?? REM_W)); } else Object.assign(c, L);
     if (c.userH != null) { c.h = c.userH; c.ch = c.h; }
     c.scrollMax = Math.max(0, (c.fullH || c.h) - c.h); c.sy = Math.min(c.sy || 0, c.scrollMax);
     c.__ol = {};
