@@ -30,6 +30,9 @@ assert.ok(LIVE_WAIT >= 3 && LIVE_WAIT <= 15, 'within what the voice helper allow
   assert.match(side, /\$\{liveLine\(live\)\}/, 'the model is told');
   assert.match(side, /if \(notReady\) \{ endLive\('not ready'\)/, 'a request that cannot run ends it');
   assert.match(side, /Date\.now\(\) - live\.last > LIVE_IDLE\) endLive\('idle'\)/, 'and so does a minute of nothing');
+  assert.match(side, /if \(busy \|\| voiceBusy \|\| saidPending\) live\.last = Date\.now\(\)/, 'a reply still being said is not nothing going on');
+  const panel = rd('../../../panel/panel.js');
+  assert.match(panel, /toggle\('Live conversation', needs\(v\.wake \? 'Say the wake word/, 'the wake word is offered wherever there is one, not only on a Mac');
   assert.match(rust, /"type": "voice_state", "state": msg\.get\("state"\), "mode": msg\.get\("mode"\)/, 'the bridge passes the listen mode on');
   assert.match(host, /m\.kind === 'live'/, 'the overlay hears about it');
   assert.match(host, /ghost: !!Roamie\.liveSpoken/, 'spoken replies are ghosted');

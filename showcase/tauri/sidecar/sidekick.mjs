@@ -1463,7 +1463,7 @@ function startLive(why) {
   // A safety net: whatever path a turn takes, a conversation with nothing going on for a minute is over (the overlay
   // would otherwise keep hiding what's heard).
   clearInterval(live.timer);
-  live.timer = setInterval(() => { if (busy || voiceBusy) live.last = Date.now(); else if (Date.now() - live.last > LIVE_IDLE) endLive('idle'); }, 5000);
+  live.timer = setInterval(() => { if (busy || voiceBusy || saidPending) live.last = Date.now(); else if (Date.now() - live.last > LIVE_IDLE) endLive('idle'); }, 5000);
   logLine('live', { start: why });
   ui({ kind: 'live', on: true, spoken: VOICE_ON() });
 }

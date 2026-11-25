@@ -919,7 +919,7 @@
         v.mac && v.on ? speakPicker(v) : null)
       : group(null, 'When the mic opens without a key.', null,
         toggle('Auto-listen', needs(v.listenEvery ? 'Mic opens after every spoken reply.' : 'Mic opens when I ask you something.'), v.autoListen, () => act('autolisten'), 'autolisten'),
-        toggle('Live conversation', needs(v.mac ? 'Say the wake word or “let’s talk”, then just keep talking. Bye, Esc or a pause ends it.' : 'Say “let’s talk”, then just keep talking. Bye, Esc or a pause ends it.'), v.liveVoice, () => act('livevoice'), 'livevoice'),
+        toggle('Live conversation', needs(v.wake ? 'Say the wake word or “let’s talk”, then just keep talking. Bye, Esc or a pause ends it.' : 'Say “let’s talk”, then just keep talking. Bye, Esc or a pause ends it.'), v.liveVoice, () => act('livevoice'), 'livevoice'),
         v.autoListen && v.listenChoices ? el('div', { className: 'reveal', 'data-anim': 'listen-more' },
           toggle('After every reply', needs('Not just questions, so you can keep talking.'), v.listenEvery, () => act('listenevery'), 'listenevery'),
           el('p', { className: 'sub', textContent: 'Mic waits for you' }),

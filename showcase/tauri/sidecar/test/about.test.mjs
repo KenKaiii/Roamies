@@ -16,6 +16,8 @@ assert.ok(!/Ask About an Area|Wake word|Voice Control|Cursor, a little arrow/.te
 assert.match(linux, /AppIndicator extension/);
 assert.match(linux, /installs? by themselves when Roamies runs as an AppImage/);
 assert.match(linux, /Wake word \(say "Hey Roamies"/, 'the wake word on Windows and Linux too (#97)');
+assert.match(linux, /Live conversation \(say the wake word or "let's talk"/, 'live conversation is on the Listening page (#195)');
+assert.match(aboutRoamies({ ...base, voice: true }), /Live conversation \(say "let's talk"/, 'no wake word to offer without one');
 // The settings pages as the panel names them (Speaking, Listening, Shortcuts, General since the split; Routines is an Abilities tab).
 assert.match(mac, /Speaking \(Replies:.*Listening \(Voice Control.*Shortcuts \(.*General \(Sound Effects/);
 assert.match(linux, /Shortcuts \(the commands to bind/, 'no global keys there: the commands to bind');
