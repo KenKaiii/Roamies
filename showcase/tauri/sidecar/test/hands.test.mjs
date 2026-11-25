@@ -164,8 +164,8 @@ assert.match(opened, /no app called "NoSuchAppRoamiesTest"/, 'treated as a link 
   // Another window comes to the front: the whole drawing goes (cards too), and the model is told nothing is there.
   fs.writeFileSync(path.join(dir, 'front.json'), JSON.stringify({ id: 9, app: 'Safari', title: 'x', bounds: [0, 0, 900, 700] }));
   await new Promise((r) => setTimeout(r, 1800));
-  assert.equal(other.at(-1).type, 'ink_stale');
-  await assert.rejects(draw.execute({ edit: [{ do: 'erase', part: 'p1' }] }, { toolCallId: 'd9' }), /nothing is drawn/);
+  assert.ok(!other.some((e) => e.type === 'ink_stale'), 'cards stay open when another window comes to the front');
+  assert.match(await draw.execute({ edit: [{ do: 'erase', part: 'p7' }] }, { toolCallId: 'd9' }), /Edited the drawing/);
   fs.rmSync(path.join(dir, 'front.json'));
   // A drawing that goes by itself (the tour, the setup showcase) is about no window: switching windows keeps it.
   other.length = 0;
@@ -224,10 +224,10 @@ assert.match(opened, /no app called "NoSuchAppRoamiesTest"/, 'treated as a link 
   // Regression: "make everything" drew eight cards at once, which covered the screen. Only a few stay up; the model is
   // told which closed, and what it lists as on screen is what's left.
   made.nextTurn();
-  const many = await draw.execute({ beats: 'abcdefghij'.split('').map((text) => ({ say: `Card ${text}.`, marks: [{ kind: 'note', text }] })) }, { toolCallId: 'd13' });
-  assert.match(many, /Drew p\d+ note “a”, .*p\d+ note “j”\./, 'all ten are named as drawn');
-  assert.match(many, /Only 8 cards stay up at once, so the oldest closed as newer ones were drawn \(p\d+, p\d+\)\./);
-  assert.match(many, /On screen now: p\d+ note “c”, (p\d+ note “[d-i]”, ){6}p\d+ note “j”\./);
+  const many = await draw.execute({ beats: 'abcdefghijklmnopqrstuv'.split('').map((text) => ({ say: `Card ${text}.`, marks: [{ kind: 'note', text }] })) }, { toolCallId: 'd13' });
+  assert.match(many, /Drew p\d+ note “a”, .*p\d+ note “v”\./, 'all ten are named as drawn');
+  assert.match(many, /Only 20 cards stay up at once, so the oldest closed as newer ones were drawn \(p\d+, p\d+\)\./);
+  assert.match(many, /On screen now: p\d+ note “c”, (p\d+ note “[d-u]”, ){18}p\d+ note “v”\./);
   // A drawing that goes by itself (the setup showcase) keeps all of its cards.
   made.nextTurn();
   await made.ink.show('abcdefghij'.split('').map((text) => ({ say: `Card ${text}.`, marks: [{ kind: 'note', text }] })), 'showcase-2', { fade: 5 });
@@ -291,21 +291,20 @@ assert.match(opened, /no app called "NoSuchAppRoamiesTest"/, 'treated as a link 
   made.ink.userClick({ x: 900, y: 300, role: 'AXLink', app: 'Safari', acts: true });
   assert.match(made.ink.describe(), /graph “Sales”/, 'a click outside its window leaves it');
   made.ink.userClick({ x: 300, y: 200, role: 'AXLink', app: 'TextEdit', acts: true });
-  assert.equal(made.ink.describe(), '', 'a link clicked in its window: all of it goes, the graph card too');
-  assert.deepEqual([events.at(-1), watching.at(-1)], ['ink_stale', false]);
+  assert.match(made.ink.describe(), /graph “Sales”/, 'a link clicked in its window keeps the graph card open');
   await graph();
   made.ink.userClick({ x: 40, y: 10, role: 'AXMenuItem', app: 'TextEdit', acts: true });
-  assert.equal(made.ink.describe(), '', "one of its app's menu items counts too");
+  assert.match(made.ink.describe(), /graph “Sales”/, "one of its app's menu items keeps the graph card open");
   await graph();
   await tool('act_in_app').execute({ target: 'TextEdit', steps: [{ do: 'type', text: 'hi' }] }, { toolCallId: 'a1' });
   assert.match(made.ink.describe(), /graph/, 'typing alone leaves it');
   await tool('act_in_app').execute({ target: 'TextEdit', steps: [{ do: 'click_text', text: 'Next page' }] }, { toolCallId: 'a2' });
-  assert.equal(made.ink.describe(), '', "the agent's own click changes the screen too");
+  assert.match(made.ink.describe(), /graph “Sales”/, "the agent's own click keeps the graph card open");
   await graph();
   // An app that doesn't exist, so the test never opens a real browser tab (it did, on every run): the drawing goes
   // as soon as the open is attempted.
   await tool('open').execute({ target: 'https://example.invalid-tld-roamies.test', app: 'NoSuchAppRoamiesTest' }).catch(() => {});
-  assert.equal(made.ink.describe(), '', 'so does opening a page');
+  assert.match(made.ink.describe(), /graph “Sales”/, 'so does opening a page');
   // A walkthrough waiting for a click: that click is the step, not the screen going away.
   made.nextTurn(); hold = true;
   const walk = tool('draw').execute({ beats: [{ say: 'Click Format.', marks: [{ kind: 'target', at: { text: 'Format' } }], wait: 'click' }] }, { toolCallId: 'w1' });

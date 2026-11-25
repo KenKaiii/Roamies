@@ -20,12 +20,13 @@ assert.equal(folderName('Dog page', day, ['2026-11-13 dog page', '2026-11-13 Dog
 assert.ok(folderName('word '.repeat(40), day).length <= 11 + 60, 'long titles are cut');
 
 // Asking for an agent, in the ways people say it.
-for (const t of ['send an agent to make me a landing page for my dog brand', 'Can you send an agent to research flights to Tokyo',
-  'spawn a background agent to tidy my downloads', 'start an agent on this', 'get an agent to sort my desktop', 'have a research agent look into it',
-  'send two agents to compare these', 'create an agent that writes my newsletter', 'do this in the background', 'spin up an agent for the slides',
-  'kick off a little research agent please', 'use a background agent'])
+for (const t of ['spawn a background agent to tidy my downloads', 'use a background agent', 'send a background agent to research flights', 'spin up background agents for this'])
   assert.ok(wantsAgent(t), `asks for an agent: ${t}`);
-for (const t of ['what is an AI agent?', 'how do I create an agent in LangChain', 'my travel agent called', 'what is in the background of this photo',
+for (const t of ['send an agent to make me a landing page for my dog brand', 'Can you send an agent to research flights to Tokyo',
+  'start an agent on this', 'get an agent to sort my desktop', 'have a research agent look into it',
+  'send two agents to compare these', 'create an agent that writes my newsletter', 'do this in the background', 'spin up an agent for the slides',
+  'kick off a little research agent please',
+  'what is an AI agent?', 'how do I create an agent in LangChain', 'my travel agent called', 'what is in the background of this photo',
   'call my agent', 'explain how agents work', 'the agent sent me an email', 'is it possible to send an agent?', ''])
   assert.ok(!wantsAgent(t), `not a request for one: ${t}`);
 

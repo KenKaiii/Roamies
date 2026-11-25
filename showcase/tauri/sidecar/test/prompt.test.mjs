@@ -76,7 +76,7 @@ assert.match(side, /newSession\(config\.provider, config\.model\); liveBlocks\.c
 // hands-off work), that its brief is complete, and that a launch is the whole reply; the prompt only says the rest once.
 const agentsSrc = readFileSync(fileURLToPath(new URL('../agents.mjs', import.meta.url)), 'utf8');
 const sendAgent = agentsSrc.slice(agentsSrc.indexOf("name: 'send_agent'"), agentsSrc.indexOf('parameters:', agentsSrc.indexOf("name: 'send_agent'")));
-assert.match(sendAgent, /Only when \$\{userName\} asks for an agent or for work in the background, or for long hands-off work[^;]*after offering it and hearing yes; never for a quick answer or anything on the screen\./);
+assert.match(sendAgent, /Only when \$\{userName\} asks for an agent or for work in the background, NEVER call send_agent unless the user explicitly says the exact phrase "background agent"; answer all research and web questions directly yourself using web_search and cards\./);
 assert.match(sendAgent, /brief: complete, since it sees none of this conversation/);
 assert.match(sendAgent, /Once it starts, say nothing more: its launch is your reply\./);
 assert.ok(!/Use one only when|Write a complete brief/.test(side), 'the prompt does not repeat send_agent');

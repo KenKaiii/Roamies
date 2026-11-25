@@ -301,10 +301,11 @@ const CHECKS = {
       const why = /\s/.test(String(id)) && ids.has(nospace) ? ` (ids can't contain spaces; write "${nospace}")` : s ? `; did you mean "${s}"` : '';
       out.push(`${who}: no vertex has the id "${id}"${why} (vertices: ${quoted([...ids])}).`);
     };
-    if (!m.lines?.length && !m.circles?.length) out.push('needs lines ({from, to}) or circles ({at, r}) between its vertices.'); const linked = new Set((m.lines ?? []).flatMap((l) => [l.from, l.to])); for (const v of vs) if (!m.circles?.length && !linked.has(v.id)) out.push(`vertex "${v.id}" is not connected: list EVERY edge in lines ({from, to}) so all vertices connect.`);
+    if (!m.lines?.length && !m.circles?.length) out.push('needs lines ({from, to}) or circles ({at, r}) between its vertices.');
     (m.lines ?? []).forEach((l, k) => { known(l.from, `line ${k + 1}`); known(l.to, `line ${k + 1}`); if (l.from === l.to) out.push(`line ${k + 1} goes from "${l.from}" to itself.`); });
     (m.angles ?? []).forEach((a, k) => { for (const id of [a.at, a.from, a.to]) known(id, `angle ${k + 1}`); if (a.at === a.from || a.at === a.to || a.from === a.to) out.push(`angle ${k + 1}: at (its corner), from and to (a point on each arm) must be three different vertices.`); });
     (m.circles ?? []).forEach((c, k) => { known(c.at, `circle ${k + 1}`); if (!(c.r > 0)) out.push(`circle ${k + 1}: r must be above 0 (in the same units as the vertices).`); });
+    const linked = new Set((m.lines ?? []).flatMap((l) => [l.from, l.to])); for (const v of vs) if (!m.circles?.length && !linked.has(v.id)) out.push(`vertex "${v.id}" is not connected: list EVERY edge in lines ({from, to}) so all vertices connect.`);
     if (vs.every((v) => v.x === vs[0].x && v.y === vs[0].y)) out.push('every vertex is at the same place.');
     return out;
   },

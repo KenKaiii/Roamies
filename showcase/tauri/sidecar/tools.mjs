@@ -463,7 +463,7 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, foc
   const pinned = new Set();
   const keepPinned = (id) => pinned.has(id);
   const forgetInk = () => { parts.clear(keepPinned); lists.clear(keepPinned); for (const m of [buttons, quizzes]) for (const id of [...m.keys()]) if (!pinned.has(id)) m.delete(id); for (const id of [...loose]) if (!pinned.has(id)) loose.delete(id); };
-  const windowBound = () => parts.ids.some((p) => !loose.has(p));
+  const windowBound = () => parts.ids.some((p) => !loose.has(p) && parts.get(p)?.screen);
   const ink = { waits: new Map(), turn: -1, active: 0, front: '', win: null, page: '', watch: null, checks: [], fresh: new Set() };
   const inkWait = (key, ms, signal) => new Promise((resolve) => {
     const done = (v) => { clearTimeout(t); signal?.removeEventListener('abort', stop); ink.waits.delete(key); resolve(v); };
@@ -501,10 +501,15 @@ export function createTools({ allowActions, ui, ask, openUrl, onCommitments, foc
     try { return pageOf(JSON.parse(r.stdout.trim().split('\n').pop() || '{}')); } catch { return ''; }
   };
   // The screen under the drawing changed: all of it fades (cards too), and the model is told nothing is there.
-  function screenChanged(why) { return;
-    forgetInk(); ink.front = ''; ink.win = null; ink.page = ''; watchClicks(false);
+  function screenChanged(why) {
     for (const t of ink.checks) clearTimeout(t);
     ink.checks = [];
+    if (why === 'click' || why === 'agent') {
+      clearScreenInk();
+      if (!windowBound()) { ink.front = ''; ink.win = null; ink.page = ''; watchClicks(false); }
+      return onInkGone(why);
+    }
+    forgetInk(); ink.front = ''; ink.win = null; ink.page = ''; watchClicks(false);
     ui({ kind: 'agent', e: { type: 'ink_stale' } });
     onInkGone(why);
   }

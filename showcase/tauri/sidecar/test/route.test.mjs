@@ -33,8 +33,9 @@ for (const t of ['how are you today?', 'tell me a joke', "what's the capital of 
 assert.ok(isChitchat('Thanks.') && isChitchat('yes') && !isChitchat('yes, then run the tests'));
 
 // Background agents use wantsAgent (agents.mjs)
-assert.equal(jobKinds('send an agent to research dentist chairs')[0], 'agents');
-assert.ok(jobKinds('send an agent to tidy my desktop').includes('agents'));
+assert.equal(jobKinds('send a background agent to research dentist chairs')[0], 'agents');
+assert.ok(jobKinds('send a background agent to tidy my desktop').includes('agents'));
+assert.ok(!jobKinds('send an agent to research dentist chairs').includes('agents'));
 assert.ok(!jobKinds('what is an agent?').includes('agents'));
 
 // Tools that mean a job is under way
