@@ -63,9 +63,10 @@
 .nc.drop.hot { cursor: pointer; }
 .nc.drop.full.hot { cursor: default; }
 /* Drop: the name on the left glow, the globe in the middle like a camera lens, the status on the right glow. */
-.nc.drop .nc-row { display: grid; grid-template-columns: 1fr auto 1fr; gap: 12px; padding: 0 18px; }
-.nc.drop .nc-mark { justify-self: start; }
-.nc.drop .nc-status { justify-self: end; color: #fff; }
+.nc.drop .nc-row { display: flex; align-items: center; gap: 10px; padding: 0 18px; }
+.nc.drop .nc-mark { flex: 0 0 auto; }
+.nc.drop .nc-globe { flex: 0 0 auto; }
+.nc.drop .nc-status { margin-left: auto; min-width: 0; color: #fff; }
 /* The pill never changes shape: the reply and Allow prompts open in their own card. Closed, the card is the pill's
    size, tucked under it; it slides down out of the pill as it widens and grows, and goes back up the same way. The
    text keeps its final width, so it doesn't re-wrap while the card grows. */
@@ -329,11 +330,11 @@
     let w = n.real ? n.w * 0.62 : 120, h = n.real ? Math.min(n.h, row) : row, r = h / 2, y = n.real ? 0 : -row - 12;
     if (s === 'compact') {
       // The globe dead centre: both sides as wide as the wider of the name and the status.
-      const side = Math.max($('.nc-mark').scrollWidth, statusW);
-      w = Math.max(190, 2 * (side + 18 + 12) + 30, st.minW || 0); h = row; r = row / 2; y = n.h + GAP;
+      const totalRow = 18 + $('.nc-mark').scrollWidth + 10 + 30 + 14 + statusW + 18;
+      w = Math.max(190, totalRow, st.minW || 0); h = row; r = row / 2; y = n.h + GAP;
     } else if (s === 'full') {
-      const side = Math.max($('.nc-mark').scrollWidth, statusW);
-      w = Math.max(190, 2 * (side + 18 + 12) + 30, st.minW || 0); h = row; r = row / 2; y = n.h + GAP;
+      const totalRow = 18 + $('.nc-mark').scrollWidth + 10 + 30 + 14 + statusW + 18;
+      w = Math.max(190, totalRow, st.minW || 0); h = row; r = row / 2; y = n.h + GAP;
       const fitW = () => { const tx = $(".nc-text")?.textContent?.trim() || ""; const longest = Math.max(0, ...tx.split("\n").map((l) => l.length)); const hasBtns = !$(".nc-choices")?.hidden || !$(".nc-rate")?.hidden; return clamp(Math.ceil(longest * 8.1 + 56), hasBtns ? 260 : 200, OPEN_W); };
       el.style.setProperty('--bw', `${Math.round(Math.min(fitW(), innerWidth - 24))}px`);
     }

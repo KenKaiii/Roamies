@@ -727,6 +727,23 @@
     return hits;
   }
   const loadIcons = (list) => (list ?? []).map((s) => { const o = { ...s }; if (s.icon) { o.img = new Image(); o.img.onload = () => touch(); o.img.src = s.icon; } return o; });
+  const GENERIC_TITLES = new Set(["answer", "table", "list", "card", "note", "graph", "bars", "timeline", "flow", "math", "figure", "map", "quiz", "model", "results", "summary", "info"]);
+  function smartTitle(m, fallback) {
+    const raw = String(m?.title ?? "").trim();
+    if (raw && !GENERIC_TITLES.has(raw.toLowerCase())) return raw;
+    const snip = (v) => String(v ?? "").replace(/[#*_`]+/g, "").trim().split(/\s+/).slice(0, 4).join(" ");
+    if (m?.heading) return snip(m.heading);
+    if (Array.isArray(m?.columns) && m.columns.length) return snip(m.columns.slice(0, 2).join(" vs "));
+    if (Array.isArray(m?.items) && m.items.length) return snip(typeof m.items === "string" ? m.items : m.items?.text);
+    if (Array.isArray(m?.bars) && m.bars.length) return snip(m.bars.map((b) => b.label).slice(0, 2).join(" & "));
+    if (Array.isArray(m?.nodes) && m.nodes.length) return snip(m.nodes?.text);
+    if (Array.isArray(m?.events) && m.events.length) return snip(m.events?.text);
+    if (Array.isArray(m?.plots) && m.plots?.label) return snip(m.plots.label);
+    if (m?.region) return snip(m.region);
+    if (m?.label) return snip(m.label);
+    if (m?.text) return snip(m.text);
+    return raw || fallback;
+  }
   const CARDS_DRAW = {
     async card(m) {
       const HEAD = `800 22px ${DOTO}`, srcs = loadIcons(m.sources);
@@ -750,7 +767,7 @@
         wrapped(b, rows, x + 20, yy + 6, 19, BODY, TEXT, (age - 0.2) / (0.4 + rows.join(' ').length * 0.012)); yy += rows.length * 19 + gap;
         items.forEach((r, i) => { const a = age - 0.4 - i * 0.25; if (a <= 0) return; pen(b, l, this, ticks[i].map(([px, py]) => [px + x + 24, py + yy + 1]), clamp(a / 0.2, 0, 1), this.color, { key: 'k' + i, w: 2.6 }); wrapped(b, r, x + 40, yy + 6, 19, BODY, TEXT, a / 0.5); yy += r.length * 19 + 6; });
         if (srcs.length) hits = sourcesRow(b, srcs, x + 20, y + h - 26 - 18, w - 40, age - 0.6);
-      }, { title: m.title || 'answer' });
+      }, { title: smartTitle(m, 'answer') });
       c.more = () => hits.map((q) => ({ ...q, part: m.part }));
     },
     async note(m) {
@@ -1029,7 +1046,7 @@
         plots.forEach((p, i) => pen(b, l, this, O.plots[i], p.p, tone(p.tone), { key: 'p' + i }));
         dots.forEach((d, i) => { pen(b, l, this, O.dots[i], d.p, HOT, { key: 'd' + i, w: 2.6 }); if (d.p >= 1 && d.label) { const lab = ellipsize(d.label, w - 40, SMALL), lx = Math.min(x + sx(d.x) + 9, x + w - 12 - textW(lab, SMALL)); typed(b, lab, lx, y + sy(d.y) - 8, SMALL, TEXT, 1); } });
         keys.forEach(([tn, words], i) => { const [kx, kr] = kAt[i], ky = y + gy0 + gh + 38 + kr * 18; b.fillStyle = tone(tn); b.beginPath(); b.arc(x + kx + 4, ky, 4, 0, Math.PI * 2); b.fill(); typed(b, words, x + kx + 14, ky + 4, SMALL, DIM, 1); });
-      }, { title: m.title || 'graph' });
+      }, { title: smartTitle(m, 'graph') });
       const [x, y] = [markBox(c)[0] + 4, markBox(c)[1] + 4 + 26];
       await trace(axes.map(([px, py]) => [px + x, py + y]), 0.7, (e) => (ax = e));
       for (const p of plots) await trace(p.pts.map(([px, py]) => [px + x, py + y]), 1.2, (e) => (p.p = e));
@@ -1067,7 +1084,7 @@
           typed(b, e.when, inCard(e.when, when), y + ty + (up ? -18 : 34), when, TEXT, a / 0.3, { anchor: 'middle' });
           rows.forEach((r, k) => typed(b, r, inCol(r), y + ty + (up ? -36 - (n - 1 - k) * 13 : 50 + k * 13), SMALL, DIM, (a - 0.1 - k * 0.1) / 0.4, { anchor: 'middle' }));
         });
-      }, { title: m.title || 'timeline' });
+      }, { title: smartTitle(m, 'timeline') });
       const [x, y] = [markBox(c)[0] + 4, markBox(c)[1] + 4 + 26];
       await trace(line.map(([px, py]) => [px + x, py + y]), 0.8, (e) => (lp = e));
       for (let i = 0; i < ev.length; i++) { await tap(x + xs[i], y + ty); sfx('blip'); shown[i] = now(); touch(); await sleep(150); }
@@ -1081,7 +1098,7 @@
         for (let i = 0; i < f.lv.length; i++) { const v = f.lv[i]; if (!v) continue; const gx = i % f.gw, gy = (i / f.gw) | 0; if ((B4[(gy % 4) * 4 + (gx % 4)] + 0.5) / 16 > u * 1.05) continue; b.fillStyle = LED[v]; b.fillRect(x + 12 + gx * 3, y + 6 + gy * 3, 3, 3); }
         // Labels follow their parts as it turns; one that would land on another this frame waits its turn.
         if (u >= 1) { const took = []; for (const lab of f.labels) { const lx = x + 12 + lab.x, ly = y + 6 + lab.y, r = [lx - 2, ly - 14, textW(lab.text, `600 10px ${MONO}`) + 10, 16]; if (took.some((q) => overlap(q, r) > 0)) continue; took.push(r); b.fillStyle = ACC; b.fillRect(lx - 1.5, ly - 1.5, 3, 3); typed(b, lab.text, lx + 6, ly - 4, `600 10px ${MONO}`, TEXT, 1, { rim: 3 }); } }
-      }, { title: m.title || m.label || 'model', live: () => !!view3d && !reduced() });
+      }, { title: smartTitle(m, 'model'), live: () => !!view3d && !reduced() });
       sfx('scan');
     },
     table: (m) => drawTable(m),
@@ -1290,7 +1307,7 @@
         yy += rowH[ri];
         if (ri < rows.length - 1) { b.fillStyle = DEEP; b.fillRect(x + EDGE_X, yy - 1, w - 2 * EDGE_X, 1); }
       });
-    }, { title: m.title || 'table' });
+    }, { title: smartTitle(m, 'table') });
     sfx('page'); touch(0.6 + rows.length * 0.1);
   }
   // Whole numbers with thousands separators, a couple of decimals for small ones, M and B for the very big.
@@ -1316,7 +1333,7 @@
         b.fillStyle = 'rgba(255,255,255,0.45)'; b.fillRect(x + x0, mid - BH / 2, bw, 1.5); b.fillStyle = 'rgba(3,39,34,0.3)'; b.fillRect(x + x0, mid + BH / 2 - 1.5, bw, 1.5);
         if (u >= 1) typed(b, vals[i], x + x0 + full + 8, mid + 4, TD1, TEXT, (a - 0.5) / 0.25);
       });
-    }, { title: m.title || 'bars' });
+    }, { title: smartTitle(m, 'bars') });
     const [x, y] = [markBox(c)[0] + 4, markBox(c)[1] + 4 + 26];
     await trace(axis.map(([px, py]) => [px + x, py + y]), 0.4, (e) => (ax = e));
     sfx('blip'); touch(1 + bars.length * 0.08);
@@ -1440,7 +1457,7 @@
         if (q.flow) { const gap = q.len / Math.max(1, Math.round(q.len / 46)), d0 = reduced() ? gap / 2 : (t * 60) % gap; l.fillStyle = HOT; for (let d = d0; d < q.len; d += gap) { const [px, py] = at(q.pts, d / q.len); l.fillRect(Math.round(x + ox + px) - 2, Math.round(y + py) - 2, 4, 4); } }
       });
       for (const nd of L.nodes) { const s0 = shown.get(nd.id); if (s0 != null) flowNode(b, nd, x + ox, y, t - s0); }
-    }, { title: m.title || 'flow', live: () => moving && !reduced() && born.some((v) => v != null) });
+    }, { title: smartTitle(m, 'flow'), live: () => moving && !reduced() && born.some((v) => v != null) });
     const [x, y] = [markBox(c)[0] + 4 + ox, markBox(c)[1] + 4 + 26];
     const show = (id) => { if (!shown.has(id)) { shown.set(id, now()); touch(0.5); } };
     for (const nd of L.nodes) if (nd.layer === 0) show(nd.id);
@@ -1584,7 +1601,7 @@
         }
         if (born[i] != null) st.note.forEach((r, k) => typed(b, r, x0, y + st.noteY + k * NLH, SMALL, DIM, (t - born[i] - k * 0.1) / 0.35));
       });
-    }, { title: m.title || 'math' });
+    }, { title: smartTitle(m, 'math') });
     const [x, y] = [markBox(c)[0] + 4, markBox(c)[1] + 4 + 26];
     // One step at a time, a breath between them, so each can be followed.
     for (const [i, st] of steps.entries()) {
@@ -1672,7 +1689,7 @@
         l.fillStyle = HOT; l.fillRect(Math.round(x + p[0]) - 2, Math.round(y + p[1]) - 2, 4, 4);
         typed(b, v.id, x + n[0], y + n[1] + 4, LAB, TEXT, (t - s0) / 0.2, { anchor: 'middle', rim: 3, land: false });
       }
-    }, { title: m.title || 'figure' });
+    }, { title: smartTitle(m, 'figure') });
     const [x, y] = [markBox(c)[0] + 4, markBox(c)[1] + 4 + 26], on = (pts) => pts.map(([px, py]) => [px + x, py + y]);
     const see = (id) => { if (!seen.has(id)) { seen.set(id, now()); touch(0.4); } };
     for (const q of lines) { see(q.from); await trace(on(q.pts), clamp(len(q.pts) / 500, 0.25, 0.6), (e) => (q.p = e)); q.done = now(); see(q.to); }
@@ -1762,7 +1779,7 @@
       }
       b.restore(); l.restore();
       b.strokeStyle = DEEP; b.lineWidth = 1; b.strokeRect(mx + 0.5, my + 0.5, mw - 1, mh - 1);
-    }, { title: m.title || 'map' });
+    }, { title: smartTitle(m, 'map') });
     if (!land) return;
     const [x, y] = [markBox(c)[0] + 4 + X0, markBox(c)[1] + 4 + 26 + Y0], inMap = (p) => p[0] >= 0 && p[0] <= mw && p[1] >= 0 && p[1] <= mh;
     sfx('scan'); await sleep(350);
@@ -1833,7 +1850,7 @@
       const label = S.i < qs.length - 1 ? 'Next' : 'See score', bw = Math.round(textW(label, CHIP()) + 30), br = [x + w - PAD - bw, y + h - 26 - 44, bw, 28];
       chip(b, br[0], br[1], br[2], br[3], label, since - 0.15, { hover: this.hoverId === 'next', down: now() - S.down < 0.15 });
       hits.push({ rect: br, kind: 'pick', id: 'next' });
-    }, { title: m.title || 'quiz' });
+    }, { title: smartTitle(m, 'quiz') });
     c.more = () => hits.map((q) => ({ ...q, part: m.part }));
     c.keep = true;
     c.pick = (id) => {
@@ -2141,7 +2158,7 @@
     head('Today', today.filter((i) => !i.done).length);
     if (today.length) today.forEach(item); else { rows.push({ note: later.length ? 'Nothing due today' : 'Nothing on your list yet', y: yy, h: 26 }); yy += 26; }
     if (later.length) { head('Later', later.length, true); later.forEach(item); }
-    const max = maxCardH();
+    const fullH = yy + 10, max = REM.m?.h ?? maxCardH();
     let hidden = 0;
     if (yy + 10 > max) {
       while (rows.length > 1 && rows[rows.length - 1].y + rows[rows.length - 1].h + 26 + 10 > max) { const r = rows.pop(); if (r.i) hidden++; }
@@ -2157,7 +2174,7 @@
       r.check = shift(cached(REM.checks, id, () => handLine([2.5, 6], [5.5, 9.5], { jitter: 0.3 }).concat(handLine([5.5, 9.5], [10.5, 2.5], { jitter: 0.3 }))), x + 18, y + cy);
       r.strikes = r.lines.map((ln, k) => { const lw = textW(ln, BODY); return shift(cached(REM.strikes, `${id}:${k}:${Math.round(lw)}`, () => handLine([0, 0], [lw + 4, 0], { jitter: 0.6 })), x + 38, y + r.y + 13 + k * 19); });
     }
-    return { rows, h: yy + 10 };
+    return { rows, h: yy + 10, fullH };
   }
   function remDraw(b, l, t) {
     const x = this.x, y = this.y, w = this.w ?? REM_W, h = this.h, cw = this.ready ? w : this.cw, ch = this.ready ? h : this.ch;
@@ -2174,7 +2191,7 @@
     for (const c of [b, l]) { c.save(); c.beginPath(); c.rect(x + 2, y + 27, w - 4, h - 29); c.clip(); }
     try {
       for (const r of this.rows) {
-        const ry = y + r.y;
+        const ry = y + r.y - (this.sy || 0);
         if (r.head) {
           if (r.gap) { b.fillStyle = DEEP; for (let gx = x + 18; gx < x + w - 18; gx += 6) b.fillRect(gx, ry - 5, 3, 1.5); }
           const hw = typed(b, r.head, x + 18, ry + 19, HEADF, TEXT, (t - this.opened) / 0.3);
@@ -2207,6 +2224,7 @@
     // Grown taller than the room below it: up a little, then laid out again where it now sits.
     const y = clamp(c.y, S[1] + 4, Math.max(S[1] + 4, S[3] - L.h - 64));
     if (y !== c.y) { c.y = y; Object.assign(c, remLayout(c.x, c.y)); } else Object.assign(c, L);
+    c.scrollMax = Math.max(0, (c.fullH || c.h) - c.h); c.sy = Math.min(c.sy || 0, c.scrollMax);
     c.__ol = {};
     touch(1.2);
   }
@@ -2216,8 +2234,8 @@
     await fontsReady();
     if (remOpen()) { remRelayout(); return; }
     const L0 = remLayout(0, 0), [x, y] = place(REM_W, L0.h, REM_PART);
-    const c = REM.m = add({ z: 2, part: REM_PART, local: true, card: true, kind: 'reminders', x, y, ox: x, oy: y, w: REM_W, cw: 0, ch: 0, p: 1, ready: false, opened: Infinity,
-      extend(nh) { this.h = clamp(nh, 90, maxCardH()); this.ch = this.h; touch(0.2); },
+    const c = REM.m = add({ z: 2, part: REM_PART, local: true, card: true, kind: 'reminders', x, y, ox: x, oy: y, w: REM_W, cw: 0, ch: 0, sy: 0, scrollMax: 0, fullH: 0, p: 1, ready: false, opened: Infinity,
+      extend(nh) { this.h = clamp(nh, 90, Math.max(this.fullH || 0, maxCardH())); this.ch = this.h; this.scrollMax = Math.max(0, (this.fullH || this.h) - this.h); this.sy = Math.min(this.sy || 0, this.scrollMax); touch(0.2); },
       extendW(nw, shiftX = 0) { const old = this.w ?? REM_W; this.w = clamp(nw, 210, Math.max(480, scr()[2] - scr()[0] - 24)); const dw = this.w - old; if (shiftX) this.dx = (this.dx || 0) - dw * (this.k ?? 1); this.cw = this.w; remRelayout(); },
       box() { const rw = this.w ?? REM_W; return [this.x - 4, this.y - 4, rw + 8, this.h + 14]; },
       draw: remDraw,
@@ -2229,6 +2247,7 @@
       },
     });
     Object.assign(c, remLayout(x, y));
+    c.scrollMax = Math.max(0, (c.fullH || c.h) - c.h);
     sfx('page');
     clearInterval(REM.timer);
     // Stays while the pointer rests on it (or it's being dragged), then fades.
@@ -2370,12 +2389,13 @@
     if (!ours(e)) return;
     e.stopPropagation();
     // Over a card too tall for the screen: scroll its insides.
-    const m = hitAt(e.clientX, e.clientY)?.m;
-    if (m?.scrollMax > 0) { e.preventDefault(); m.sy = clamp(m.sy + e.deltaY, 0, m.scrollMax); touch(0.3); }
+    const m = hitAt(e.clientX, e.clientY)?.m || [...marks].sort((a, b) => b.z - a.z).find((q) => q.alive && q.scrollMax > 0 && inside(markBox(q), e.clientX, e.clientY));
+    if (m?.scrollMax > 0) { e.preventDefault(); m.sy = clamp((m.sy || 0) + e.deltaY, 0, m.scrollMax); touch(0.3); }
   }, { capture: true, passive: false });
 
   // ---------------------------------------------------------------- the host's way in (host.js)
   R.inkHit = (x, y) => !!drag || !!sizing || !!hitAt(x, y);
+  R.inkWheel = (x, y, dy) => { const m = hitAt(x, y)?.m || [...marks].sort((a, b) => b.z - a.z).find((q) => q.alive && q.scrollMax > 0 && inside(markBox(q), x, y)); if (m?.scrollMax > 0) { m.sy = clamp((m.sy || 0) + dy, 0, m.scrollMax); touch(0.3); return true; } return false; };
   // Every clickable area as [x, y, w, h]: Linux hosts make these part of the window's click shape (host.js).
   R.inkRects = () => {
     const out = [];
@@ -2385,7 +2405,7 @@
     }
     return out;
   };
-  R.ink = {
+  R.ink = { wheel: R.inkWheel,
     send: null, invoke: null,
     // A segment of a drawing from the sidecar: { id, seg, beats, edits, last, win, busy }.
     play(e) { G.q.push(e); pump(); },

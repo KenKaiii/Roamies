@@ -12,6 +12,7 @@
   // The agents' corner (agent-home.js): Stop, Allow, file tiles and Open folder go to the sidecar.
   if (Roamie.agentHome) Roamie.agentHome.send = send;
   window.__roamieClick = (x, y) => Roamie.ink?.click(x, y);
+  window.__roamieWheel = (x, y, dy) => { if (Roamie.ink?.wheel?.(x, y, dy)) return; const el = document.elementFromPoint(x, y)?.closest('.nc-text'); if (el) el.scrollTop += dy; };
 
   window.__roamieSafe = (s) => Roamie.setSafe?.(s);
   // macOS: the voice helper can draw the cursor-form sidekick while it just follows the cursor (agent.js nativeStep,

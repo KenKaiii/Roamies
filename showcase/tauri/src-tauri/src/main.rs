@@ -262,6 +262,22 @@ fn other_input_down() -> bool {
 /// Windows: leaves an overlay out of every capture, so Roamies never shows up in its own screenshots, area snaps
 /// or the pictures it reads text from.
 #[cfg(target_os = "windows")]
+fn set_no_activate(w: &WebviewWindow, on: bool) {
+    #[link(name = "user32")]
+    extern "system" {
+        fn GetWindowLongW(hwnd: isize, index: i32) -> i32;
+        fn SetWindowLongW(hwnd: isize, index: i32, new_long: i32) -> i32;
+    }
+    if let Ok(h) = w.hwnd() {
+        unsafe {
+            let ex = GetWindowLongW(h.0 as isize, -20);
+            let next = if on { ex | 0x08000000 } else { ex & !0x08000000 };
+            if next != ex { SetWindowLongW(h.0 as isize, -20, next); }
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
 fn exclude_from_capture(w: &WebviewWindow) {
     #[link(name = "user32")]
     extern "system" {
@@ -271,6 +287,7 @@ fn exclude_from_capture(w: &WebviewWindow) {
     if let Ok(h) = w.hwnd() {
         unsafe { SetWindowDisplayAffinity(h.0 as isize, 0x11) };
     }
+    set_no_activate(w, true);
 }
 
 /// Cursor entered or left something clickable: flip click-through.
@@ -355,6 +372,8 @@ fn sidecar_send(app: AppHandle, msg: Value) {
 fn set_typing(app: AppHandle, window: WebviewWindow, on: bool) {
     let was = TYPING.swap(on, Ordering::Relaxed);
     let _ = window.set_focusable(on);
+    #[cfg(target_os = "windows")]
+    set_no_activate(&window, !on);
     // COSMIC: the unmanaged overlay can't get the keyboard, so it's an ordinary window while typing (linux.rs).
     #[cfg(target_os = "linux")]
     if linux::unmanaged_overlay() && was != on {
@@ -2118,6 +2137,55 @@ fn second_launch(app: &AppHandle, args: &[String]) {
     }
 }
 
+
+#[cfg(target_os = "windows")]
+fn spawn_wheel_hook(app: AppHandle) {
+    use std::sync::OnceLock;
+    static WHEEL_APP: OnceLock<AppHandle> = OnceLock::new();
+    let _ = WHEEL_APP.set(app);
+    #[repr(C)]
+    struct Point { x: i32, y: i32 }
+    #[repr(C)]
+    struct MsLlHookStruct { pt: Point, mouse_data: u32, flags: u32, time: u32, extra: usize }
+    #[repr(C)]
+    struct Msg { hwnd: isize, message: u32, wparam: usize, lparam: isize, time: u32, pt: Point }
+    #[link(name = "user32")]
+    extern "system" {
+        fn SetWindowsHookExW(id_hook: i32, lpfn: extern "system" fn(i32, usize, isize) -> isize, hmod: isize, thread_id: u32) -> isize;
+        fn CallNextHookEx(hhk: isize, code: i32, wparam: usize, lparam: isize) -> isize;
+        fn GetMessageW(msg: *mut Msg, hwnd: isize, min: u32, max: u32) -> i32;
+    }
+    extern "system" fn proc(code: i32, wparam: usize, lparam: isize) -> isize {
+        if code >= 0 && wparam == 0x020A && OVERLAY_HOT.load(Ordering::Relaxed) {
+            let info = unsafe { &*(lparam as *const MsLlHookStruct) };
+            let delta = (info.mouse_data >> 16) as i16;
+            if delta != 0 {
+                let dy = -(delta as f64) * 0.85;
+                let cx = info.pt.x as f64;
+                let cy = info.pt.y as f64;
+                if let Some(app) = WHEEL_APP.get() {
+                    for (label, w) in app.webview_windows() {
+                        if !is_overlay(&label) { continue; }
+                        if let (Ok(pos), Ok(scale)) = (w.inner_position(), w.scale_factor()) {
+                            let x = (cx - pos.x as f64) / scale;
+                            let y = (cy - pos.y as f64) / scale;
+                            let _ = w.eval(format!("window.__roamieWheel&&__roamieWheel({x:.1},{y:.1},{dy:.1})"));
+                        }
+                    }
+                }
+                return 1;
+            }
+        }
+        unsafe { CallNextHookEx(0, code, wparam, lparam) }
+    }
+    std::thread::spawn(move || unsafe {
+        let hook = SetWindowsHookExW(14, proc, 0, 0);
+        if hook == 0 { return; }
+        let mut msg: Msg = std::mem::zeroed();
+        while GetMessageW(&mut msg, 0, 0, 0) > 0 {}
+    });
+}
+
 fn main() {
     #[cfg(target_os = "linux")]
     linux::init();
@@ -2185,6 +2253,8 @@ fn main() {
             watch_screens(app.handle().clone());
             #[cfg(target_os = "macos")]
             snapshot::watch_screenshots(app.handle().clone());
+            #[cfg(target_os = "windows")]
+            spawn_wheel_hook(app.handle().clone());
             #[cfg(target_os = "macos")]
             fullscreen::watch(app.handle().clone());
             spawn_sidecar(app.handle()); #[cfg(target_os = "windows")] { let h = app.handle().clone(); std::thread::spawn(move || loop { std::thread::sleep(std::time::Duration::from_secs(2)); if crate::sidecar::QUITTING.load(std::sync::atomic::Ordering::SeqCst) { break; } for (l, w) in h.webview_windows() { if is_overlay(&l) && !w.is_always_on_top().unwrap_or(true) { let _ = w.set_always_on_top(true); } } }); }
