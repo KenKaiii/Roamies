@@ -303,7 +303,8 @@
     let w = n.w, h = n.real ? n.h : 0, r = n.real ? n.h * 0.36 : 0;
     if (s === 'compact') { w = n.w + wing * 2; h = row; r = row / 2; }
     else if (s === 'full') {
-      w = Math.min(Math.max(OPEN_W, n.w + WING * 2), innerWidth - 24);
+      const fitW = () => { const tx = $(".nc-text")?.textContent?.trim() || ""; const longest = Math.max(0, ...tx.split("\n").map((l) => l.length)); const hasBtns = !$(".nc-choices")?.hidden || !$(".nc-rate")?.hidden; return clamp(Math.ceil(longest * 8.1 + 56), hasBtns ? 260 : 200, OPEN_W); };
+      w = Math.min(Math.max(fitW(), n.w + WING * 2), innerWidth - 24);
       el.style.setProperty('--bw', `${Math.round(w)}px`);
       const body = $('.nc-body');
       h = row + body.scrollHeight; r = 26;
@@ -333,7 +334,8 @@
     } else if (s === 'full') {
       const side = Math.max($('.nc-mark').scrollWidth, statusW);
       w = Math.max(190, 2 * (side + 18 + 12) + 30, st.minW || 0); h = row; r = row / 2; y = n.h + GAP;
-      el.style.setProperty('--bw', `${Math.round(Math.min(OPEN_W, innerWidth - 24))}px`);
+      const fitW = () => { const tx = $(".nc-text")?.textContent?.trim() || ""; const longest = Math.max(0, ...tx.split("\n").map((l) => l.length)); const hasBtns = !$(".nc-choices")?.hidden || !$(".nc-rate")?.hidden; return clamp(Math.ceil(longest * 8.1 + 56), hasBtns ? 260 : 200, OPEN_W); };
+      el.style.setProperty('--bw', `${Math.round(Math.min(fitW(), innerWidth - 24))}px`);
     }
     // Within a turn the pill only grows: a shorter status doesn't shrink it and grow it again a moment later.
     if (s !== 'rest') st.minW = Math.max(st.minW || 0, w);

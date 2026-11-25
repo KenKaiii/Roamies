@@ -739,10 +739,12 @@
       };
       let L = lay(340);
       for (const wide of [440, 560]) if (L.h > maxCardH()) L = lay(wide);
-      const { w, heads, head, rows, items, h } = L, gap = rows.length && items.length ? 10 : 0;
-      const ticks = items.map((_, i) => handLine([0, 0], [8, 0], { jitter: 0.3 }));
+      let curW = L.w;
+      const ticks = (m.items ?? []).map((_, i) => handLine([0, 0], [8, 0], { jitter: 0.3 }));
       let hits = [];
-      const c = await card(m, w, h, function (b, l, t, x, y, age) {
+      const c = await card(m, L.w, L.h, function (b, l, t, x, y, age) {
+        if (this.w && Math.abs(this.w - curW) > 1) { curW = this.w; L = lay(curW); this.grow?.(L.h); }
+        const w = this.w || L.w, h = this.h || L.h, { heads, head, rows, items } = L, gap = rows.length && items.length ? 10 : 0;
         let yy = y + 18;
         heads.forEach((r, i) => typed(b, r, x + 20, yy + 18 + i * 26, HEAD, TEXT, (age - i * 0.3) / 0.6)); yy += head;
         wrapped(b, rows, x + 20, yy + 6, 19, BODY, TEXT, (age - 0.2) / (0.4 + rows.join(' ').length * 0.012)); yy += rows.length * 19 + gap;
@@ -754,8 +756,9 @@
     async note(m) {
       // All of it; a long note goes wider rather than very tall.
       const narrow = wrapRows(m.text, 210 - 28, `500 13px ${MONO}`), w = narrow.length > 12 ? 320 : 210;
-      const rows = w === 210 ? narrow : wrapRows(m.text, w - 28, `500 13px ${MONO}`), h = 40 + rows.length * 19;
-      await card(m, w, h, function (b, l, t, x, y, age) { b.fillStyle = colorOf(this, this.color); b.fillRect(x + 8, y + 8, w - 16, 3); wrapped(b, rows, x + 14, y + 32, 19, `500 13px ${MONO}`, TEXT, age / (0.3 + m.text.length * 0.025)); }, { bar: false, edge: true });
+      let curW = w, rows = w === 210 ? narrow : wrapRows(m.text, w - 28, `500 13px ${MONO}`);
+      const h = 40 + rows.length * 19;
+      await card(m, w, h, function (b, l, t, x, y, age) { const cw = this.w || w; if (Math.abs(cw - curW) > 1) { curW = cw; rows = wrapRows(m.text, cw - 28, `500 13px ${MONO}`); this.grow?.(40 + rows.length * 19); } b.fillStyle = colorOf(this, this.color); b.fillRect(x + 8, y + 8, cw - 16, 3); wrapped(b, rows, x + 14, y + 32, 19, `500 13px ${MONO}`, TEXT, age / (0.3 + m.text.length * 0.025)); }, { bar: false, edge: true });
       sfx('page');
     },
     // A mind map: the topic on the left, its branches beside it, each branch's points behind a +. A click on a branch

@@ -44,6 +44,7 @@
   // grows into place there while a reply is spoken): look again a few times a second, or a click on it goes to the
   // app below until the mouse moves. Linux sends its click areas on a timer of its own (below).
   if (!LINUX) setInterval(() => { if (cursor && window.Roamie?.ptr) setHot(Roamie.ptr(cursor[0], cursor[1]) && !handsBusy && !Roamie.game); }, 120);
+  if (!LINUX) addEventListener('pointerup', () => { if (hot && !ask) setHot(false); }, true);
   // macOS: a fullscreen game is in front (fullscreen.rs). It holds the cursor, so every click is its own and the
   // Sidekick stops following the cursor (agent.js).
   window.__roamieGame = (on) => { if (!window.Roamie) return; Roamie.game = !!on; if (on) setHot(false); };
