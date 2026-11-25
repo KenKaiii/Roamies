@@ -692,13 +692,13 @@
     // Taller insides (a list that got an item): the card grows, up to the screen's height and then it scrolls, and moves
     // up if it would run off the bottom.
     c.grow = (nh) => {
-      full = nh; h = Math.min(nh, maxCardH()); c.h = h; c.scrollMax = Math.max(0, full - h); c.sy = Math.min(c.sy, c.scrollMax);
+      full = nh; h = c.userH != null ? Math.min(c.userH, Math.max(full, maxCardH())) : Math.min(nh, maxCardH()); c.h = h; c.scrollMax = Math.max(0, full - h); c.sy = Math.min(c.sy, c.scrollMax);
       if (c.p >= 1) c.ch = h;
       const S = scr(), kk = c.k ?? 1, over = y + c.dy + h * kk + 64 - S[3];
       if (over > 0 && !c.full) c.dy -= Math.min(over, Math.max(0, y + c.dy - S[1] - 4));
       touch(1.2);
     };
-    c.extend = (nh) => { h = clamp(nh, Math.min(90, full), Math.max(full, maxCardH())); c.h = h; c.scrollMax = Math.max(0, full - h); c.sy = Math.min(c.sy, c.scrollMax); if (c.p >= 1) c.ch = h; touch(0.2); };
+    c.extend = (nh) => { h = clamp(nh, Math.min(90, full), Math.max(full, maxCardH())); c.userH = h; c.h = h; c.scrollMax = Math.max(0, full - h); c.sy = Math.min(c.sy, c.scrollMax); if (c.p >= 1) c.ch = h; touch(0.2); };
     c.extendW = (nw, shiftX = 0) => { const old = w; w = clamp(nw, 210, Math.max(480, scr()[2] - scr()[0] - 24)); const dw = w - old; if (shiftX) c.dx -= dw * (c.k ?? 1); c.w = w; if (c.p >= 1) c.cw = w; touch(0.2); };
     await fly(x, y); sfx('expand');
     await tween(0.45, (u) => { const e = ease(u); c.cw = w * e; c.ch = h * e; penApi()?.set?.(x + c.cw * k, y + c.ch * k); });
@@ -2224,6 +2224,7 @@
     // Grown taller than the room below it: up a little, then laid out again where it now sits.
     const y = clamp(c.y, S[1] + 4, Math.max(S[1] + 4, S[3] - L.h - 64));
     if (y !== c.y) { c.y = y; Object.assign(c, remLayout(c.x, c.y)); } else Object.assign(c, L);
+    if (c.userH != null) { c.h = c.userH; c.ch = c.h; }
     c.scrollMax = Math.max(0, (c.fullH || c.h) - c.h); c.sy = Math.min(c.sy || 0, c.scrollMax);
     c.__ol = {};
     touch(1.2);
@@ -2235,7 +2236,7 @@
     if (remOpen()) { remRelayout(); return; }
     const L0 = remLayout(0, 0), [x, y] = place(REM_W, L0.h, REM_PART);
     const c = REM.m = add({ z: 2, part: REM_PART, local: true, card: true, kind: 'reminders', x, y, ox: x, oy: y, w: REM_W, cw: 0, ch: 0, sy: 0, scrollMax: 0, fullH: 0, p: 1, ready: false, opened: Infinity,
-      extend(nh) { this.h = clamp(nh, 90, Math.max(this.fullH || 0, maxCardH())); this.ch = this.h; this.scrollMax = Math.max(0, (this.fullH || this.h) - this.h); this.sy = Math.min(this.sy || 0, this.scrollMax); touch(0.2); },
+      extend(nh) { this.userH = clamp(nh, 90, Math.max(this.fullH || 0, maxCardH())); this.h = this.userH; this.ch = this.h; this.scrollMax = Math.max(0, (this.fullH || this.h) - this.h); this.sy = Math.min(this.sy || 0, this.scrollMax); touch(0.2); },
       extendW(nw, shiftX = 0) { const old = this.w ?? REM_W; this.w = clamp(nw, 210, Math.max(480, scr()[2] - scr()[0] - 24)); const dw = this.w - old; if (shiftX) this.dx = (this.dx || 0) - dw * (this.k ?? 1); this.cw = this.w; remRelayout(); },
       box() { const rw = this.w ?? REM_W; return [this.x - 4, this.y - 4, rw + 8, this.h + 14]; },
       draw: remDraw,
