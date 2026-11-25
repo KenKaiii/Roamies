@@ -652,7 +652,7 @@
           b.fillStyle = 'rgba(120,255,226,0.06)'; b.fillRect(x + 2, y + 2, w - 4, bar - 2);
           b.fillStyle = DEEP; b.fillRect(x + 2, y + bar, w - 4, 1);
           [0, 1].forEach((k) => { b.fillStyle = k ? DEEP : ACC; b.fillRect(x + 12 + k * 12, y + 11, 5, 5); });
-          if (o.title) typed(b, ellipsize(String(o.title).toLowerCase(), w - (this.onEdit ? 236 : 206), `500 10px ${MONO}`), x + w / 2, y + 17, `500 10px ${MONO}`, DIM, (t - this.done) / 0.4, { anchor: 'middle' });
+          if (o.title) { const rightPad = this.onEdit ? 134 : 110, tx = x + 36 + (w - 36 - rightPad) / 2; typed(b, ellipsize(String(o.title).toLowerCase(), Math.max(60, w - 40 - rightPad), `500 10px ${MONO}`), tx, y + 17, `500 10px ${MONO}`, DIM, (t - this.done) / 0.4, { anchor: 'middle' }); }
           if (this.onEdit) { const ex = x + w - 118, ey = y + 13; b.fillStyle = this.hoverEdit ? HOT : DIM; b.fillRect(ex - 4, ey + 2, 2, 3); b.fillRect(ex - 2, ey, 3, 3); b.fillRect(ex + 1, ey - 3, 3, 3); b.fillRect(ex + 3, ey - 5, 2, 2); }
           // pin: a pixel pushpin with the full-screen and close buttons, drawn like them; pinned, it sits on a lit tile
           // (the filled-button look), so the state shows by shape as well as colour. The card stays until its ×.
@@ -680,11 +680,11 @@
           b.fillStyle = ACC; b.fillRect(x + w - 7, ty, 2, th);
         }
         // resize grip: three pixel steps in the bottom right corner
-        if (this.p >= 1 && !this.full) { b.fillStyle = this.hoverGrip ? HOT : rgba(ACC, 0.45); for (let k = 0; k < 3; k++) for (let j = 0; j <= k; j++) b.fillRect(x + w - 6 - j * 4, y + h - 14 + k * 4, 2, 2); }
+        if (this.p >= 1 && !this.full) { b.fillStyle = this.hoverGrip ? HOT : rgba(ACC, 0.45); for (let k = 0; k < 3; k++) for (let j = 0; j <= k; j++) b.fillRect(x + w - 6 - j * 4, y + h - 14 + k * 4, 2, 2); b.fillStyle = this.hoverGripL ? HOT : rgba(ACC, 0.45); for (let k = 0; k < 3; k++) for (let j = 0; j <= k; j++) b.fillRect(x + 4 + j * 4, y + h - 14 + k * 4, 2, 2); }
       },
       hits() {
         const out = bar ? [{ rect: [x + w - 28, y + 2, 26, 22], kind: 'close', part: m.part }, { rect: [x + w - 54, y + 2, 22, 22], kind: 'full', part: m.part }, { rect: [x + w - 82, y + 2, 24, 22], kind: 'pin', part: m.part }, { rect: [x + w - 106, y + 2, 22, 22], kind: 'save', part: m.part, title: o.title || m.kind }, ...(this.onEdit ? [{ rect: [x + w - 130, y + 2, 22, 22], kind: 'edit', part: m.part }] : []), { rect: [x, y, w - (this.onEdit ? 132 : 108), bar], kind: 'drag', part: m.part }] : [{ rect: [x, y, w, Math.min(h, 24)], kind: 'drag', part: m.part }];
-        if (!this.full) out.unshift({ rect: [x + w - 28, y + h - 28, 32, 32], kind: 'resize', part: m.part }, { rect: [x, y + h - 6, w - 28, 20], kind: 'extend', part: m.part }, { rect: [x + w - 6, y + bar, 20, Math.max(10, h - bar - 28)], kind: 'extend-r', part: m.part }, { rect: [x - 14, y + bar, 20, Math.max(10, h - bar - 6)], kind: 'extend-l', part: m.part });
+        if (!this.full) out.unshift({ rect: [x + w - 28, y + h - 28, 32, 32], kind: 'resize', part: m.part }, { rect: [x - 4, y + h - 28, 32, 32], kind: 'resize-l', part: m.part }, { rect: [x + 28, y + h - 6, Math.max(10, w - 56), 20], kind: 'extend', part: m.part }, { rect: [x + w - 6, y + bar, 20, Math.max(10, h - bar - 28)], kind: 'extend-r', part: m.part }, { rect: [x - 14, y + bar, 20, Math.max(10, h - bar - 28)], kind: 'extend-l', part: m.part });
         // Links scrolled out of view can't be clicked.
         const more = (this.more?.() ?? []).filter((q) => q.rect[1] >= y + bar && q.rect[1] + q.rect[3] <= y + h);
         return [...more, ...out, { rect: [x, y, w, h], kind: 'card', part: m.part }];
@@ -871,10 +871,10 @@
       const lay = (w) => {
         const title = wrapRows(m.title || 'list', w - 36, TITLE), items = S.items.map((it) => wrapRows(it, w - 58, BODY)), tops = [];
         let yy = 50 + (title.length - 1) * 24; for (const r of items) { tops.push(yy); yy += r.length * 19 + 11; }
-        return { w, title, items, tops, addY: yy + 2, h: 26 + yy + 2 + 26 + 14 };
+        return { w, title, items, tops, addY: yy + 4, h: 26 + yy + 4 + 28 + 18 };
       };
-      let L = lay(280);
-      for (const wide of [360, 440]) if (L.h > maxCardH() || L.items.some((r) => r.length > 3)) L = lay(wide);
+      let L = lay(340);
+      for (const wide of [400, 480]) if (L.h > maxCardH() || L.items.some((r) => r.length > 3)) L = lay(wide);
       // Each item's ring, tick and strike-through, made once (and again when its words change) so the ink holds still.
       const shapes = (i) => {
         const key = `${i}.${S.ver[i]}`;
@@ -2249,7 +2249,7 @@
       hits() {
         const { x: cx, y: cy } = this, rw = this.w ?? REM_W;
         return [...this.rows.filter((r) => r.i).map((r) => ({ rect: [cx, cy + r.y, rw, r.h], kind: 'tick', id: r.i.id, done: r.i.done, part: REM_PART })),
-          { rect: [cx + rw - 28, cy + this.h - 28, 32, 32], kind: 'resize', part: REM_PART }, { rect: [cx, cy + this.h - 6, rw - 28, 20], kind: 'extend', part: REM_PART }, { rect: [cx + rw - 6, cy + 26, 20, Math.max(10, this.h - 54)], kind: 'extend-r', part: REM_PART }, { rect: [cx - 14, cy + 26, 20, Math.max(10, this.h - 32)], kind: 'extend-l', part: REM_PART },
+          { rect: [cx + rw - 28, cy + this.h - 28, 32, 32], kind: 'resize', part: REM_PART }, { rect: [cx - 4, cy + this.h - 28, 32, 32], kind: 'resize-l', part: REM_PART }, { rect: [cx + 28, cy + this.h - 6, Math.max(10, rw - 56), 20], kind: 'extend', part: REM_PART }, { rect: [cx + rw - 6, cy + 26, 20, Math.max(10, this.h - 54)], kind: 'extend-r', part: REM_PART }, { rect: [cx - 14, cy + 26, 20, Math.max(10, this.h - 32)], kind: 'extend-l', part: REM_PART },
           { rect: [cx + rw - 28, cy + 2, 26, 22], kind: 'close', part: REM_PART }, { rect: [cx + rw - 56, cy + 2, 24, 22], kind: 'pin', part: REM_PART }, { rect: [cx, cy, rw - 58, 26], kind: 'drag', part: REM_PART }, { rect: [cx, cy, rw, this.h], kind: 'card', part: REM_PART }];
       },
     });
@@ -2346,11 +2346,11 @@
   };
   const setHover = (h) => {
     const m = h?.m ?? null;
-    if (hovered && hovered !== m) { hovered.hover = false; hovered.hoverClose = false; hovered.hoverFull = false; hovered.hoverSave = false; hovered.hoverPin = false; hovered.hoverGrip = false; hovered.hoverId = null; hovered.setHover?.(false); }
-    if (m) { m.hover = h.kind === 'button' || h.kind === 'link' || h.kind === 'clearall'; m.hoverClose = h.kind === 'close'; m.hoverFull = h.kind === 'full'; m.hoverSave = h.kind === 'save'; m.hoverPin = h.kind === 'pin'; m.hoverEdit = h.kind === 'edit'; m.hoverGrip = h.kind === 'resize'; m.hoverId = h.kind === 'tick' || h.kind === 'pick' ? h.id : null; m.setHover?.(h.kind === 'button'); }
+    if (hovered && hovered !== m) { hovered.hover = false; hovered.hoverClose = false; hovered.hoverFull = false; hovered.hoverSave = false; hovered.hoverPin = false; hovered.hoverGrip = false; hovered.hoverGripL = false; hovered.hoverId = null; hovered.setHover?.(false); }
+    if (m) { m.hover = h.kind === 'button' || h.kind === 'link' || h.kind === 'clearall'; m.hoverClose = h.kind === 'close'; m.hoverFull = h.kind === 'full'; m.hoverSave = h.kind === 'save'; m.hoverPin = h.kind === 'pin'; m.hoverEdit = h.kind === 'edit'; m.hoverGrip = h.kind === 'resize'; m.hoverGripL = h.kind === 'resize-l'; m.hoverId = h.kind === 'tick' || h.kind === 'pick' ? h.id : null; m.setHover?.(h.kind === 'button'); }
     if (hovered !== m || m) touch(0.2);
     hovered = m;
-    document.documentElement.style.cursor = h && (h.kind === 'button' || h.kind === 'close' || h.kind === 'full' || h.kind === 'save' || h.kind === 'pin' || h.kind === 'edit' || h.kind === 'link' || h.kind === 'clearall' || h.kind === 'tick' || h.kind === 'pick') ? 'pointer' : h?.kind === 'drag' ? 'grab' : h?.kind === 'resize' ? 'nwse-resize' : h?.kind === 'extend' ? 'ns-resize' : (h?.kind === 'extend-r' || h?.kind === 'extend-l') ? 'ew-resize' : 'default';
+    document.documentElement.style.cursor = h && (h.kind === 'button' || h.kind === 'close' || h.kind === 'full' || h.kind === 'save' || h.kind === 'pin' || h.kind === 'edit' || h.kind === 'link' || h.kind === 'clearall' || h.kind === 'tick' || h.kind === 'pick') ? 'pointer' : h?.kind === 'drag' ? 'grab' : h?.kind === 'resize' ? 'nwse-resize' : h?.kind === 'resize-l' ? 'nesw-resize' : h?.kind === 'extend' ? 'ns-resize' : (h?.kind === 'extend-r' || h?.kind === 'extend-l') ? 'ew-resize' : 'default';
   };
   const ours = (e) => !!hitAt(e.clientX, e.clientY) || !!drag || !!sizing;
   addEventListener('pointerdown', (e) => {
@@ -2368,6 +2368,7 @@
     else if (h.kind === 'save') saveCard(h.m, h.title);
     else if (h.kind === 'edit' && h.m.onEdit) h.m.onEdit();
     else if (h.kind === 'resize') { sizing = { m: h.m }; sfx('grab'); touch(); }
+    else if (h.kind === 'resize-l') { sizing = { m: h.m, leftCorner: true }; sfx('grab'); touch(); }
     else if (h.kind === 'extend' && h.m.extend) { sizing = { m: h.m, extend: true }; sfx('grab'); touch(); }
     else if ((h.kind === 'extend-r' || h.kind === 'extend-l') && h.m.extendW) { sizing = { m: h.m, side: h.kind }; sfx('grab'); touch(); }
     // A full-screen card stays up when its body is clicked (there's nothing under it to be after).
@@ -2387,6 +2388,7 @@
       if (sizing.extend) { m.extend((e.clientY - top) / (m.k ?? 1)); touch(0.2); return; }
       if (sizing.side === 'extend-r') { m.extendW((e.clientX - left) / (m.k ?? 1), false); touch(0.2); return; }
       if (sizing.side === 'extend-l') { const right = left + m.w * (m.k ?? 1); m.extendW((right - e.clientX) / (m.k ?? 1), true); touch(0.2); return; }
+      if (sizing.leftCorner) { const oldK = m.k ?? 1, right = left + m.w * oldK; m.k = clamp(Math.max((right - e.clientX) / m.w, (e.clientY - top) / m.h), 0.6, maxK(m)); m.dx -= m.w * (m.k - oldK); touch(0.2); return; }
       m.k = clamp(Math.max((e.clientX - left) / m.w, (e.clientY - top) / m.h), 0.6, maxK(m));
       touch(0.2); return;
     }
