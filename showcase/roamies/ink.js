@@ -643,7 +643,7 @@
       [x, y] = roomFor(Math.round(w * k), Math.round(h * k), m.part);
     }
     const bar = o.bar === false ? 0 : 26;
-    const c = add({ z: 2, part: m.part, card: true, kind: m.kind, cw: 0, ch: 0, p: 0, done: 0, w, h, ox: x, oy: y, k, deep, sy: 0, scrollMax: Math.max(0, full - h), color: tone(m.tone), live: o.live, box: () => [x - 4, y - 4, w + 8, h + 14],
+    const c = add({ z: 2, part: m.part, card: true, kind: m.kind, cw: 0, ch: 0, p: 0, done: 0, w, h, ox: x, oy: y, k, deep, sy: 0, scrollMax: Math.max(0, full - h), color: tone(m.tone), live: o.live, box: () => [x - 16, y - 4, w + 32, h + 22],
       draw(b, l, t) {
         if (this.cw < 4) return;
         chrome(b, x, y, this.cw, this.ch, { edge: o.edge ? colorOf(this, this.color) : ACC });
@@ -652,7 +652,8 @@
           b.fillStyle = 'rgba(120,255,226,0.06)'; b.fillRect(x + 2, y + 2, w - 4, bar - 2);
           b.fillStyle = DEEP; b.fillRect(x + 2, y + bar, w - 4, 1);
           [0, 1].forEach((k) => { b.fillStyle = k ? DEEP : ACC; b.fillRect(x + 12 + k * 12, y + 11, 5, 5); });
-          if (o.title) typed(b, ellipsize(String(o.title).toLowerCase(), w - 206, `500 10px ${MONO}`), x + w / 2, y + 17, `500 10px ${MONO}`, DIM, (t - this.done) / 0.4, { anchor: 'middle' });
+          if (o.title) typed(b, ellipsize(String(o.title).toLowerCase(), w - (this.onEdit ? 236 : 206), `500 10px ${MONO}`), x + w / 2, y + 17, `500 10px ${MONO}`, DIM, (t - this.done) / 0.4, { anchor: 'middle' });
+          if (this.onEdit) { const ex = x + w - 118, ey = y + 13; b.fillStyle = this.hoverEdit ? HOT : DIM; b.fillRect(ex - 4, ey + 2, 2, 3); b.fillRect(ex - 2, ey, 3, 3); b.fillRect(ex + 1, ey - 3, 3, 3); b.fillRect(ex + 3, ey - 5, 2, 2); }
           // pin: a pixel pushpin with the full-screen and close buttons, drawn like them; pinned, it sits on a lit tile
           // (the filled-button look), so the state shows by shape as well as colour. The card stays until its ×.
           pinIcon(b, x + w - 70, y + 13, this);
@@ -682,8 +683,8 @@
         if (this.p >= 1 && !this.full) { b.fillStyle = this.hoverGrip ? HOT : rgba(ACC, 0.45); for (let k = 0; k < 3; k++) for (let j = 0; j <= k; j++) b.fillRect(x + w - 6 - j * 4, y + h - 14 + k * 4, 2, 2); }
       },
       hits() {
-        const out = bar ? [{ rect: [x + w - 28, y + 2, 26, 22], kind: 'close', part: m.part }, { rect: [x + w - 54, y + 2, 22, 22], kind: 'full', part: m.part }, { rect: [x + w - 82, y + 2, 24, 22], kind: 'pin', part: m.part }, { rect: [x + w - 106, y + 2, 22, 22], kind: 'save', part: m.part, title: o.title || m.kind }, { rect: [x, y, w - 108, bar], kind: 'drag', part: m.part }] : [{ rect: [x, y, w, Math.min(h, 24)], kind: 'drag', part: m.part }];
-        if (!this.full) out.unshift({ rect: [x + w - 28, y + h - 28, 28, 28], kind: 'resize', part: m.part }, { rect: [x, y + h - 10, w - 28, 10], kind: 'extend', part: m.part }, { rect: [x + w - 10, y + bar, 10, Math.max(10, h - bar - 28)], kind: 'extend-r', part: m.part }, { rect: [x, y + bar, 10, Math.max(10, h - bar - 10)], kind: 'extend-l', part: m.part });
+        const out = bar ? [{ rect: [x + w - 28, y + 2, 26, 22], kind: 'close', part: m.part }, { rect: [x + w - 54, y + 2, 22, 22], kind: 'full', part: m.part }, { rect: [x + w - 82, y + 2, 24, 22], kind: 'pin', part: m.part }, { rect: [x + w - 106, y + 2, 22, 22], kind: 'save', part: m.part, title: o.title || m.kind }, ...(this.onEdit ? [{ rect: [x + w - 130, y + 2, 22, 22], kind: 'edit', part: m.part }] : []), { rect: [x, y, w - (this.onEdit ? 132 : 108), bar], kind: 'drag', part: m.part }] : [{ rect: [x, y, w, Math.min(h, 24)], kind: 'drag', part: m.part }];
+        if (!this.full) out.unshift({ rect: [x + w - 28, y + h - 28, 32, 32], kind: 'resize', part: m.part }, { rect: [x, y + h - 6, w - 28, 20], kind: 'extend', part: m.part }, { rect: [x + w - 6, y + bar, 20, Math.max(10, h - bar - 28)], kind: 'extend-r', part: m.part }, { rect: [x - 14, y + bar, 20, Math.max(10, h - bar - 6)], kind: 'extend-l', part: m.part });
         // Links scrolled out of view can't be clicked.
         const more = (this.more?.() ?? []).filter((q) => q.rect[1] >= y + bar && q.rect[1] + q.rect[3] <= y + h);
         return [...more, ...out, { rect: [x, y, w, h], kind: 'card', part: m.part }];
@@ -863,7 +864,8 @@
     // A checklist: a click on a ring ticks an item off (or back), on its words edits it, and "+ Add" adds one. The
     // sidecar asks for the words and hears every change (list_card), and sends the new items back (listItems).
     async list(m) {
-      const TITLE = `800 20px ${DOTO}`, S = { items: m.items.map(String), done: m.items.map(() => false), born: [], ver: m.items.map(() => 0), down: 0 };
+      const normItems = (Array.isArray(m.items) ? m.items : []).map((it) => typeof it === 'string' ? it : String(it?.text ?? it?.label ?? it ?? ''));
+      const TITLE = `800 20px ${DOTO}`, S = { items: normItems, done: normItems.map(() => false), born: [], ver: normItems.map(() => 0), down: 0 };
       const ticked = new Map(), ink = new Map();
       // The whole title and every point in full: 280 wide, wider while a point runs past three lines or it's too tall.
       const lay = (w) => {
@@ -880,10 +882,11 @@
           strikes: L.items[i].map((ln) => handLine([0, 0], [textW(ln, BODY) + 4, 0], { jitter: 0.6 })) });
         return [key, ink.get(key)];
       };
-      let hits = [];
+      let hits = [], curW = L.w;
       const c = await card(m, L.w, L.h, function (b, l, t, x, y, age) {
+        if (this.w && Math.abs(this.w - curW) > 1) { curW = this.w; L = lay(curW); ink.clear(); this.__ol = {}; this.__at = {}; this.grow?.(L.h); }
         hits = [];
-        const { w, title, items, tops } = L;
+        const w = this.w || L.w, { title, items, tops } = L;
         title.forEach((r, i) => typed(b, r, x + 18, y + 30 + i * 24, TITLE, TEXT, (age - i * 0.2) / 0.4));
         items.forEach((r, i) => {
           const a = S.born[i] != null ? t - S.born[i] : age - 0.3 - i * 0.26;
@@ -903,9 +906,10 @@
         if (a <= 0) return;
         chip(b, br[0], br[1], br[2], br[3], '+ Add', a, { hover: this.hoverId === 'add', down: now() - S.down < 0.15 });
         hits.push({ rect: br, kind: 'pick', id: 'add' });
-      }, { title: 'list' });
+      }, { title: smartTitle(m, 'list') });
       c.more = () => hits.map((q) => ({ ...q, part: m.part }));
       c.keep = true;
+      c.onEdit = () => c.pick('add');
       c.pick = (id) => {
         const send = (o) => R.ink.send?.({ type: 'list_card', part: m.part, ...o });
         if (id === 'add') { S.down = now(); sfx('pip'); send({ op: 'add' }); return; }
@@ -920,6 +924,7 @@
       // The sidecar's items after an add or an edit: new ones are written in, changed ones get fresh ink.
       lists.set(m.part, (items) => {
         if (!c.alive) { lists.delete(m.part); return; }
+        items = (Array.isArray(items) ? items : []).map((it) => typeof it === 'string' ? it : String(it?.text ?? it?.label ?? it ?? ''));
         items.forEach((it, i) => {
           if (i >= S.items.length) { S.born[i] = now(); S.done[i] = false; S.ver[i] = 0; sfx('pip'); } else if (it !== S.items[i]) S.ver[i]++;
         });
@@ -1291,7 +1296,7 @@
     for (const wide of [600, 760]) if (L.h > maxCardH() || L.deep > 3) L = lay(Math.min(wide, scr()[2] - scr()[0] - 40));
     let curW = L.w;
     const glyphs = L.rows.map((r) => r.map((cell) => (cell.yn > 0 ? [tickPts()] : cell.yn < 0 ? crossPts() : null)));
-    await card(m, L.w, L.h, function (b, l, t, x, y, age) {
+    const tc = await card(m, L.w, L.h, function (b, l, t, x, y, age) {
       if (this.w && Math.abs(this.w - curW) > 1) { curW = this.w; L = lay(curW); this.grow?.(L.h); }
       const w = this.w || L.w, { xs, heads, headH, rows, rowH } = L;
       let yy = y + 6;
@@ -1308,7 +1313,8 @@
         if (ri < rows.length - 1) { b.fillStyle = DEEP; b.fillRect(x + EDGE_X, yy - 1, w - 2 * EDGE_X, 1); }
       });
     }, { title: smartTitle(m, 'table') });
-    sfx('page'); touch(0.6 + rows.length * 0.1);
+    tc.onEdit = () => { const v = window.prompt('Edit cell (e.g. 1,2=New Value) or add row (col1, col2):'); if (!v) return; const eq = v.match(/^(\d+)\s*,\s*(\d+)\s*=\s*(.+)$/); if (eq) { const ri = Number(eq[1]) - 1, ci = Number(eq[2]) - 1; if (m.rows[ri] && ci >= 0 && ci < m.columns.length) m.rows[ri][ci] = eq[3].trim(); } else { const parts = v.split(',').map((p) => p.trim()); while (parts.length < m.columns.length) parts.push(''); m.rows.push(parts.slice(0, m.columns.length)); } curW = 0; tc.__ol = {}; tc.__at = {}; touch(0.5); };
+    sfx('page'); touch(0.6 + L.rows.length * 0.1);
   }
   // Whole numbers with thousands separators, a couple of decimals for small ones, M and B for the very big.
   const fmtValue = (v) => (Math.abs(v) >= 1e9 ? `${+(v / 1e9).toFixed(2)}B` : Math.abs(v) >= 1e6 ? `${+(v / 1e6).toFixed(2)}M` : v.toLocaleString('en-US', { maximumFractionDigits: Math.abs(v) < 100 ? 2 : 1 }));
@@ -2238,12 +2244,12 @@
     const c = REM.m = add({ z: 2, part: REM_PART, local: true, card: true, kind: 'reminders', x, y, ox: x, oy: y, w: REM_W, cw: 0, ch: 0, sy: 0, scrollMax: 0, fullH: 0, p: 1, ready: false, opened: Infinity,
       extend(nh) { this.userH = clamp(nh, 90, Math.max(this.fullH || 0, maxCardH())); this.h = this.userH; this.ch = this.h; this.scrollMax = Math.max(0, (this.fullH || this.h) - this.h); this.sy = Math.min(this.sy || 0, this.scrollMax); touch(0.2); },
       extendW(nw, shiftX = 0) { const old = this.w ?? REM_W; this.w = clamp(nw, 210, Math.max(480, scr()[2] - scr()[0] - 24)); const dw = this.w - old; if (shiftX) this.dx = (this.dx || 0) - dw * (this.k ?? 1); this.cw = this.w; remRelayout(); },
-      box() { const rw = this.w ?? REM_W; return [this.x - 4, this.y - 4, rw + 8, this.h + 14]; },
+      box() { const rw = this.w ?? REM_W; return [this.x - 16, this.y - 4, rw + 32, this.h + 22]; },
       draw: remDraw,
       hits() {
         const { x: cx, y: cy } = this, rw = this.w ?? REM_W;
         return [...this.rows.filter((r) => r.i).map((r) => ({ rect: [cx, cy + r.y, rw, r.h], kind: 'tick', id: r.i.id, done: r.i.done, part: REM_PART })),
-          { rect: [cx + rw - 28, cy + this.h - 28, 28, 28], kind: 'resize', part: REM_PART }, { rect: [cx, cy + this.h - 10, rw - 28, 10], kind: 'extend', part: REM_PART }, { rect: [cx + rw - 10, cy + 26, 10, Math.max(10, this.h - 54)], kind: 'extend-r', part: REM_PART }, { rect: [cx, cy + 26, 10, Math.max(10, this.h - 36)], kind: 'extend-l', part: REM_PART },
+          { rect: [cx + rw - 28, cy + this.h - 28, 32, 32], kind: 'resize', part: REM_PART }, { rect: [cx, cy + this.h - 6, rw - 28, 20], kind: 'extend', part: REM_PART }, { rect: [cx + rw - 6, cy + 26, 20, Math.max(10, this.h - 54)], kind: 'extend-r', part: REM_PART }, { rect: [cx - 14, cy + 26, 20, Math.max(10, this.h - 32)], kind: 'extend-l', part: REM_PART },
           { rect: [cx + rw - 28, cy + 2, 26, 22], kind: 'close', part: REM_PART }, { rect: [cx + rw - 56, cy + 2, 24, 22], kind: 'pin', part: REM_PART }, { rect: [cx, cy, rw - 58, 26], kind: 'drag', part: REM_PART }, { rect: [cx, cy, rw, this.h], kind: 'card', part: REM_PART }];
       },
     });
@@ -2341,10 +2347,10 @@
   const setHover = (h) => {
     const m = h?.m ?? null;
     if (hovered && hovered !== m) { hovered.hover = false; hovered.hoverClose = false; hovered.hoverFull = false; hovered.hoverSave = false; hovered.hoverPin = false; hovered.hoverGrip = false; hovered.hoverId = null; hovered.setHover?.(false); }
-    if (m) { m.hover = h.kind === 'button' || h.kind === 'link' || h.kind === 'clearall'; m.hoverClose = h.kind === 'close'; m.hoverFull = h.kind === 'full'; m.hoverSave = h.kind === 'save'; m.hoverPin = h.kind === 'pin'; m.hoverGrip = h.kind === 'resize'; m.hoverId = h.kind === 'tick' || h.kind === 'pick' ? h.id : null; m.setHover?.(h.kind === 'button'); }
+    if (m) { m.hover = h.kind === 'button' || h.kind === 'link' || h.kind === 'clearall'; m.hoverClose = h.kind === 'close'; m.hoverFull = h.kind === 'full'; m.hoverSave = h.kind === 'save'; m.hoverPin = h.kind === 'pin'; m.hoverEdit = h.kind === 'edit'; m.hoverGrip = h.kind === 'resize'; m.hoverId = h.kind === 'tick' || h.kind === 'pick' ? h.id : null; m.setHover?.(h.kind === 'button'); }
     if (hovered !== m || m) touch(0.2);
     hovered = m;
-    document.documentElement.style.cursor = h && (h.kind === 'button' || h.kind === 'close' || h.kind === 'full' || h.kind === 'save' || h.kind === 'pin' || h.kind === 'link' || h.kind === 'clearall' || h.kind === 'tick' || h.kind === 'pick') ? 'pointer' : h?.kind === 'drag' ? 'grab' : h?.kind === 'resize' ? 'nwse-resize' : h?.kind === 'extend' ? 'ns-resize' : (h?.kind === 'extend-r' || h?.kind === 'extend-l') ? 'ew-resize' : 'default';
+    document.documentElement.style.cursor = h && (h.kind === 'button' || h.kind === 'close' || h.kind === 'full' || h.kind === 'save' || h.kind === 'pin' || h.kind === 'edit' || h.kind === 'link' || h.kind === 'clearall' || h.kind === 'tick' || h.kind === 'pick') ? 'pointer' : h?.kind === 'drag' ? 'grab' : h?.kind === 'resize' ? 'nwse-resize' : h?.kind === 'extend' ? 'ns-resize' : (h?.kind === 'extend-r' || h?.kind === 'extend-l') ? 'ew-resize' : 'default';
   };
   const ours = (e) => !!hitAt(e.clientX, e.clientY) || !!drag || !!sizing;
   addEventListener('pointerdown', (e) => {
@@ -2360,6 +2366,7 @@
     else if (h.kind === 'clearall') clearEverything();
     else if (h.kind === 'full') toggleFull(h.m);
     else if (h.kind === 'save') saveCard(h.m, h.title);
+    else if (h.kind === 'edit' && h.m.onEdit) h.m.onEdit();
     else if (h.kind === 'resize') { sizing = { m: h.m }; sfx('grab'); touch(); }
     else if (h.kind === 'extend' && h.m.extend) { sizing = { m: h.m, extend: true }; sfx('grab'); touch(); }
     else if ((h.kind === 'extend-r' || h.kind === 'extend-l') && h.m.extendW) { sizing = { m: h.m, side: h.kind }; sfx('grab'); touch(); }
