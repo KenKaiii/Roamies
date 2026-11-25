@@ -199,6 +199,8 @@
   // One place per setting: in notch mode everything (state and replies) is in the capsule.
   const capR = notchOn;
   const N = () => Roamie.notch;
+  // With the capsule on, a Roamie still out by the cursor from before goes, so the two never show together (#165).
+  const sendRoamieAway = () => { const a = getAgent(); if (a?.visible && !responding) a.hide(); };
   if (Roamie.notch) Roamie.notch._busy = () => responding;
   const toolWords = (anim) => {
     if (anim.tool === 'web') return webStatus(anim);
@@ -543,7 +545,7 @@
     if (m.kind === 'speech') { Roamie.voiceOut?.handle(m); return; } // plays on, even while it changes screens
     if (m.kind === 'volume') { Roamie.voiceOut?.setVolume(m.v); if (Roamie.sfx) Roamie.sfx.volume = m.v; return; }
     if (held) { held.q.push(m); return; }
-    if (m.kind === 'notch') { if (Roamie.notch) { Roamie.notch.enabled = !!m.on; if (m.style) Roamie.notch.style = m.style; if (!m.on) Roamie.notch.close(); } return; }
+    if (m.kind === 'notch') { if (Roamie.notch) { Roamie.notch.enabled = !!m.on; if (m.style) Roamie.notch.style = m.style; if (!m.on) Roamie.notch.close(); else sendRoamieAway(); } return; }
     if (m.kind === 'sound') { if (Roamie.sfx) Roamie.sfx.enabled = m.on; return; }
     if (m.kind === 'size') { for (const t of Roamie.tiles ?? []) t.creature.setForm?.(m.size); return; }
     if (m.kind === 'look') {
@@ -579,6 +581,7 @@
     if (m.kind === 'summon') {
       // ⌃⌥S toggles; the menu's Show Sidekick only ever shows. With the capsule on, it's the capsule that comes out.
       if (notchOn()) {
+        sendRoamieAway();
         if (!N().active) N().hello();
         else if (!m.show) {
           if (responding || Roamie.voiceOut?.playing()) { send({ type: 'menu', id: 'stop', via: 'hide' }); Roamie.voiceOut?.stop(); }

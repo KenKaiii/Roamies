@@ -566,7 +566,7 @@ export function checkMcpServer({ name, command, args = [], url } = {}) {
 }
 
 // Verbs that act on the world: a tool named like this always asks, whatever the server says about it.
-const MCP_RISKY = /(?:^|_)(send|delete|remove|destroy|erase|wipe|drop|purge|truncate|pay|purchase|buy|charge|transfer|withdraw|refund|publish|post|tweet|reply|forward|invite|share|cancel|revoke|unsubscribe|deploy|kill|terminate)(?:_|$)/;
+const MCP_RISKY = /(?:^|_)(send|delete|remove|destroy|erase|wipe|drop|purge|truncate|pay|purchase|buy|charge|transfer|withdraw|refund|publish|post|tweet|reply|forward|invite|share|cancel|revoke|unsubscribe|deploy|kill|terminate|lock|unlock|arm|disarm)(?:_|$)/;
 const snake = (s) => String(s ?? '').replace(/([a-z0-9])([A-Z])/g, '$1_$2').replace(/[^a-z0-9]+/gi, '_').toLowerCase();
 
 /** A call to a connected server's tool: { name, annotations }. A read-only tool (readOnlyHint, not destructive, not
