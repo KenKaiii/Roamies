@@ -554,11 +554,11 @@
     async open(m) { let h = m.url; try { h = new URL(m.url).hostname.replace(/^www\./, ''); } catch {} sfx('whoosh'); leaveAfter(toast(`Opening ${h}`, m.url, { spin: true }), 1800); },
     async handoff(m) { sfx('toolstart'); leaveAfter(toast('Handed off', m.task || m.text || m.label || '', { spin: true }), 2200); },
     async button(m) {
-      const k = 1.15, w = Math.round(textW(m.text, CHIP(k)) + 34), h = 32;
+      const k = 1.15, w = Math.round(textW(m.text, CHIP(k)) + 52), h = 32;
       const r = m.at ? nameSpot(rectOf(m), m.text, [w, h]) : place(w, h, m.part);
       await tap(r[0] + w - 14, r[1] + h - 8); sfx('pop');
-      add({ z: 6, part: m.part, screen: !!m.at, kind: 'button', pill: r, box: [r[0] - 2, r[1] - 4, w + 4, h + 10], hover: false, down: 0, draw(b, l, t) { chip(b, r[0], r[1], w, h, m.text, t - this.born, { k, color: this.color, hover: this.hover, down: now() - this.down < 0.15 }); },
-        hits() { return [{ rect: [r[0], r[1], w, h], kind: 'button', part: m.part }]; } });
+      add({ z: 6, part: m.part, screen: !!m.at, kind: 'button', pill: r, box: [r[0] - 2, r[1] - 4, w + 4, h + 10], hover: false, down: 0, draw(b, l, t) { chip(b, r[0], r[1], w, h, m.text, t - this.born, { k, color: this.color, hover: this.hover, down: now() - this.down < 0.15 }); b.fillStyle = this.hoverId === "close" ? HOT : DIM; for (let j = -3; j <= 3; j++) { b.fillRect(r[0] + w - 14 + j - 1, r[1] + 16 + j - 1, 2, 2); b.fillRect(r[0] + w - 14 + j - 1, r[1] + 16 - j - 1, 2, 2); } },
+        hits() { return [{ rect: [r[0] + w - 24, r[1] + 4, 20, 24], kind: 'close', part: m.part }, { rect: [r[0], r[1], w - 24, h], kind: 'button', part: m.part }]; } });
     },
     async emote(m) {
       const [x, y] = tipNow(); agent()?.act?.(m.name);
@@ -672,6 +672,7 @@
           b.fillStyle = hot ? HOT : DIM; for (let k = -3; k <= 3; k++) { b.fillRect(cx + k - 1, cy + k - 1, 2, 2); b.fillRect(cx + k - 1, cy - k - 1, 2, 2); }
         }
         // A last guard: nothing inside a card is drawn outside it.
+        if (!bar && this.p >= 1) { b.fillStyle = this.hoverId === "close" ? HOT : DIM; for (let k = -3; k <= 3; k++) { b.fillRect(x + w - 13 + k - 1, y + 11 + k - 1, 2, 2); b.fillRect(x + w - 13 + k - 1, y + 11 - k - 1, 2, 2); } }
         for (const c of [b, l]) { c.save(); c.beginPath(); c.rect(x + 2, y + bar + 1, w - 4, h - bar - 3); c.clip(); }
         try { inner.call(this, b, l, t, x, y + bar - this.sy, t - this.done); } finally { b.restore(); l.restore(); }
         if (this.scrollMax > 0) {
@@ -683,7 +684,7 @@
         if (this.p >= 1 && !this.full) { b.fillStyle = this.hoverGrip ? HOT : rgba(ACC, 0.45); for (let k = 0; k < 3; k++) for (let j = 0; j <= k; j++) b.fillRect(x + w - 6 - j * 4, y + h - 14 + k * 4, 2, 2); b.fillStyle = this.hoverGripL ? HOT : rgba(ACC, 0.45); for (let k = 0; k < 3; k++) for (let j = 0; j <= k; j++) b.fillRect(x + 4 + j * 4, y + h - 14 + k * 4, 2, 2); }
       },
       hits() {
-        const out = bar ? [{ rect: [x + w - 28, y + 2, 26, 22], kind: 'close', part: m.part }, { rect: [x + w - 54, y + 2, 22, 22], kind: 'full', part: m.part }, { rect: [x + w - 82, y + 2, 24, 22], kind: 'pin', part: m.part }, { rect: [x + w - 106, y + 2, 22, 22], kind: 'save', part: m.part, title: o.title || m.kind }, ...(this.onEdit ? [{ rect: [x + w - 130, y + 2, 22, 22], kind: 'edit', part: m.part }] : []), { rect: [x, y, w - (this.onEdit ? 132 : 108), bar], kind: 'drag', part: m.part }] : [{ rect: [x, y, w, Math.min(h, 24)], kind: 'drag', part: m.part }];
+        const out = bar ? [{ rect: [x + w - 28, y + 2, 26, 22], kind: 'close', part: m.part }, { rect: [x + w - 54, y + 2, 22, 22], kind: 'full', part: m.part }, { rect: [x + w - 82, y + 2, 24, 22], kind: 'pin', part: m.part }, { rect: [x + w - 106, y + 2, 22, 22], kind: 'save', part: m.part, title: o.title || m.kind }, ...(this.onEdit ? [{ rect: [x + w - 130, y + 2, 22, 22], kind: 'edit', part: m.part }] : []), { rect: [x, y, w - (this.onEdit ? 132 : 108), bar], kind: 'drag', part: m.part }] : [{ rect: [x + w - 24, y + 2, 22, 20], kind: 'close', part: m.part }, { rect: [x, y, Math.max(10, w - 26), Math.min(h, 24)], kind: 'drag', part: m.part }];
         if (!this.full) out.unshift({ rect: [x + w - 28, y + h - 28, 32, 32], kind: 'resize', part: m.part }, { rect: [x - 4, y + h - 28, 32, 32], kind: 'resize-l', part: m.part }, { rect: [x + 28, y + h - 6, Math.max(10, w - 56), 20], kind: 'extend', part: m.part }, { rect: [x + w - 6, y + bar, 20, Math.max(10, h - bar - 28)], kind: 'extend-r', part: m.part }, { rect: [x - 14, y + bar, 20, Math.max(10, h - bar - 28)], kind: 'extend-l', part: m.part }, { rect: [x + 12, y - 10, Math.max(10, w - 24), 12], kind: 'extend-t', part: m.part });
         // Links scrolled out of view can't be clicked.
         const more = (this.more?.() ?? []).filter((q) => q.rect[1] >= y + bar && q.rect[1] + q.rect[3] <= y + h);
@@ -776,7 +777,7 @@
       const narrow = wrapRows(m.text, 210 - 28, `500 13px ${MONO}`), w = narrow.length > 12 ? 320 : 210;
       let curW = w, rows = w === 210 ? narrow : wrapRows(m.text, w - 28, `500 13px ${MONO}`);
       const h = 58 + rows.length * 19;
-      await card(m, w, h, function (b, l, t, x, y, age) { const cw = this.w || w; if (Math.abs(cw - curW) > 1) { curW = cw; rows = wrapRows(m.text, cw - 28, `500 13px ${MONO}`); this.grow?.(58 + rows.length * 19); } b.fillStyle = colorOf(this, this.color); b.fillRect(x + 8, y + 30, cw - 16, 3); wrapped(b, rows, x + 14, y + 50, 19, `500 13px ${MONO}`, TEXT, age / (0.3 + m.text.length * 0.025)); }, { title: smartTitle(m, "note"), edge: true });
+      await card(m, w, h, function (b, l, t, x, y, age) { const cw = this.w || w; if (Math.abs(cw - curW) > 1) { curW = cw; rows = wrapRows(m.text, cw - 28, `500 13px ${MONO}`); this.grow?.(58 + rows.length * 19); } b.fillStyle = colorOf(this, this.color); b.fillRect(x + 8, y + 8, cw - 16, 3); wrapped(b, rows, x + 14, y + 28, 19, `500 13px ${MONO}`, TEXT, age / (0.3 + m.text.length * 0.025)); }, { title: smartTitle(m, "note"), edge: true });
       sfx('page');
     },
     // A mind map: the topic on the left, its branches beside it, each branch's points behind a +. A click on a branch
@@ -864,8 +865,9 @@
     // A checklist: a click on a ring ticks an item off (or back), on its words edits it, and "+ Add" adds one. The
     // sidecar asks for the words and hears every change (list_card), and sends the new items back (listItems).
     async list(m) {
+      const HEAD = `700 18px ${DOTO}`, BODY = `400 13px ${MONO}`;
       const normItems = (Array.isArray(m.items) ? m.items : []).map((it) => typeof it === 'string' ? it : String(it?.text ?? it?.label ?? it ?? ''));
-      S = { items: normItems, done: normItems.map(() => false), born: [], ver: normItems.map(() => 0), down: 0 };
+      const S = { items: normItems, done: normItems.map(() => false), born: [], ver: normItems.map(() => 0), down: 0 };
       const ticked = new Map(), ink = new Map();
       // The whole title and every point in full: 280 wide, wider while a point runs past three lines or it's too tall.
       const lay = (w) => {
@@ -958,6 +960,7 @@
         i.onerror = () => { clearTimeout(t); res(null); };
         i.src = m.src;
       }) : null;
+      if (!img) return;
       // About the area of a 240 × 192 frame in the picture's own proportions, no wider than 360 or taller than 300.
       const a = img ? img.naturalWidth / img.naturalHeight : 4 / 3;
       let iw = Math.sqrt(240 * 192 * a), ih = iw / a;
@@ -2254,8 +2257,8 @@
         const s = String(id);
         REM.until = Math.max(REM.until, now() + 8);
         if (s === 'rem-add') { sfx('pip'); R.ink.send?.({ type: 'rem_card', op: 'add' }); }
-        else if (s.startsWith('rem-e:')) { sfx('pip'); R.ink.send?.({ type: 'rem_card', op: 'edit', id: s.slice(7) }); }
-        else if (s.startsWith('rem-x:')) { sfx('tick'); R.ink.send?.({ type: 'rem_card', op: 'remove', id: s.slice(7) }); }
+        else if (s.startsWith('rem-e:')) { sfx('pip'); R.ink.send?.({ type: 'rem_card', op: 'edit', id: s.slice(6) }); }
+        else if (s.startsWith('rem-x:')) { sfx('tick'); R.ink.send?.({ type: 'rem_card', op: 'remove', id: s.slice(6) }); }
       },
       draw: remDraw,
       hits() {
@@ -2446,7 +2449,7 @@
     },
     // Another window came to the front, or that window moved or closed: the drawing no longer sits on what it was
     // about, so all of it fades (cards too).
-    stale() { stop(); fadeOut(marks.filter((m) => m.alive && !m.local && !m.pinned), 0.6); },
+    stale() { fadeOut(marks.filter((m) => m.alive && m.screen && !m.local && !m.pinned), 0.6); },
     click(x, y) { G.wait?.click(x, y); },
     ptr(x, y) { G.ptr = [x, y]; G.wait?.ptr(x, y); },
     // The reminders list from the sidecar: { today, later, seconds, flash, toggle }. seconds > 0 opens or extends it;

@@ -11,6 +11,8 @@ description: Verified, strict JSON schemas for all 21 card kinds supported by th
 3. **Top-level wrapper:**
    `{"keep":true,"beats":[{"say":"Short spoken summary under 20 words.","marks":[<CARD_OBJECT>]}]}`
 4. **Never set `"wait"` on card beats.**
+5. **NEVER include `"tie"` on cards** (cards auto-place themselves on calm screen space; `tie` fails unless that exact text already exists on screen).
+6. **NEVER set `"deep": true`** when showing cards (omit `deep` completely so cards stay visible together instead of replacing one another).
 5. **Default to simple cards when unsure:** Prefer `card`, `list`, `note`, or `table` unless the user specifically asks for charts, diagrams, 3D models, maps, math, or quizzes.
 6. **Minimum item counts:** Always include **at least 2 items** in `timeline.events`, `bars.bars`, `flow.nodes`, `geometry.vertices`, and `mindmap.branches`.
 7. **Geometry rule:** Every vertex `id` listed in `geometry.vertices` MUST be referenced in at least one entry in `geometry.lines`.
@@ -81,3 +83,8 @@ description: Verified, strict JSON schemas for all 21 card kinds supported by th
 
 21. **`medal`** (Achievement / completion badge)
     `{"kind":"medal","title":"Milestone","text":"All 21 card types verified!"}`
+
+### 3D Model (`model`)
+```json
+{"beats":[{"say":"Spinning 3D cube.","marks":[{"kind":"model","title":"3D Cube","parts":[{"shape":"box","at":[0,0,0],"size":[1.4,1.4,1.4],"tone":"teal","motion":{"do":"spin","axis":"y","secs":4}}]}]}],"keep":true}
+```

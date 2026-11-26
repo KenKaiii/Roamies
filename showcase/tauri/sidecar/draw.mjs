@@ -120,6 +120,11 @@ function tidyMark(m) {
   for (const k of ['at', 'to', 'tie']) if (typeof m[k] === 'string' && m[k].trim()) m = { ...m, [k]: { text: m[k].trim() } };
   // An empty field (text: "") is one left out, not a mistake to send back.
   if (Object.values(m).includes('')) m = Object.fromEntries(Object.entries(m).filter(([, v]) => v !== ''));
+  const KIND_ARR = { list: "items", math: "steps", model: "parts", quiz: "questions", timeline: "events", mindmap: "branches", flow: "nodes", graph: "plots", sources: "sources" };
+  for (const [k, arrKey] of Object.entries(KIND_ARR)) {
+    if (isObj(m[k])) { const sub = m[k]; delete m[k]; m = { kind: m.kind || k, ...sub, ...m }; }
+    else if (Array.isArray(m[k])) { const arr = m[k]; delete m[k]; m = { kind: m.kind || k, [arrKey]: arr, ...m }; }
+  }
   m = fixShapes(m);
   if (!m.kind) {
     if (Array.isArray(m.nodes) || Array.isArray(m.links)) m = { ...m, kind: 'flow' };
@@ -139,6 +144,19 @@ function tidyMark(m) {
     else if (typeof m.text === 'string' || typeof m.heading === 'string') m = { ...m, kind: 'card' };
   }
   const strId = (v) => (typeof v === 'number' ? String(v) : v);
+  if (typeof m.kind === "string") { const first = Array.isArray(m[m.kind]) && m[m.kind].length === 1 ? m[m.kind].at(0) : m[m.kind]; const raw = isObj(first) ? first : null; if (raw) { delete m[m.kind]; m = { ...raw, ...m }; } }
+  if (m.kind === "graph" && Array.isArray(m.plots)) {
+    const pts = m.plots.flatMap((p) => (Array.isArray(p?.points) ? p.points : [])).filter((pt) => Array.isArray(pt) && pt.length >= 2);
+    if (pts.length && !Array.isArray(m.x_range)) { const xs = pts.map((p) => Number(p[0])).filter(Number.isFinite); if (xs.length) m.x_range = [Math.min(...xs), Math.max(...xs)]; }
+    if (pts.length && !Array.isArray(m.y_range)) { const ys = pts.map((p) => Number(p[1])).filter(Number.isFinite); if (ys.length) m.y_range = [Math.min(...ys), Math.max(...ys)]; }
+  }
+  if (m.kind === "molecule") {
+    const SMILES = { caffeine: "CN1C=NC2=C1C(=O)N(C(=O)N2C)C", water: "O", ethanol: "CCO", glucose: "C(C1C(C(C(C(O1)O)O)O)O)O", aspirin: "CC(=O)OC1=CC=CC=C1C(=O)O", dopamine: "C1=CC(=C(C=C1CCN)O)O", serotonin: "C1=CC2=C(C=C1O)C(=CN2)CCN", benzene: "c1ccccc1", methane: "C" };
+    const key = String(m.label || m.name || m.title || m.smiles || "").trim().toLowerCase();
+    for (const [nm, sm] of Object.entries(SMILES)) if (key === nm || key.includes(nm)) { if (!m.smiles || !/^[A-Za-z0-9@+-[]()\/=#$%.:~]+$/.test(m.smiles)) m.smiles = sm; break; }
+  }
+  if (m.kind === "list" && Array.isArray(m.items)) m.items = m.items.map((x) => (isObj(x) ? String(x.text ?? x.label ?? x.title ?? "") : x));
+  if (m.kind === "model" && Array.isArray(m.parts)) m.parts = m.parts.map((p) => (isObj(p) ? { at: new Array(3).fill(0), size: [1.4, 1.4, 1.4], ...p } : p));
   if (Array.isArray(m.vertices)) m = { ...m, vertices: each(m.vertices, (v) => ('id' in v ? { ...v, id: strId(v.id) } : v)) };
   if (Array.isArray(m.lines)) m = { ...m, lines: each(m.lines, (l) => ({ ...l, ...('from' in l ? { from: strId(l.from) } : {}), ...('to' in l ? { to: strId(l.to) } : {}) })) };
   if (Array.isArray(m.angles)) m = { ...m, angles: each(m.angles, (a) => ({ ...a, ...('at' in a ? { at: strId(a.at) } : {}), ...('from' in a ? { from: strId(a.from) } : {}), ...('to' in a ? { to: strId(a.to) } : {}) })) };
@@ -151,6 +169,7 @@ function tidyMark(m) {
   return m;
 }
 function tidyBeat(b) {
+  if (isObj(b) && (b.wait === "click" || b.wait === "hover") && !(Array.isArray(b.marks) && b.marks.some((mk) => mk?.kind === "target" || mk?.kind === "hover"))) { const { wait, ...rest } = b; b = rest; }
   if (!isObj(b)) return b;
   b = parsed(b);
   const extra = loose(b, BEAT_KEYS);
