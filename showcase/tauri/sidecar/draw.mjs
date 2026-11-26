@@ -469,6 +469,7 @@ export function createLists() {
       if (op === 'tick' && has) l.done[i] = !!done;
       else if (op === 'add' && t && l.items.length < LIST_MAX) { l.items.push(t); l.done.push(false); l.log.push(`added ${cut(t)}`); }
       else if (op === 'edit' && has && t && t !== l.items[i]) { l.log.push(`changed ${cut(l.items[i])} to ${cut(t)}`); l.items[i] = t; }
+      else if (op === 'remove' && has) { l.log.push(`removed ${cut(l.items[i])}`); l.items.splice(i, 1); l.done.splice(i, 1); l.base.splice(i, 1); }
       else return null;
       return [...l.items];
     },

@@ -19,7 +19,7 @@ import { LIST_MAX, createLists } from '../draw.mjs';
   l.change('p1', { op: 'tick', i: 0, done: false });
   assert.equal(l.note(), 'They changed the list “Groceries” on screen: unticked “milk”.');
   // Nothing changes: no such list or item, empty or unchanged words.
-  for (const c of [{ op: 'tick', i: 9, done: true }, { op: 'add', text: '   ' }, { op: 'edit', i: 0, text: 'milk' }, { op: 'edit', i: -1, text: 'x' }, { op: 'remove', i: 0 }]) assert.equal(l.change('p1', c), null, JSON.stringify(c));
+  for (const c of [{ op: 'tick', i: 9, done: true }, { op: 'add', text: '   ' }, { op: 'edit', i: 0, text: 'milk' }, { op: 'edit', i: -1, text: 'x' }, { op: 'remove', i: 9 }]) assert.equal(l.change('p1', c), null, JSON.stringify(c));
   assert.equal(l.change('p9', { op: 'add', text: 'x' }), null);
   assert.equal(l.change('p1', { op: 'add', text: 'x'.repeat(300) }).at(-1).length, 120, 'an item is at most 120 characters');
   while (l.get('p1').items.length < LIST_MAX) l.change('p1', { op: 'add', text: 'more' });
@@ -53,7 +53,7 @@ import { LIST_MAX, createLists } from '../draw.mjs';
   assert.deepEqual(made.ink.listCard(part, { op: 'add', text: 'socks' }), ['passport', 'charger', 'socks']);
   made.ink.listCard(part, { op: 'tick', i: 0, done: true });
   assert.match(made.ink.describe(), new RegExp(`${part} list “Packing” \\(passport, done; charger; socks\\)`));
-  assert.equal(made.ink.listNote(), 'They changed the list “Packing” on screen: ticked off “passport”; added “socks”.');
+  assert.equal(made.ink.listNote(), 'They changed the list “Packing” on screen: ticked off “passport”; added “socks”.'); assert.deepEqual(made.ink.listCard(part, { op: 'remove', i: 0 }), ['charger', 'socks']); assert.equal(made.ink.listNote(), 'They changed the list “Packing” on screen: removed “passport”.');
   made.ink.closed(part);
   assert.equal(made.ink.list(part), null, 'closed on screen: no longer there to change');
   const draw = made.tools.find((t) => t.name === 'draw');

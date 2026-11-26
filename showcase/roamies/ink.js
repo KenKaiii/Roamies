@@ -28,7 +28,7 @@
   const reducedMQ = matchMedia('(prefers-reduced-motion: reduce)');
   const reduced = () => reducedMQ.matches;
   const sleep = (ms) => new Promise((r) => setTimeout(r, reduced() ? Math.min(ms, 60) : ms));
-  const frame = () => new Promise((r) => requestAnimationFrame(r));
+  const frame = () => Promise.race([new Promise((r) => requestAnimationFrame(r)), sleep(35)]);
   // Global screen points → this overlay's px.
   const loc = (x, y) => [x - (R.origin?.x ?? 0), y - (R.origin?.y ?? 0)];
   const locRect = (r) => (r ? [...loc(r[0], r[1]), r[2], r[3]] : null);
@@ -189,7 +189,7 @@
     const t = now();
     for (let i = marks.length - 1; i >= 0; i--) if (!marks[i].alive) marks.splice(i, 1);
     if (!marks.length) { if (alloc) freeCanvas(); return; }
-    if (!alloc) allocate();
+    if (!alloc) allocate(); else if (view.style.visibility === "hidden") view.style.visibility = "";
     const full = t < until || !!drag || !!sizing || !lastU, live = full ? [] : marks.filter((m) => m.live?.(t));
     if (full) {
       let U = null;
@@ -775,8 +775,8 @@
       // All of it; a long note goes wider rather than very tall.
       const narrow = wrapRows(m.text, 210 - 28, `500 13px ${MONO}`), w = narrow.length > 12 ? 320 : 210;
       let curW = w, rows = w === 210 ? narrow : wrapRows(m.text, w - 28, `500 13px ${MONO}`);
-      const h = 40 + rows.length * 19;
-      await card(m, w, h, function (b, l, t, x, y, age) { const cw = this.w || w; if (Math.abs(cw - curW) > 1) { curW = cw; rows = wrapRows(m.text, cw - 28, `500 13px ${MONO}`); this.grow?.(40 + rows.length * 19); } b.fillStyle = colorOf(this, this.color); b.fillRect(x + 8, y + 8, cw - 16, 3); wrapped(b, rows, x + 14, y + 32, 19, `500 13px ${MONO}`, TEXT, age / (0.3 + m.text.length * 0.025)); }, { bar: false, edge: true });
+      const h = 58 + rows.length * 19;
+      await card(m, w, h, function (b, l, t, x, y, age) { const cw = this.w || w; if (Math.abs(cw - curW) > 1) { curW = cw; rows = wrapRows(m.text, cw - 28, `500 13px ${MONO}`); this.grow?.(58 + rows.length * 19); } b.fillStyle = colorOf(this, this.color); b.fillRect(x + 8, y + 30, cw - 16, 3); wrapped(b, rows, x + 14, y + 50, 19, `500 13px ${MONO}`, TEXT, age / (0.3 + m.text.length * 0.025)); }, { title: smartTitle(m, "note"), edge: true });
       sfx('page');
     },
     // A mind map: the topic on the left, its branches beside it, each branch's points behind a +. A click on a branch
@@ -865,12 +865,12 @@
     // sidecar asks for the words and hears every change (list_card), and sends the new items back (listItems).
     async list(m) {
       const normItems = (Array.isArray(m.items) ? m.items : []).map((it) => typeof it === 'string' ? it : String(it?.text ?? it?.label ?? it ?? ''));
-      const TITLE = `800 20px ${DOTO}`, S = { items: normItems, done: normItems.map(() => false), born: [], ver: normItems.map(() => 0), down: 0 };
+      S = { items: normItems, done: normItems.map(() => false), born: [], ver: normItems.map(() => 0), down: 0 };
       const ticked = new Map(), ink = new Map();
       // The whole title and every point in full: 280 wide, wider while a point runs past three lines or it's too tall.
       const lay = (w) => {
-        const title = wrapRows(m.title || 'list', w - 36, TITLE), items = S.items.map((it) => wrapRows(it, w - 58, BODY)), tops = [];
-        let yy = 50 + (title.length - 1) * 24; for (const r of items) { tops.push(yy); yy += r.length * 19 + 11; }
+        const title = wrapRows(m.title || 'list', w - 40, HEAD), items = S.items.map((it) => wrapRows(it, w - 78, BODY)), tops = [];
+        let yy = 18 + title.length * 26 + 8; for (const r of items) { tops.push(yy); yy += r.length * 19 + 11; }
         return { w, title, items, tops, addY: yy + 4, h: 26 + yy + 4 + 28 + 18 };
       };
       let L = lay(340);
@@ -887,11 +887,11 @@
         if (this.w && Math.abs(this.w - curW) > 1) { curW = this.w; L = lay(curW); ink.clear(); this.__ol = {}; this.__at = {}; this.grow?.(L.h); }
         hits = [];
         const w = this.w || L.w, { title, items, tops } = L;
-        title.forEach((r, i) => typed(b, r, x + 18, y + 30 + i * 24, TITLE, TEXT, (age - i * 0.2) / 0.4));
+        title.forEach((r, i) => typed(b, r, x + 20, y + 36 + i * 26, HEAD, TEXT, (age - i * 0.2) / 0.4));
         items.forEach((r, i) => {
           const a = S.born[i] != null ? t - S.born[i] : age - 0.3 - i * 0.26;
           if (a <= 0) return;
-          const top = y + tops[i], rh = r.length * 19, done = S.done[i], [key, sh] = shapes(i), tick = `t${i}`, edit = `e${i}`;
+          const top = y + tops[i], rh = r.length * 19, done = S.done[i], [key, sh] = shapes(i), tick = `t${i}`, edit = `e${i}`, del = `x${i}`;
           if (this.hoverId === tick || this.hoverId === edit) { b.fillStyle = rgba(ACC, 0.07); b.fillRect(this.hoverId === tick ? x + 8 : x + 34, top - 5, this.hoverId === tick ? 30 : w - 42, rh + 6); }
           pen(b, l, this, placed(this, `r${key}`, sh.ring, x + 18, top), clamp(a / 0.3, 0, 1), done ? MID : this.color, { key: `r${key}`, w: 2.4 });
           wrapped(b, r, x + 40, top + 11, 19, BODY, done ? DIM : TEXT, a / 0.4);
@@ -900,7 +900,7 @@
             pen(b, l, this, placed(this, `c${key}`, sh.check, x + 18, top), clamp(u / 0.2, 0, 1), HOT, { key: `c${key}`, w: 2.2 });
             sh.strikes.forEach((st, k) => pen(b, l, this, placed(this, `s${key}.${k}`, st, x + 38, top + 6 + k * 19), clamp((u - 0.1 - k * 0.2) / 0.3, 0, 1), MID, { key: `s${key}.${k}`, w: 1.8 }));
           }
-          hits.push({ rect: [x + 8, top - 5, 30, rh + 6], kind: 'pick', id: tick }, { rect: [x + 38, top - 5, w - 46, rh + 6], kind: 'pick', id: edit });
+          { const rx = x + w - 23, ry = top + 6; b.fillStyle = this.hoverId === del ? HOT : DIM; for (let k = -2; k <= 2; k++) { b.fillRect(rx + k - 1, ry + k - 1, 2, 2); b.fillRect(rx + k - 1, ry - k - 1, 2, 2); } } hits.push({ rect: [x + 8, top - 5, 30, rh + 6], kind: 'pick', id: tick }, { rect: [x + 38, top - 5, Math.max(20, w - 74), rh + 6], kind: 'pick', id: edit }, { rect: [x + w - 34, top - 5, 24, rh + 6], kind: 'pick', id: del });
         });
         const a = age - 0.3 - S.items.length * 0.26, bw = Math.round(textW('+ Add', CHIP()) + 30), br = [x + 18, y + L.addY, bw, 26];
         if (a <= 0) return;
@@ -915,7 +915,7 @@
         if (id === 'add') { S.down = now(); sfx('pip'); send({ op: 'add' }); return; }
         const i = Number(String(id).slice(1));
         if (!(i >= 0 && i < S.items.length)) return;
-        if (id[0] === 'e') { sfx('pip'); send({ op: 'edit', i }); return; }
+        if (id[0] === 'e') { sfx('pip'); send({ op: 'edit', i }); return; } if (id[0] === 'x') { sfx('tick'); S.items.splice(i, 1); S.done.splice(i, 1); S.born.splice(i, 1); S.ver.splice(i, 1); ink.clear(); L = lay(c.w || L.w); c.__ol = {}; c.__at = {}; c.grow(L.h); send({ op: 'remove', i }); return; }
         S.done[i] = !S.done[i];
         if (S.done[i]) { ticked.set(i, now()); sfx('done'); } else { ticked.delete(i); sfx('tick'); }
         send({ op: 'tick', i, done: S.done[i] });
@@ -2190,8 +2190,8 @@
     b.fillStyle = 'rgba(120,255,226,0.06)'; b.fillRect(x + 2, y + 2, w - 4, 24);
     b.fillStyle = DEEP; b.fillRect(x + 2, y + 26, w - 4, 1);
     [0, 1].forEach((k) => { b.fillStyle = k ? DEEP : ACC; b.fillRect(x + 12 + k * 12, y + 11, 5, 5); });
-    typed(b, 'reminders', x + 36 + (w - 36 - 60) / 2, y + 17, `500 10px ${MONO}`, DIM, (t - this.opened) / 0.4, { anchor: 'middle' });
-    pinIcon(b, x + w - 44, y + 13, this);
+    typed(b, 'reminders', x + 36 + (w - 36 - 110) / 2, y + 17, `500 10px ${MONO}`, DIM, (t - this.opened) / 0.4, { anchor: 'middle' });
+    pinIcon(b, x + w - 70, y + 13, this); { const sx = x + w - 95, sy = y + 13; b.fillStyle = this.hoverSave ? HOT : this.saved && now() - this.saved < 1.2 ? ACC : DIM; b.fillRect(sx - 1, sy - 6, 2, 7); b.fillRect(sx - 3, sy - 1, 6, 2); b.fillRect(sx - 2, sy + 1, 4, 1); b.fillRect(sx - 5, sy + 3, 10, 2); b.fillRect(sx - 5, sy + 1, 2, 2); b.fillRect(sx + 3, sy + 1, 2, 2); } { const fx = x + w - 44, fy = y + 13, s = 4, f = this.full ? -1 : 1; b.fillStyle = this.hoverFull ? HOT : DIM; for (const d of Array.of({sx:-1,sy:-1},{sx:1,sy:-1},{sx:-1,sy:1},{sx:1,sy:1})) { const cx2 = fx + d.sx * s, cy2 = fy + d.sy * s; b.fillRect(cx2 - (d.sx * f < 0 ? 0 : 2), cy2 - 1, 3, 2); b.fillRect(cx2 - 1, cy2 - (d.sy * f < 0 ? 0 : 2), 2, 3); } }
     const cx = x + w - 18, cyy = y + 13;
     b.fillStyle = this.hoverClose ? HOT : DIM; for (let k = -3; k <= 3; k++) { b.fillRect(cx + k - 1, cyy + k - 1, 2, 2); b.fillRect(cx + k - 1, cyy - k - 1, 2, 2); }
     b.fillStyle = this.hoverGrip ? HOT : rgba(ACC, 0.45); for (let k = 0; k < 3; k++) for (let j = 0; j <= k; j++) b.fillRect(x + w - 6 - j * 4, y + h - 14 + k * 4, 2, 2);
@@ -2231,7 +2231,7 @@
     const c = REM.m, S = scr(), L = remLayout(c.x, c.y, c.w ?? REM_W);
     // Grown taller than the room below it: up a little, then laid out again where it now sits.
     const y = clamp(c.y, S[1] + 4, Math.max(S[1] + 4, S[3] - L.h - 64));
-    if (y !== c.y) { c.y = y; Object.assign(c, remLayout(c.x, c.y, c.w ?? REM_W)); } else Object.assign(c, L);
+    if (y !== c.y) { c.y = y; c.oy = y; Object.assign(c, remLayout(c.x, c.y, c.w ?? REM_W)); } else Object.assign(c, L);
     if (c.userH != null) { c.h = c.userH; c.ch = c.h; }
     c.scrollMax = Math.max(0, (c.fullH || c.h) - c.h); c.sy = Math.min(c.sy || 0, c.scrollMax);
     c.__ol = {};
@@ -2252,7 +2252,7 @@
         const { x: cx, y: cy } = this, rw = this.w ?? REM_W;
         return [...this.rows.filter((r) => r.i).map((r) => ({ rect: [cx, cy + r.y, rw, r.h], kind: 'tick', id: r.i.id, done: r.i.done, part: REM_PART })),
           { rect: [cx + rw - 28, cy + this.h - 28, 32, 32], kind: 'resize', part: REM_PART }, { rect: [cx - 4, cy + this.h - 28, 32, 32], kind: 'resize-l', part: REM_PART }, { rect: [cx + 28, cy + this.h - 6, Math.max(10, rw - 56), 20], kind: 'extend', part: REM_PART }, { rect: [cx + rw - 6, cy + 26, 20, Math.max(10, this.h - 54)], kind: 'extend-r', part: REM_PART }, { rect: [cx - 14, cy + 26, 20, Math.max(10, this.h - 32)], kind: 'extend-l', part: REM_PART },
-          { rect: [cx + rw - 28, cy + 2, 26, 22], kind: 'close', part: REM_PART }, { rect: [cx + rw - 56, cy + 2, 24, 22], kind: 'pin', part: REM_PART }, { rect: [cx, cy, rw - 58, 26], kind: 'drag', part: REM_PART }, { rect: [cx, cy, rw, this.h], kind: 'card', part: REM_PART }];
+          { rect: [cx + rw - 28, cy + 2, 26, 22], kind: 'close', part: REM_PART }, { rect: [cx + rw - 54, cy + 2, 22, 22], kind: 'full', part: REM_PART }, { rect: [cx + rw - 82, cy + 2, 24, 22], kind: 'pin', part: REM_PART }, { rect: [cx + rw - 106, cy + 2, 22, 22], kind: 'save', part: REM_PART, title: 'reminders' }, { rect: [cx, cy, rw - 108, 26], kind: 'drag', part: REM_PART }, { rect: [cx, cy, rw, this.h], kind: 'card', part: REM_PART }];
       },
     });
     Object.assign(c, remLayout(x, y));

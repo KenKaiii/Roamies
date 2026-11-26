@@ -1118,6 +1118,7 @@ let listAsking = false;
 async function onListCard(part, m) {
   const op = String(m.op ?? '');
   if (op === 'tick') { if (ink.listCard(part, { op, i: m.i, done: m.done === true })) logLine('list_card', { part, op }); return; }
+  if (op === 'remove') { const items = ink.listCard(part, { op, i: m.i }); if (items) { ui({ kind: 'agent', e: { type: 'list_items', part, items } }); logLine('list_card', { part, op }); } return; }
   const l = ink.list(part);
   if (!l || (op !== 'add' && op !== 'edit') || listAsking) return;
   const i = op === 'edit' && Number.isInteger(m.i) && m.i >= 0 && m.i < l.items.length ? m.i : -1;
