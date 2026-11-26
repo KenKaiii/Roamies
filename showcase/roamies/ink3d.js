@@ -112,11 +112,12 @@
     let lastT = -1, out = { gw, gh, lv, labels: [] };
     gl.enable(gl.DEPTH_TEST); gl.viewport(0, 0, gw * SS, gh * SS);
     return {
-      frame(t) {
-        // A slow turn, redrawn about 30 times a second.
-        if (lastT >= 0 && Math.abs(t - lastT) < 1 / 30) return out;
+      frame(t, rotM = null, zoom = 1, force = false, panX = 0, panY = 0) {
+        if (!force && lastT >= 0 && Math.abs(t - lastT) < 1 / 30) return out;
         lastT = t;
-        const view = mul(T(0, 0, -3.4), mul(RX(0.38), RY(t * 0.45 + 0.6))), proj = persp(0.62, gw / gh, 0.1, 20), vp = mul(proj, view);
+        const dist = -3.4 / Math.max(0.35, Math.min(3.5, zoom));
+        const rot = rotM || mul(RX(0.38), RY(t * 0.45 + 0.6));
+        const view = mul(T(panX, panY, dist), rot), proj = persp(0.62, gw / gh, 0.1, 20), vp = mul(proj, view);
         gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
         gl.uniform3fv(loc.eye, [0, 0, 3.4]);
         const now = items.map((it) => moved(it, t));
@@ -144,7 +145,7 @@
           if (!it.label) continue;
           const q = apply(mul(vp, fit), now[n].at);
           if (q[3] <= 0) continue;
-          labels.push({ x: ((q[0] / q[3]) * 0.5 + 0.5) * gw * 3, y: (1 - ((q[1] / q[3]) * 0.5 + 0.5)) * gh * 3, text: it.label });
+          const rw = apply(mul(rot, fit), now[n].at); labels.push({ x: ((q[0] / q[3]) * 0.5 + 0.5) * gw * 3, y: (1 - ((q[1] / q[3]) * 0.5 + 0.5)) * gh * 3, wx: rw, wy: rw, wx: apply(mul(rot, fit), now.at(n).at).at(0), wy: apply(mul(rot, fit), now.at(n).at).at(1), text: it.label });
         }
         out = { gw, gh, lv, labels };
         return out;

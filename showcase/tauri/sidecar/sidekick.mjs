@@ -1123,10 +1123,12 @@ async function onListCard(part, m) {
   if (!l || (op !== 'add' && op !== 'edit') || listAsking) return;
   const i = op === 'edit' && Number.isInteger(m.i) && m.i >= 0 && m.i < l.items.length ? m.i : -1;
   if (op === 'edit' && i < 0) return;
-  listAsking = true;
-  let typed;
-  try { typed = await ask(op === 'add' ? { prompt: `Add to “${l.title.slice(0, 40)}”`, placeholder: 'A new item' } : { prompt: `Edit the item in “${l.title.slice(0, 40)}”`, placeholder: 'The item', value: l.items[i] }); }
-  finally { listAsking = false; }
+  let typed = typeof m.text === 'string' ? m.text : undefined;
+  if (typed === undefined) {
+    listAsking = true;
+    try { typed = await ask(op === 'add' ? { prompt: `Add to “${l.title.slice(0, 40)}”`, placeholder: 'A new item' } : { prompt: `Edit the item in “${l.title.slice(0, 40)}”`, placeholder: 'The item', value: l.items[i] }); }
+    finally { listAsking = false; }
+  }
   const items = typed == null ? null : ink.listCard(part, { op, i, text: String(typed).slice(0, 120) });
   if (!items) return;
   ui({ kind: 'agent', e: { type: 'list_items', part, items } });
@@ -2209,13 +2211,15 @@ async function onRemCard(m) {
   const all = listItems().today.concat(listItems().later);
   const cur = op === "edit" ? all.find((i) => i.id === String(m.id)) : null;
   if (op === "edit" && !cur) return;
-  listAsking = true;
-  let typed;
-  try {
-    typed = await ask(op === "add"
-      ? { prompt: "Add a reminder", placeholder: "What to remember" }
-      : { prompt: "Edit reminder", placeholder: "Reminder text", value: cur.text });
-  } finally { listAsking = false; }
+  let typed = typeof m.text === "string" ? m.text : undefined;
+  if (typed === undefined) {
+    listAsking = true;
+    try {
+      typed = await ask(op === "add"
+        ? { prompt: "Add a reminder", placeholder: "What to remember" }
+        : { prompt: "Edit reminder", placeholder: "Reminder text", value: cur.text });
+    } finally { listAsking = false; }
+  }
   const clean = String(typed ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
   if (!clean) return;
   if (op === "add") {

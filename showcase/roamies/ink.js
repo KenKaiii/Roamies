@@ -29,6 +29,21 @@
   const reduced = () => reducedMQ.matches;
   const sleep = (ms) => new Promise((r) => setTimeout(r, reduced() ? Math.min(ms, 60) : ms));
   const frame = () => Promise.race([new Promise((r) => requestAnimationFrame(r)), sleep(35)]);
+  let inlineBox = null;
+  function closeInlineEdit() { if (!inlineBox) return; inlineBox.remove(); inlineBox = null; R.ink.invoke?.('set_typing', { on: false }); touch(0.2); }
+  function openInlineEdit({ title, value = '', placeholder = 'Type here…', x, y, w = 280, onSave }) {
+    closeInlineEdit();
+    const wrap = document.createElement('div'), sx = clamp(x, 12, Math.max(12, innerWidth - w - 16)), sy = clamp(y, 12, Math.max(12, innerHeight - 84));
+    Object.assign(wrap.style, { position: 'fixed', left: sx + 'px', top: sy + 'px', width: w + 'px', zIndex: '99999', background: 'rgba(6,22,24,0.96)', border: '1.5px solid #78ffe2', borderRadius: '10px', boxShadow: '0 10px 28px rgba(0,0,0,0.65), 0 0 18px rgba(120,255,226,0.22)', padding: '10px 12px', fontFamily: MONO, color: TEXT });
+    const lbl = document.createElement('div'); lbl.textContent = title; Object.assign(lbl.style, { fontSize: '10px', letterSpacing: '0.06em', color: ACC, marginBottom: '6px', textTransform: 'uppercase' });
+    const inp = document.createElement('input'); inp.type = 'text'; inp.value = value; inp.placeholder = placeholder;
+    Object.assign(inp.style, { width: '100%', boxSizing: 'border-box', background: 'rgba(3,15,17,0.9)', border: '1px solid rgba(120,255,226,0.45)', borderRadius: '6px', padding: '6px 8px', color: HOT, fontFamily: MONO, fontSize: '12px', outline: 'none' });
+    const hint = document.createElement('div'); hint.textContent = 'Enter to save · Esc to cancel'; Object.assign(hint.style, { fontSize: '9px', color: DIM, marginTop: '5px' });
+    wrap.append(lbl, inp, hint); document.body.appendChild(wrap); inlineBox = wrap; R.ink.invoke?.('set_typing', { on: true });
+    setTimeout(() => { inp.focus(); inp.select(); }, 10);
+    inp.addEventListener('keydown', (ev) => { ev.stopPropagation(); if (ev.key === 'Enter') { const v = inp.value.trim(); closeInlineEdit(); if (v) onSave(v); } else if (ev.key === 'Escape') closeInlineEdit(); });
+    inp.addEventListener('blur', () => setTimeout(closeInlineEdit, 120));
+  }
   // Global screen points → this overlay's px.
   const loc = (x, y) => [x - (R.origin?.x ?? 0), y - (R.origin?.y ?? 0)];
   const locRect = (r) => (r ? [...loc(r[0], r[1]), r[2], r[3]] : null);
@@ -673,6 +688,7 @@
         }
         // A last guard: nothing inside a card is drawn outside it.
         if (!bar && this.p >= 1) { b.fillStyle = this.hoverId === "close" ? HOT : DIM; for (let k = -3; k <= 3; k++) { b.fillRect(x + w - 13 + k - 1, y + 11 + k - 1, 2, 2); b.fillRect(x + w - 13 + k - 1, y + 11 - k - 1, 2, 2); } }
+        if (!bar && this.p >= 1) { b.fillStyle = this.hoverId === "close" ? HOT : DIM; for (let k = -3; k <= 3; k++) { b.fillRect(x + w - 13 + k - 1, y + 11 + k - 1, 2, 2); b.fillRect(x + w - 13 + k - 1, y + 11 - k - 1, 2, 2); } }
         for (const c of [b, l]) { c.save(); c.beginPath(); c.rect(x + 2, y + bar + 1, w - 4, h - bar - 3); c.clip(); }
         try { inner.call(this, b, l, t, x, y + bar - this.sy, t - this.done); } finally { b.restore(); l.restore(); }
         if (this.scrollMax > 0) {
@@ -911,10 +927,9 @@
       }, { title: smartTitle(m, 'list') });
       c.more = () => hits.map((q) => ({ ...q, part: m.part }));
       c.keep = true;
-      c.onEdit = () => c.pick('add');
       c.pick = (id) => {
         const send = (o) => R.ink.send?.({ type: 'list_card', part: m.part, ...o });
-        if (id === 'add') { S.down = now(); sfx('pip'); send({ op: 'add' }); return; }
+        if (id === 'add') { S.down = now(); sfx('pip'); openInlineEdit({ title: 'Add Item', placeholder: 'New checklist item…', x: c.ox + c.dx + 14, y: c.oy + c.dy + 34 + L.addY - 12, w: Math.max(240, (c.w || L.w) - 28), onSave: (text) => send({ op: 'add', text }) }); return; }
         const i = Number(String(id).slice(1));
         if (!(i >= 0 && i < S.items.length)) return;
         if (id[0] === 'e') { sfx('pip'); send({ op: 'edit', i }); return; } if (id[0] === 'x') { sfx('tick'); S.items.splice(i, 1); S.done.splice(i, 1); S.born.splice(i, 1); S.ver.splice(i, 1); ink.clear(); L = lay(c.w || L.w); c.__ol = {}; c.__at = {}; c.grow(L.h); send({ op: 'remove', i }); return; }
@@ -960,6 +975,7 @@
         i.onerror = () => { clearTimeout(t); res(null); };
         i.src = m.src;
       }) : null;
+      if (!img) return;
       if (!img) return;
       // About the area of a 240 × 192 frame in the picture's own proportions, no wider than 360 or taller than 300.
       const a = img ? img.naturalWidth / img.naturalHeight : 4 / 3;
@@ -1099,14 +1115,43 @@
     },
     molecule: (m) => drawMolecule(m),
     async model(m) {
-      const w = 320, h = 26 + 236, view3d = R.ink3d?.create(m.parts, w - 24, 210);
-      await card(m, w, h, function (b, l, t, x, y, age) {
+  const m4mul = (a, b) => { const o = new Array(16).fill(0); for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) for (let k = 0; k < 4; k++) o[c * 4 + r] += a[k * 4 + r] * b[c * 4 + k]; return o; };
+  const m4rx = (a) => { const c = Math.cos(a), s = Math.sin(a); return [1,0,0,0, 0,c,s,0, 0,-s,c,0, 0,0,0,1]; };
+  const m4ry = (a) => { const c = Math.cos(a), s = Math.sin(a); return [c,0,-s,0, 0,1,0,0, s,0,c,0, 0,0,0,1]; };
+  const m4rz = (a) => { const c = Math.cos(a), s = Math.sin(a); return [c,s,0,0, -s,c,0,0, 0,0,1,0, 0,0,0,1]; };
+  const m4init = () => m4mul(m4rx(0.38), m4ry(0.6));
+      const w = 320, h = 26 + 298, view3d = R.ink3d?.create(m.parts, w - 24, 210);
+      const AXES = ['Y', 'X', 'Z', 'ALL'];
+      let axis = 'Y', dir = 1, simT = 0, lastReal = null, speed = reduced() ? 0 : 1, paused = false, rotM = m4init(), zoom = 1, panX = 0, panY = 0, panMode = false, lastLabels = [], held = false, dirty = true, lastPx = 0, lastPy = 0, barLeft = 0, barW = 180;
+      const c = await card(m, w, h, function (b, l, t, x, y, age) {
         if (!view3d) { typed(b, '3D isn’t available here', x + w / 2, y + 100, SMALL, DIM, 1, { anchor: 'middle' }); return; }
-        const u = clamp(age / 0.8, 0, 1), f = view3d.frame(reduced() ? 0 : t);
+        if (!held && !paused && speed > 0) touch(0.5);
+        if (lastReal != null && !held && !paused && speed > 0) {
+          const dt = Math.max(0, t - lastReal) * speed * dir * 1.4; simT += Math.abs(dt);
+          if (axis === 'Y') rotM = m4mul(m4ry(dt), rotM);
+          else if (axis === 'X') rotM = m4mul(m4rx(dt), rotM);
+          else if (axis === 'Z') rotM = m4mul(m4rz(dt), rotM);
+          else rotM = m4mul(m4rz(dt * 0.4), m4mul(m4rx(dt * 0.65), m4mul(m4ry(dt * 0.9), rotM)));
+        }
+        lastReal = t;
+        const u = clamp(age / 0.8, 0, 1), f = view3d.frame(simT, rotM, zoom, dirty, panX, panY); dirty = false; lastLabels = f.labels || [];
         for (let i = 0; i < f.lv.length; i++) { const v = f.lv[i]; if (!v) continue; const gx = i % f.gw, gy = (i / f.gw) | 0; if ((B4[(gy % 4) * 4 + (gx % 4)] + 0.5) / 16 > u * 1.05) continue; b.fillStyle = LED[v]; b.fillRect(x + 12 + gx * 3, y + 6 + gy * 3, 3, 3); }
-        // Labels follow their parts as it turns; one that would land on another this frame waits its turn.
         if (u >= 1) { const took = []; for (const lab of f.labels) { const lx = x + 12 + lab.x, ly = y + 6 + lab.y, r = [lx - 2, ly - 14, textW(lab.text, `600 10px ${MONO}`) + 10, 16]; if (took.some((q) => overlap(q, r) > 0)) continue; took.push(r); b.fillStyle = ACC; b.fillRect(lx - 1.5, ly - 1.5, 3, 3); typed(b, lab.text, lx + 6, ly - 4, `600 10px ${MONO}`, TEXT, 1, { rim: 3 }); } }
-      }, { title: smartTitle(m, 'model'), live: () => !!view3d && !reduced() });
+        const ay = y + 222; b.font = `500 10px ${MONO}`; b.fillStyle = DIM; b.fillText('AXIS', x + 14, ay + 14);
+        AXES.forEach((ax, idx) => { const bx = x + 46 + idx * 35, bw = 31, bh = 20, on = axis === ax; b.fillStyle = on ? rgba(ACC, 0.24) : rgba(ACC, 0.06); b.fillRect(bx, ay, bw, bh); b.strokeStyle = on ? ACC : rgba(ACC, 0.25); b.lineWidth = 1; b.strokeRect(bx + 0.5, ay + 0.5, bw - 1, bh - 1); b.fillStyle = on ? HOT : DIM; b.textAlign = 'center'; b.fillText(ax, bx + bw / 2, ay + 14); b.textAlign = 'left'; });
+        for (const [zx, zl] of [[x + w - 114, '-'], [x + w - 90, '+']]) { b.fillStyle = rgba(ACC, 0.08); b.fillRect(zx, ay, 20, 20); b.strokeStyle = rgba(ACC, 0.25); b.strokeRect(zx + 0.5, ay + 0.5, 19, 19); b.fillStyle = TEXT; b.textAlign = 'center'; b.fillText(zl, zx + 10, ay + 14); b.textAlign = 'left'; } const rx = x + w - 64, rw = 50, rh = 20; b.fillStyle = rgba(ACC, 0.08); b.fillRect(rx, ay, rw, rh); b.strokeStyle = rgba(ACC, 0.25); b.strokeRect(rx + 0.5, ay + 0.5, rw - 1, rh - 1); b.fillStyle = TEXT; b.textAlign = 'center'; b.fillText('RST', rx + rw / 2, ay + 14); b.textAlign = 'left';
+        const sy = y + 254, sx = x + 92, sw = w - 146, effSpeed = paused ? 0 : speed, frac = clamp(effSpeed / 5, 0, 1);
+        b.fillStyle = paused || speed === 0 ? rgba(ACC, 0.24) : rgba(ACC, 0.08); b.fillRect(x + 14, sy - 4, 24, 18); b.strokeStyle = paused || speed === 0 ? ACC : rgba(ACC, 0.25); b.strokeRect(x + 14.5, sy - 3.5, 23, 17); b.fillStyle = paused || speed === 0 ? HOT : TEXT; b.textAlign = 'center'; b.fillText(paused || speed === 0 ? '▶' : '||', x + 26, sy + 9); b.textAlign = 'left';
+        barLeft = (this.ox + this.dx) + 92 * (this.k ?? 1); barW = sw * (this.k ?? 1);
+        b.fillStyle = dir < 0 ? rgba(ACC, 0.24) : rgba(ACC, 0.08); b.fillRect(x + 41, sy - 4, 22, 18); b.strokeStyle = dir < 0 ? ACC : rgba(ACC, 0.25); b.strokeRect(x + 41.5, sy - 3.5, 21, 17); b.fillStyle = dir < 0 ? HOT : TEXT; b.textAlign = 'center'; b.fillText(dir > 0 ? '↻' : '↺', x + 52, sy + 9); b.textAlign = 'left'; b.fillStyle = DIM; b.fillText('SPD', x + 68, sy + 9); b.fillStyle = rgba(ACC, 0.16); b.fillRect(sx, sy + 4, sw, 4); b.fillStyle = held ? tone('amber') : ACC; b.fillRect(sx, sy + 4, sw * frac, 4); b.fillStyle = HOT; b.fillRect(sx + sw * frac - 4, sy + 1, 8, 10); b.fillStyle = TEXT; b.fillText(held ? 'HOLD' : effSpeed === 0 ? 'PAUS' : `${effSpeed.toFixed(1)}x`, sx + sw + 8, sy + 9);
+      }, { title: smartTitle(m, 'model'), live: () => !!view3d && (held || dirty || (!paused && speed > 0)) });
+      c.more = () => { const ox = c.ox + c.dx, oy = c.oy + c.dy; return [{ rect: [ox + 12, oy + 30, w - 24, 212], kind: 'custom', id: 'orbit', part: m.part }, ...AXES.map((ax, idx) => ({ rect: [ox + 46 + idx * 35, oy + 248, 31, 20], kind: 'pick', id: `ax:${ax}`, part: m.part })), { rect: [ox + w - 114, oy + 248, 20, 20], kind: 'pick', id: 'zout', part: m.part }, { rect: [ox + w - 90, oy + 248, 20, 20], kind: 'pick', id: 'zin', part: m.part }, { rect: [ox + w - 64, oy + 248, 50, 20], kind: 'pick', id: 'rst', part: m.part }, { rect: [ox + 14, oy + 274, 24, 18], kind: 'pick', id: 'pause', part: m.part }, { rect: [ox + 41, oy + 274, 22, 18], kind: 'pick', id: 'dir', part: m.part }, { rect: [ox + 88, oy + 272, w - 136, 24], kind: 'custom', id: 'speed', part: m.part }]; };
+      c.pick = (id) => { if (id === 'pause') { if (paused || speed === 0) { paused = false; if (speed === 0) speed = 1; } else paused = true; lastReal = null; dirty = true; sfx('pip'); touch(0.5); } else if (id === 'zin') { zoom = clamp(zoom * 1.2, 0.35, 3.5); dirty = true; sfx('pip'); touch(0.5); } else if (id === 'zout') { zoom = clamp(zoom * 0.83, 0.35, 3.5); dirty = true; sfx('pip'); touch(0.5); } else if (id === 'dir') { dir = -dir; dirty = true; sfx('pip'); touch(0.5); } else if (id === 'rst') { rotM = m4init(); zoom = 1; panX = 0; panY = 0; axis = 'Y'; speed = 1; dir = 1; paused = false; lastReal = null; dirty = true; sfx('tick'); touch(0.5); } else if (String(id).startsWith('ax:')) { axis = String(id).slice(3); dirty = true; sfx('pip'); touch(0.5); } };
+      c.onWheel = (dy) => { zoom = clamp(zoom * (dy < 0 ? 1.14 : 0.88), 0.35, 3.5); dirty = true; touch(0.5); };
+      const setSpeedAt = (px) => { const v = Math.round(clamp((px - barLeft) / Math.max(10, barW), 0, 1) * 50) / 10; speed = v; paused = v === 0; lastReal = null; dirty = true; touch(0.5); };
+      c.onCustomDown = (id, px, py, btn, sh) => { if (id === 'orbit' && btn === 1) { c.pick('pause'); return; } if (id === 'orbit') { if (btn === 0 && !sh) { const lx = (px - (c.ox + c.dx)) / (c.k ?? 1) - 12, ly = (py - (c.oy + c.dy)) / (c.k ?? 1) - 32; const hitL = lastLabels.find((lb) => Math.abs(lx - (lb.x + 24)) < 42 && Math.abs(ly - (lb.y - 6)) < 14); if (hitL && Number.isFinite(hitL.wx) && Number.isFinite(hitL.wy)) { panX = clamp(-hitL.wx, -2.5, 2.5); panY = clamp(-hitL.wy, -2.5, 2.5); zoom = Math.max(zoom, 1.5); dirty = true; sfx('pip'); touch(0.5); return; } } held = true; panMode = btn === 2 || !!sh; lastPx = px; lastPy = py; dirty = true; touch(0.5); } else if (id === 'speed') { setSpeedAt(px); sfx('pip'); } };
+      c.onCustomMove = (id, px, py) => { if (id === 'orbit') { if (panMode) { const sc = 0.008 / Math.max(0.4, zoom); panX = clamp(panX + (px - lastPx) * sc, -2.5, 2.5); panY = clamp(panY - (py - lastPy) * sc, -2.5, 2.5); } else { const dx = (px - lastPx) * 0.015, dy = (py - lastPy) * 0.015; rotM = axis === 'Z' ? m4mul(m4rz(dx), rotM) : m4mul(m4rx(dy), m4mul(m4ry(dx), rotM)); } lastPx = px; lastPy = py; dirty = true; touch(0.5); } else if (id === 'speed') setSpeedAt(px); };
+      c.onCustomUp = (id) => { if (id === 'orbit') { held = false; panMode = false; lastReal = null; dirty = true; touch(0.5); } };
       sfx('scan');
     },
     table: (m) => drawTable(m),
@@ -2256,8 +2301,9 @@
       pick(id) {
         const s = String(id);
         REM.until = Math.max(REM.until, now() + 8);
-        if (s === 'rem-add') { sfx('pip'); R.ink.send?.({ type: 'rem_card', op: 'add' }); }
-        else if (s.startsWith('rem-e:')) { sfx('pip'); R.ink.send?.({ type: 'rem_card', op: 'edit', id: s.slice(6) }); }
+        const rx = (REM.mark?.ox ?? 60) + (REM.mark?.dx ?? 0) + 14, ry = (REM.mark?.oy ?? 60) + (REM.mark?.dy ?? 0) + 40;
+        if (s === 'rem-add') { sfx('pip'); REM.until = Math.max(REM.until, now() + 30); openInlineEdit({ title: 'Add Reminder', placeholder: 'What to remember…', x: rx, y: ry, w: 280, onSave: (text) => R.ink.send?.({ type: 'rem_card', op: 'add', text }) }); }
+        else if (s.startsWith('rem-e:')) { const rid = s.slice(6), cur = [...(REM.today ?? []), ...(REM.later ?? [])].find((q) => String(q.id) === rid); sfx('pip'); REM.until = Math.max(REM.until, now() + 30); openInlineEdit({ title: 'Edit Reminder', value: cur?.text ?? '', x: rx, y: ry, w: 280, onSave: (text) => R.ink.send?.({ type: 'rem_card', op: 'edit', id: rid, text }) }); }
         else if (s.startsWith('rem-x:')) { sfx('tick'); R.ink.send?.({ type: 'rem_card', op: 'remove', id: s.slice(6) }); }
       },
       draw: remDraw,
@@ -2368,11 +2414,12 @@
     const m = h?.m ?? null;
     if (hovered && hovered !== m) { hovered.hover = false; hovered.hoverClose = false; hovered.hoverFull = false; hovered.hoverSave = false; hovered.hoverPin = false; hovered.hoverGrip = false; hovered.hoverGripL = false; hovered.hoverId = null; hovered.setHover?.(false); }
     if (m) { m.hover = h.kind === 'button' || h.kind === 'link' || h.kind === 'clearall'; m.hoverClose = h.kind === 'close'; m.hoverFull = h.kind === 'full'; m.hoverSave = h.kind === 'save'; m.hoverPin = h.kind === 'pin'; m.hoverEdit = h.kind === 'edit'; m.hoverGrip = h.kind === 'resize'; m.hoverGripL = h.kind === 'resize-l'; m.hoverId = h.kind === 'tick' || h.kind === 'pick' ? h.id : null; m.setHover?.(h.kind === 'button'); }
+    if (hovered !== m && m?.onWheel) { try { window.focus(); } catch {} }
     if (hovered !== m || m) touch(0.2);
     hovered = m;
     document.documentElement.style.cursor = h && (h.kind === 'button' || h.kind === 'close' || h.kind === 'full' || h.kind === 'save' || h.kind === 'pin' || h.kind === 'edit' || h.kind === 'link' || h.kind === 'clearall' || h.kind === 'tick' || h.kind === 'pick') ? 'pointer' : h?.kind === 'drag' ? 'grab' : h?.kind === 'resize' ? 'nwse-resize' : h?.kind === 'resize-l' ? 'nesw-resize' : (h?.kind === 'extend' || h?.kind === 'extend-t') ? 'ns-resize' : (h?.kind === 'extend-r' || h?.kind === 'extend-l') ? 'ew-resize' : 'default';
   };
-  const ours = (e) => !!hitAt(e.clientX, e.clientY) || !!drag || !!sizing;
+  const ours = (e) => !!hitAt(e.clientX, e.clientY) || !!drag || !!sizing || !!customDrag;
   addEventListener('pointerdown', (e) => {
     const h = hitAt(e.clientX, e.clientY);
     if (!h) return;
@@ -2382,6 +2429,7 @@
     else if (h.kind === 'tick') { sfx(h.done ? 'tick' : 'pip'); REM.until = Math.max(REM.until, now() + 4); R.ink.send?.({ type: 'list_toggle', id: h.id }); }
     else if (h.kind === 'button') { h.m.down = now(); h.m.press?.(); sfx('pip'); touch(0.3); R.ink.send?.({ type: 'ink_action', part: h.part }); }
     else if (h.kind === 'link') { sfx('pip'); R.ink.send?.({ type: 'open_link', url: h.url }); }
+    else if (h.kind === 'custom') { customDrag = { m: h.m, id: h.id }; h.m.onCustomDown?.(h.id, e.clientX, e.clientY, e.button, e.shiftKey); touch(0.2); }
     else if (h.kind === 'pick') { h.m.pick?.(h.id); touch(1); }
     else if (h.kind === 'clearall') clearEverything();
     else if (h.kind === 'full') toggleFull(h.m);
@@ -2401,6 +2449,7 @@
     else if (h.kind === 'drag' || h.kind === 'card') { drag = { part: h.part, x: e.clientX, y: e.clientY, ms: partMarks(h.part), start: partMarks(h.part).map((m) => [m.dx, m.dy]) }; sfx('grab'); touch(); }
   }, true);
   addEventListener('pointermove', (e) => {
+    if (customDrag) { customDrag.m.onCustomMove?.(customDrag.id, e.clientX, e.clientY); return; }
     if (drag) { const dx = e.clientX - drag.x, dy = e.clientY - drag.y; drag.ms.forEach((m, i) => { m.dx = drag.start[i][0] + dx; m.dy = drag.start[i][1] + dy; }); touch(0.2); return; }
     // Resizing: the corner follows the pointer, keeping the card's shape (it zooms from its top left).
     if (sizing) {
@@ -2415,15 +2464,20 @@
     }
     setHover(hitAt(e.clientX, e.clientY));
   }, true);
-  addEventListener('pointerup', (e) => { if (drag || sizing) { drag = null; sizing = null; e.stopPropagation(); touch(0.2); } }, true);
+  addEventListener('pointerup', (e) => { if (customDrag) { customDrag.m.onCustomUp?.(customDrag.id); customDrag = null; e.stopPropagation(); touch(0.2); return; } if (drag || sizing) { drag = null; sizing = null; e.stopPropagation(); touch(0.2); } }, true);
   addEventListener('wheel', (e) => {
     if (!ours(e)) return;
     e.stopPropagation();
     // Over a card too tall for the screen: scroll its insides.
     const m = hitAt(e.clientX, e.clientY)?.m || [...marks].sort((a, b) => b.z - a.z).find((q) => q.alive && q.scrollMax > 0 && inside(markBox(q), e.clientX, e.clientY));
-    if (m?.scrollMax > 0) { e.preventDefault(); m.sy = clamp((m.sy || 0) + e.deltaY, 0, m.scrollMax); touch(0.3); }
+    if (m?.onWheel) { e.preventDefault(); m.onWheel(e.deltaY); return; } if (m?.scrollMax > 0) { e.preventDefault(); m.sy = clamp((m.sy || 0) + e.deltaY, 0, m.scrollMax); touch(0.3); }
   }, { capture: true, passive: false });
 
+  window.__roamieWheel = (x, y, dy) => {
+    const m = hitAt(x, y)?.m || [...marks].sort((a, b) => b.z - a.z).find((q) => q.alive && (q.onWheel || q.scrollMax > 0) && inside(markBox(q), x, y));
+    if (m?.onWheel) { m.onWheel(dy); return; }
+    if (m?.scrollMax > 0) { m.sy = clamp((m.sy || 0) + dy, 0, m.scrollMax); touch(0.3); }
+  };
   // ---------------------------------------------------------------- the host's way in (host.js)
   R.inkHit = (x, y) => !!drag || !!sizing || !!hitAt(x, y);
   R.inkWheel = (x, y, dy) => { const m = hitAt(x, y)?.m || [...marks].sort((a, b) => b.z - a.z).find((q) => q.alive && q.scrollMax > 0 && inside(markBox(q), x, y)); if (m?.scrollMax > 0) { m.sy = clamp((m.sy || 0) + dy, 0, m.scrollMax); touch(0.3); return true; } return false; };
@@ -2450,6 +2504,12 @@
     // Another window came to the front, or that window moved or closed: the drawing no longer sits on what it was
     // about, so all of it fades (cards too).
     stale() { fadeOut(marks.filter((m) => m.alive && m.screen && !m.local && !m.pinned), 0.6); },
+    wheel(x, y, dy) {
+      const m = hitAt(x, y)?.m || [...marks].sort((a, b) => b.z - a.z).find((q) => q.alive && (q.onWheel || q.scrollMax > 0) && inside(markBox(q), x, y));
+      if (m?.onWheel) { m.onWheel(dy); return true; }
+      if (m?.scrollMax > 0) { m.sy = clamp((m.sy || 0) + dy, 0, m.scrollMax); touch(0.3); return true; }
+      return false;
+    },
     click(x, y) { G.wait?.click(x, y); },
     ptr(x, y) { G.ptr = [x, y]; G.wait?.ptr(x, y); },
     // The reminders list from the sidecar: { today, later, seconds, flash, toggle }. seconds > 0 opens or extends it;

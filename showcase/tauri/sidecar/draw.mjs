@@ -150,7 +150,12 @@ function tidyMark(m) {
     if (pts.length && !Array.isArray(m.x_range)) { const xs = pts.map((p) => Number(p[0])).filter(Number.isFinite); if (xs.length) m.x_range = [Math.min(...xs), Math.max(...xs)]; }
     if (pts.length && !Array.isArray(m.y_range)) { const ys = pts.map((p) => Number(p[1])).filter(Number.isFinite); if (ys.length) m.y_range = [Math.min(...ys), Math.max(...ys)]; }
   }
-  if (m.kind === "molecule") {
+  if (m.kind === "model" && Array.isArray(m.parts) && m.parts.length > 1) {
+    const kept = m.parts.filter((p) => !/^card(\s*base)?$/i.test(String(p?.label || "").trim()));
+    if (kept.length) m.parts = kept;
+    if (m.parts.length > 1 && /\b(single\s+)?(cube|sphere)\b/i.test(String(m.title || ""))) m.parts = [m.parts[0]];
+  }
+    if (m.kind === "molecule") {
     const SMILES = { caffeine: "CN1C=NC2=C1C(=O)N(C(=O)N2C)C", water: "O", ethanol: "CCO", glucose: "C(C1C(C(C(C(O1)O)O)O)O)O", aspirin: "CC(=O)OC1=CC=CC=C1C(=O)O", dopamine: "C1=CC(=C(C=C1CCN)O)O", serotonin: "C1=CC2=C(C=C1O)C(=CN2)CCN", benzene: "c1ccccc1", methane: "C" };
     const key = String(m.label || m.name || m.title || m.smiles || "").trim().toLowerCase();
     for (const [nm, sm] of Object.entries(SMILES)) if (key === nm || key.includes(nm)) { if (!m.smiles || !/^[A-Za-z0-9@+-[]()\/=#$%.:~]+$/.test(m.smiles)) m.smiles = sm; break; }
