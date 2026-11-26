@@ -29,7 +29,7 @@ objc2-service-management = { version = "=0.3.2", default-features = false, featu
 gtk = "=0.18.2"
 gtk-layer-shell = { version = "=0.8.2", features = ["v0_6"] }
 webkit2gtk = { version = "=2.0.2", features = ["v2_40"] }
-javascriptcore-rs = "=1.1.2"
+javascriptcore-rs = "=2.0.0"
 x11rb = "=0.14.0"
 zbus = "=5.19.0"
 
