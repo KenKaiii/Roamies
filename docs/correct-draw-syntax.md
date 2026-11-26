@@ -1,86 +1,83 @@
 ---
 name: correct-draw-syntax
-description: Exact verified JSON schemas for every mark kind supported by the Roamies draw tool.
+description: Verified, strict JSON schemas for all 21 card kinds supported by the Roamies draw tool.
 ---
 
-# Roamies Overlay Drawing Syntax
+# Roamies Draw Tool Syntax (All 21 Card Kinds)
 
-Every `draw` call takes `{ beats: [{ say: "Short spoken caption under 20 words", marks: [ ... ], wait?: "click" | "hover" }] }`.
-Every card mark MUST include a concise 2–4 word `title` (never generic `"Table"`, `"List"`, or `"Answer"`).
-Valid `tone` values ONLY: `"accent"`, `"teal"`, `"amber"`, `"coral"`, `"lilac"`, `"sky"`, `"lime"`, `"red"`, `"white"`.
+## CRITICAL EXECUTION RULES
+1. **Invoke the `draw` tool directly.** NEVER output raw JSON or markdown code blocks in your spoken/text reply.
+2. **Valid JSON only.** Every array and object must contain concrete values—never leave empty commas (`[,]`) or trailing commas.
+3. **Top-level wrapper:**
+   `{"keep":true,"beats":[{"say":"Short spoken summary under 20 words.","marks":[<CARD_OBJECT>]}]}`
+4. **Never set `"wait"` on card beats.**
+5. **Default to simple cards when unsure:** Prefer `card`, `list`, `note`, or `table` unless the user specifically asks for charts, diagrams, 3D models, maps, math, or quizzes.
+6. **Minimum item counts:** Always include **at least 2 items** in `timeline.events`, `bars.bars`, `flow.nodes`, `geometry.vertices`, and `mindmap.branches`.
+7. **Geometry rule:** Every vertex `id` listed in `geometry.vertices` MUST be referenced in at least one entry in `geometry.lines`.
+8. **Allowed `tone` values:** `"accent"`, `"teal"`, `"amber"`, `"coral"`, `"lilac"`, `"sky"`, `"lime"`, `"red"`, `"white"`.
+9. **String IDs:** Always pass `id`, `from`, and `to` fields as quoted strings (e.g., `"1"`, `"A"`), never bare numbers.
 
-## 1. Checklists & Task Lists (`list`)
-```json
-{ "kind": "list", "title": "Morning Checklist", "items": ["Item 1", "Item 2", "Item 3"] }
-```
+## VERIFIED CARD SCHEMAS (1–21)
 
-## 2. Structured Explanation Cards (`card`) & Notes (`note`)
-```json
-{ "kind": "card", "title": "Server Latency", "heading": "Why p99 Spiked", "text": "Connection pool exhaustion under burst traffic.", "items": ["Increase max pool size", "Add request timeout"], "sources": [{ "name": "Docs", "url": "https://example.com" }] }
-```
-```json
-{ "kind": "note", "title": "Quick Reminder", "text": "Check deployment logs after 5 PM." }
-```
+1. **`card`** (General structured summary)
+   `{"kind":"card","title":"Server Latency","heading":"Why p99 Spiked","text":"Connection pool exhaustion under load.","items":["Increase pool size","Add request timeout"]}`
 
-## 3. Data Tables (`table`)
-```json
-{ "kind": "table", "title": "GPU Comparison", "columns": ["Model", "VRAM", "NVLink"], "rows": [["RTX 4090", "24 GB", "no"], ["H100", "80 GB", "yes"]] }
-```
+2. **`note`** (Short sticky note / reminder)
+   `{"kind":"note","title":"Quick Reminder","text":"Check deployment logs at 5 PM."}`
 
-## 4. Metric Bars (`bars`) & Line Graphs (`graph`)
-```json
-{ "kind": "bars", "title": "Monthly Revenue", "unit": "\$k", "bars": [{ "label": "Jan", "value": 12, "tone": "teal" }, { "label": "Feb", "value": 19, "tone": "accent" }] }
-```
-```json
-{ "kind": "graph", "title": "Growth Curve", "x_range":, "y_range":, "plots": [{ "label": "Users", "tone": "accent", "points": [[0, 5], [5, 40], [10, 95]] }], "dots": [{ "x": 5, "y": 40, "label": "Launch" }] }
-```
+3. **`list`** (Checklist or bulleted items)
+   `{"kind":"list","title":"Morning Checklist","items":["Review PRs","Run test suite","Deploy staging"]}`
 
-## 5. Process & Logic Flows (`flow`) & Mind Maps (`mindmap`)
-```json
-{ "kind": "flow", "title": "Auth Pipeline", "dir": "right", "animate": true, "nodes": [{ "id": "1", "text": "Login", "shape": "round", "tone": "teal" }, { "id": "2", "text": "Verify JWT", "shape": "diamond", "tone": "amber" }], "links": [{ "from": "1", "to": "2", "label": "token", "flow": true }] }
-```
-```json
-{ "kind": "mindmap", "title": "System Architecture", "branches": [{ "text": "Frontend", "tone": "teal", "items": ["Tauri", "Canvas UI"] }, { "text": "Sidecar", "tone": "lilac", "items": ["Node.js", "Tools"] }] }
-```
+4. **`mindmap`** (Hierarchical branches; min 2 branches)
+   `{"kind":"mindmap","title":"Architecture","branches":[{"text":"UI","tone":"teal","items":["Tauri","Canvas"]},{"text":"Core","tone":"lilac","items":["Node","Tools"]}]}`
 
-## 6. Timelines (`timeline`)
-```json
-{ "kind": "timeline", "title": "Release History", "events": [{ "when": "2025 Q4", "text": "Initial prototype" }, { "when": "2026 Q2", "text": "Public launch" }] }
-```
+5. **`clip`** (Highlighted quote or excerpt)
+   `{"kind":"clip","title":"Key Quote","label":"Article","text":"Quoted excerpt text goes here."}`
 
-## 7. Interactive Targets (`target`) & Action Buttons (`button`)
-```json
-{ "kind": "target", "at": { "text": "Export" }, "label": "Click Export" }
-```
-```json
-{ "kind": "button", "label": "Open Docs", "action": { "do": "open", "value": "https://example.com" } }
-```
+6. **`sources`** (Clickable reference links)
+   `{"kind":"sources","title":"Links","sources":[{"name":"GitHub","url":"https://github.com"}]}`
 
-## 8. Photos (`photo`)
-```json
-{ "kind": "photo", "title": "Golden Gate Bridge", "query": "Golden Gate Bridge", "text": "Suspension bridge in San Francisco" }
-```
+7. **`photo`** (Image search card)
+   `{"kind":"photo","title":"Golden Gate","query":"Golden Gate Bridge","text":"San Francisco suspension bridge"}`
 
-## 9. Math Steps (`math`), Geometry (`geometry`), & Molecules (`molecule`)
-```json
-{ "kind": "math", "title": "Quadratic Formula", "steps": [{ "tex": "x^2 - 5x + 6 = 0", "note": "Start equation" }, { "tex": "(x - 2)(x - 3) = 0", "note": "Factor" }] }
-```
-```json
-{ "kind": "geometry", "title": "Right Triangle", "vertices": [{ "id": "A", "x": 0, "y": 0 }, { "id": "B", "x": 4, "y": 0 }, { "id": "C", "x": 0, "y": 3 }], "lines": [{ "from": "A", "to": "B", "label": "4" }, { "from": "B", "to": "C", "label": "5" }, { "from": "C", "to": "A", "label": "3" }], "angles": [{ "at": "A", "from": "B", "to": "C", "label": "90°" }] }
-```
-```json
-{ "kind": "molecule", "title": "Caffeine", "smiles": "CN1C=NC2=C1C(=O)N(C(=O)N2C)C", "label": "Caffeine" }
-```
+8. **`graph`** (2D line plot; `x_range` and `y_range` are 2-number arrays; `points` are `[x,y]` pairs)
+   `{"kind":"graph","title":"User Growth","x_range":[0,10],"y_range":[0,100],"plots":[{"label":"Users","tone":"accent","points":[[0,10],[5,45],[10,90]]}]}`
 
-## 10. Regional Maps (`map`)
-```json
-{ "kind": "map", "title": "Flight Route", "region": "world", "shade": [{ "name": "Japan", "tone": "teal" }], "pins": [{ "name": "MSP", "lat": 44.88, "lon": -93.22 }, { "name": "NRT", "lat": 35.76, "lon": 140.39 }], "routes": [{ "from": "MSP", "to": "NRT", "tone": "accent" }] }
-```
+9. **`legend`** (Color-coded key)
+   `{"kind":"legend","title":"Priority Key","keys":[{"tone":"red","text":"High"},{"tone":"teal","text":"Low"}]}`
 
-## 11. 3D Models (`model`) & Quizzes (`quiz`)
-```json
-{ "kind": "model", "title": "Simple Rotor", "parts": [{ "shape": "cylinder", "at":, "size":, "rot":, "tone": "teal", "label": "Shaft", "motion": { "do": "spin", "axis": "y", "secs": 4 } }] }
-```
-```json
-{ "kind": "quiz", "title": "Quick Check", "questions": [{ "text": "Which planet is closest to the Sun?", "options": ["Venus", "Mercury", "Mars"], "answer": "Mercury", "explain": "Mercury orbits closest to the Sun." }] }
-```
+10. **`timeline`** (Chronological milestones; min 2 events)
+    `{"kind":"timeline","title":"Roadmap","events":[{"when":"2025 Q4","text":"Prototype"},{"when":"2026 Q2","text":"Launch"}]}`
+
+11. **`molecule`** (Chemical structure via SMILES)
+    `{"kind":"molecule","title":"Ethanol","smiles":"CCO","label":"Ethanol"}`
+
+12. **`model`** (3D primitive scene; `at`, `size`, and `rot` are 3-number `[x,y,z]` arrays)
+    `{"kind":"model","title":"Rotor","parts":[{"shape":"cylinder","at":[0,0,0],"size":[1,2,1],"rot":[0,0,0],"tone":"teal","label":"Shaft","motion":{"do":"spin","axis":"y","secs":4}}]}`
+
+13. **`flow`** (Directed node graph; min 2 nodes; string IDs)
+    `{"kind":"flow","title":"Auth Flow","dir":"right","animate":true,"nodes":[{"id":"1","text":"Login","shape":"round","tone":"teal"},{"id":"2","text":"Verify","shape":"diamond","tone":"amber"}],"links":[{"from":"1","to":"2","label":"JWT","flow":true}]}`
+
+14. **`table`** (Rows and columns; each row length must match `columns` length)
+    `{"kind":"table","title":"GPU Specs","columns":["Model","VRAM","NVLink"],"rows":[["RTX 4090","24 GB","No"],["H100","80 GB","Yes"]]}`
+
+15. **`bars`** (Bar chart; min 2 bars; numeric `value`)
+    `{"kind":"bars","title":"Revenue","unit":"USD","bars":[{"label":"Jan","value":12,"tone":"teal"},{"label":"Feb","value":19,"tone":"accent"}]}`
+
+16. **`map`** (Geographic map with shaded regions, `[lat,lon]` pins, and routes)
+    `{"kind":"map","title":"Flight Route","region":"world","shade":[{"name":"Japan","tone":"teal"}],"pins":[{"name":"MSP","lat":44.88,"lon":-93.22},{"name":"NRT","lat":35.76,"lon":140.39}],"routes":[{"from":"MSP","to":"NRT","tone":"accent"}]}`
+
+17. **`math`** (Step-by-step LaTeX equations)
+    `{"kind":"math","title":"Quadratic","steps":[{"tex":"x^2 - 5x + 6 = 0","note":"Start"},{"tex":"(x-2)(x-3)=0","note":"Factor"}]}`
+
+18. **`geometry`** (2D vertices and edges; min 2 vertices; all vertices must connect via `lines`)
+    `{"kind":"geometry","title":"Triangle","vertices":[{"id":"A","x":0,"y":0},{"id":"B","x":4,"y":0},{"id":"C","x":0,"y":3}],"lines":[{"from":"A","to":"B","label":"4"},{"from":"B","to":"C","label":"5"},{"from":"C","to":"A","label":"3"}]}`
+
+19. **`quiz`** (Multiple-choice check; `answer` must exactly match one string in `options`)
+    `{"kind":"quiz","title":"Quick Check","questions":[{"text":"Closest planet to Sun?","options":["Venus","Mercury","Mars"],"answer":"Mercury","explain":"Mercury orbits closest to the Sun."}]}`
+
+20. **`ticket`** (Actionable command/copy card)
+    `{"kind":"ticket","title":"Deploy Build","n":1,"text":"Run release script.","label":"Run","action":{"do":"copy","value":"./build.sh"}}`
+
+21. **`medal`** (Achievement / completion badge)
+    `{"kind":"medal","title":"Milestone","text":"All 21 card types verified!"}`
