@@ -53,7 +53,7 @@ const Mark = z.object({
     shape: z.enum(SHAPES), at: triple.optional(), size: z.preprocess((v) => (typeof v === 'number' ? [v, v, v] : v), triple).optional(), rot: triple.optional(),
     tone: z.enum(TONES).optional(), label: z.string().max(30).optional(),
     motion: z.object({ do: z.enum(MOTIONS), axis: z.enum(['x', 'y', 'z']).optional(), around: triple.optional(), to: triple.optional(), secs: num.optional() }).optional(),
-  })).max(LIMITS.parts3d).optional(),
+  })).max(LIMITS.parts3d).describe('3D parts. Use torus ONLY for a solid ring hugging a single planet equator (centered at the planet at, ~2.5x planet size). NEVER use torus for orbital ellipses or paths around the Sun—use motion:{do:"orbit",around:[x,y,z],secs} on planets instead, and small orbiting rocks for asteroid belts.').optional(),
   nodes: z.array(z.object({ id: z.string().min(1).max(16), text: z.string().min(1).max(60), shape: z.enum(NODE_SHAPES).optional(), tone: z.enum(TONES).optional() })).max(LIMITS.nodes).optional(),
   links: z.array(z.object({ from: z.string().min(1).max(16), to: z.string().min(1).max(16), label: z.string().max(30).optional(), flow: z.boolean().optional() })).max(LIMITS.links).optional(),
   flow: z.boolean().optional(), animate: z.boolean().optional(),
@@ -154,15 +154,40 @@ function tidyMark(m) {
     const kept = m.parts.filter((p) => !/^card(\s*base)?$/i.test(String(p?.label || "").trim()));
     if (kept.length) m.parts = kept;
     if (m.parts.length > 1 && /\b(single\s+)?(cube|sphere)\b/i.test(String(m.title || ""))) m.parts = [m.parts[0]];
-    const sp = m.parts.find((p) => p?.shape === "sphere"), tr = m.parts.find((p) => p?.shape === "torus");
-    if (sp && tr) {
+    m.parts = m.parts.filter((p) => !(p?.shape === "torus" && /orbit|ellipse|path|track/i.test(String(p.label || ""))));
+    const tr = m.parts.find((p) => p?.shape === "torus");
+    const spheres = m.parts.filter((p) => p?.shape === "sphere");
+    const tat = Array.isArray(tr?.at) ? tr.at : new Array(0, 0, 0);
+    const sp = tr ? spheres.filter((x) => !/^sun$/i.test(String(x.label || "").trim())).sort((a, b) => {
+      const aa = Array.isArray(a.at) ? a.at : new Array(0, 0, 0), bb = Array.isArray(b.at) ? b.at : new Array(0, 0, 0);
+      return Math.hypot((aa.at(0)||0)-(tat.at(0)||0), (aa.at(1)||0)-(tat.at(1)||0), (aa.at(2)||0)-(tat.at(2)||0)) - Math.hypot((bb.at(0)||0)-(tat.at(0)||0), (bb.at(1)||0)-(tat.at(1)||0), (bb.at(2)||0)-(tat.at(2)||0));
+    }).at(0) : null;
+    if (tr && !sp) {
+      const sun = spheres.at(0), sat = Array.isArray(sun?.at) ? sun.at : tat;
+      const cx = sat.at(0) || 0, cy = sat.at(1) || 0, cz = sat.at(2) || 0;
+      const tsz = Array.isArray(tr.size) ? tr.size : new Array(1.4, 0.2, 1.4);
+      const rad = Math.max(tsz.at(0) || 1.2, tsz.at(2) || 1.2) * 0.45;
+      m.parts = m.parts.filter((p) => p !== tr);
+      for (let k = 0; k < 16 && m.parts.length < 36; k++) {
+        const ang = (k / 16) * Math.PI * 2, r0 = rad * (0.9 + (k % 3) * 0.08);
+        m.parts.push({ shape: k % 2 ? "box" : "sphere", at: new Array(cx + Math.cos(ang) * r0, cy + ((k % 3) - 1) * 0.03, cz + Math.sin(ang) * r0), size: 0.055 + (k % 3) * 0.015, tone: tr.tone || "amber", motion: { do: "orbit", around: new Array(cx, cy, cz), secs: 9 + (k % 5) * 1.5 } });
+      }
+    } else if (sp && tr) {
       const sat = Array.isArray(sp.at) ? sp.at : new Array(0, 0, 0);
       const cx = sat.at(0) || 0, cy = sat.at(1) || 0, cz = sat.at(2) || 0;
       const ssz = Array.isArray(sp.size) ? sp.size : new Array(Number(sp.size) || 0.6, Number(sp.size) || 0.6, Number(sp.size) || 0.6);
       const d0 = Math.max(...ssz, 0.5);
-      tr.at = new Array(cx, cy, cz);
-      tr.rot = new Array(26, 0, 14);
-      tr.size = new Array(d0 * 2.55, d0 * 0.42, d0 * 2.55);
+      const trs = m.parts.filter((p) => p?.shape === "torus");
+      if (trs.length === 1 && /\brings\b|saturn/i.test(String(m.title || "") + " " + String(tr.label || ""))) {
+        const outer = { ...tr, label: undefined, tone: tr.tone === "amber" ? "sky" : "amber" };
+        m.parts.push(outer); trs.push(outer);
+      }
+      trs.forEach((t0, idx) => {
+        const sc = d0 * (2.2 + idx * 0.85);
+        t0.at = new Array(cx, cy, cz);
+        t0.rot = new Array(26, 0, 14);
+        t0.size = new Array(sc, d0 * 0.34, sc);
+      });
       if (/asteroid|belt/i.test(String(m.title || "") + " " + String(tr.label || ""))) {
         const rad = d0 * 1.07;
         for (let k = 0; k < 14 && m.parts.length < 36; k++) {
