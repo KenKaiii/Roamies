@@ -533,10 +533,12 @@ export class ClaudeCodeAgent {
 export const CLAUDE_CODE_UPDATING = 'Claude Code is updating. Ask me again in a minute.';
 // An app update can move gg-core's pinned Claude Code version, leaving a signed-in user without the binary (#101):
 // fetch the pinned one in the background instead of asking them to sign in again. resolve/ensure: gg-core's.
-export function claudeCodeInstaller({ resolve, ensure, log = () => {} }) {
-  let running = null, failed = null;
+// A failure that doesn't clear (checksum, blocked download, full disk) stops after maxTries per launch (#190).
+export function claudeCodeInstaller({ resolve, ensure, log = () => {}, maxTries = 3 }) {
+  let running = null, failed = null, tries = 0;
   const start = () => {
-    if (running || resolve()) return running;
+    if (running || resolve() || tries >= maxTries) return running;
+    tries++;
     failed = null;
     running = ensure().then(() => log({ ok: true }), (e) => { failed = e; log({ ok: false, error: String(e?.message ?? e) }); })
       .finally(() => { running = null; });
@@ -547,9 +549,10 @@ export function claudeCodeInstaller({ resolve, ensure, log = () => {} }) {
     // The binary, else an error to show: it's being fetched, or why the last try failed (asking again retries).
     binary() {
       const bin = resolve();
-      if (bin) return bin;
+      if (bin) { tries = 0; return bin; }
       const last = running ? null : failed;
       start();
+      if (last && !running) throw new Error(`Claude Code didn't update: ${last?.message ?? last}. Quit and reopen Roamies to try again.`);
       throw new Error(last ? `Claude Code didn't update: ${last?.message ?? last}` : CLAUDE_CODE_UPDATING);
     },
   };

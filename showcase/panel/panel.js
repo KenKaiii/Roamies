@@ -919,6 +919,7 @@
         v.mac && v.on ? speakPicker(v) : null)
       : group(null, 'When the mic opens without a key.', null,
         toggle('Auto-listen', needs(v.listenEvery ? 'Mic opens after every spoken reply.' : 'Mic opens when I ask you something.'), v.autoListen, () => act('autolisten'), 'autolisten'),
+        toggle('Live conversation', needs(v.wake ? 'Say the wake word or “let’s talk”, then just keep talking. Bye, Esc or a pause ends it.' : 'Say “let’s talk”, then just keep talking. Bye, Esc or a pause ends it.'), v.liveVoice, () => act('livevoice'), 'livevoice'),
         v.autoListen && v.listenChoices ? el('div', { className: 'reveal', 'data-anim': 'listen-more' },
           toggle('After every reply', needs('Not just questions, so you can keep talking.'), v.listenEvery, () => act('listenevery'), 'listenevery'),
           el('p', { className: 'sub', textContent: 'Mic waits for you' }),
@@ -1409,7 +1410,7 @@
       if (id === 'hybrid') { s.hybrid.on = !s.hybrid.on; setTimeout(() => window.__panel({ kind: 'state', state: s }), 120); }
       if (id === 'backups') { s.fallbacks.on = !s.fallbacks.on; setTimeout(() => window.__panel({ kind: 'state', state: s }), 120); }
       if (id.startsWith('effort_')) { const at = id.indexOf(':'); s.efforts[id.slice(7, at)] = id.slice(at + 1); setTimeout(() => window.__panel({ kind: 'state', state: s }), 120); }
-      if (s.voice && ['autolisten', 'listenevery'].includes(id)) { const k = id === 'autolisten' ? 'autoListen' : 'listenEvery'; s.voice[k] = !s.voice[k]; setTimeout(() => window.__panel({ kind: 'state', state: s }), 120); }
+      if (s.voice && ['autolisten', 'listenevery', 'livevoice'].includes(id)) { const k = id === 'autolisten' ? 'autoListen' : id === 'livevoice' ? 'liveVoice' : 'listenEvery'; s.voice[k] = !s.voice[k]; setTimeout(() => window.__panel({ kind: 'state', state: s }), 120); }
       if (s.voice && id.startsWith('speechlang:')) { s.voice.lang = id.slice(11); s.voice.langOnline = ['ar-SA', 'he-IL'].includes(s.voice.lang) ? true : null; setTimeout(() => window.__panel({ kind: 'state', state: s }), 120); }
       if (s.voice && id.startsWith('listensecs:')) { s.voice.listenSecs = Number(id.slice(11)); setTimeout(() => window.__panel({ kind: 'state', state: s }), 120); }
       // Removing a row (a skill, connection, job, fact or commitment) comes back as new state, as from the sidecar.

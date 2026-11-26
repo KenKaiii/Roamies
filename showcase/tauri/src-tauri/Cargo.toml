@@ -1,6 +1,6 @@
 [package]
 name = "roamies"
-version = "0.1.51"
+version = "0.1.52"
 edition = "2021"
 # src/bin holds the Linux overlay host too; the Tauri CLI needs to know which binary is the app.
 default-run = "roamies"

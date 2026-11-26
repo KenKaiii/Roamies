@@ -494,6 +494,14 @@ console.log('safety loophole tests: passed');
     [{ name: 'create_payment', annotations: {} }, ASK, false],
     [{ name: 'pay_invoice' }, ASK, true],
     [{ name: 'post' }, ASK, true],
+    // #193: a smart-home connection trusted for its lights still asks before a door or alarm.
+    [{ name: 'unlock_door' }, ASK, true],
+    [{ name: 'lock_door' }, ASK, true],
+    [{ name: 'arm_system' }, ASK, true],
+    [{ name: 'disarm_system' }, ASK, true],
+    [{ name: 'HassUnlock' }, ASK, true],
+    [{ name: 'alarm_clock' }, ASK, false],
+    [{ name: 'charm_list', annotations: { readOnlyHint: true } }, 'safe', undefined],
     [{ name: 'list_posts', annotations: { readOnlyHint: true } }, SAFE, undefined],
     [{ name: 'get_sender', annotations: { readOnlyHint: true } }, SAFE, undefined],
   ];

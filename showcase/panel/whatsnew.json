@@ -1,6 +1,17 @@
 {
   "updates": [
     {
+      "version": "0.1.52",
+      "date": "2026-11-26",
+      "items": [
+        { "kind": "new", "title": "Live conversation", "text": "Say the wake word or “let’s talk”, then keep talking. Bye ends it. Thanks LeoU29935!" },
+        { "kind": "fixed", "title": "One of me in capsule mode", "text": "Showing the capsule no longer leaves me by your cursor too. Thanks sakartvelo11!" },
+        { "kind": "improved", "title": "Locks and alarms ask first", "text": "Tools that lock, unlock, arm or disarm always ask, even on trusted connections." },
+        { "kind": "fixed", "title": "Fewer Claude Code downloads", "text": "A failing Claude Code download stops after three tries. Thanks mattschwarz!" },
+        { "kind": "fixed", "title": "Setup guide rows", "text": "The setup guide hides voice switches this computer doesn't have. Thanks mattschwarz!" }
+      ]
+    },
+    {
       "version": "0.1.51",
       "date": "2026-11-24",
       "items": [

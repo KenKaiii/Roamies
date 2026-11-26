@@ -51,3 +51,23 @@ console.log('host click-through tests: passed');
   assert.ok(!calls.some(([c, a]) => c === 'sidecar_send' && a.msg.id === 'stop'));
   console.log('host hide-stops-voice tests: passed');
 }
+
+// Regression (#165): with the capsule on, the summon keys brought the capsule out while a Roamie left by the cursor
+// stayed, so both showed. Turning the capsule on sends it away too.
+{
+  let hidden = 0, hellos = 0;
+  const agent = window.Roamie.tiles[0].creature.agent; // host.js keeps the first one it found
+  Object.assign(agent, { visible: true, hide: () => { hidden++; agent.visible = false; } });
+  window.Roamie.voiceOut = { playing: () => false, stop: noop };
+  window.Roamie.notch = { enabled: false, active: false, hello: () => { hellos++; window.Roamie.notch.active = true; }, close: noop };
+  window.__roamieHost({ kind: 'notch', on: true });
+  assert.equal(hidden, 1, 'turning the capsule on sends the Roamie away');
+  agent.visible = true;
+  window.__roamieHost({ kind: 'summon' });
+  assert.equal(hellos, 1, 'the capsule comes out');
+  assert.equal(agent.visible, false, 'and the Roamie goes');
+  window.__roamieHost({ kind: 'notch', on: false });
+  assert.equal(hidden, 2, 'turning it off leaves the Roamie alone');
+  delete window.Roamie.notch;
+  console.log('host capsule-summon tests: passed');
+}

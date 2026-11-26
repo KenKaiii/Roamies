@@ -215,6 +215,17 @@ console.log('claudecode ok');
   assert.equal(cc.binary(), '/cc/claude', 'the retry installed it');
 }
 
+// Regression (#190): a failure that doesn't clear stops downloading after three tries per launch, not once per request.
+{
+  let calls = 0;
+  const cc = claudeCodeInstaller({ resolve: () => null, ensure: () => { calls++; return Promise.reject(new Error('integrity check failed')); } });
+  await cc.start();
+  for (let i = 0; i < 6; i++) { assert.throws(() => cc.binary()); await new Promise((r) => setTimeout(r, 5)); }
+  assert.equal(calls, 3, 'three downloads, then it stops');
+  assert.throws(() => cc.binary(), /integrity check failed\. Quit and reopen Roamies to try again\./, 'still says why, and how to retry');
+  assert.equal(calls, 3);
+}
+
 // The SDK drives gg-core's pinned Claude Code binary: updating one without the other is a version mismatch.
 {
   const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));

@@ -437,6 +437,7 @@ assert.match(agentSystem('maker', { dir: '/x', returns: 'answer' }), /report is 
 // Handoffs carry the user's exact words: into the agent's brief, into steering, and back in the news.
 {
   const home = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'roamies-agentwords-')));
+  process.on('exit', () => fs.rmSync(home, { recursive: true, force: true }));
   const children = [];
   const fork = () => { const c = new EventEmitter(); Object.assign(c, { sent: [], connected: true, send(m) { c.sent.push(m); }, kill() {} }); children.push(c); return c; };
   let said = 'Build me a page for Woof Co. Keep "Woof & Co" in caps, blue, 3 sections';
@@ -480,6 +481,7 @@ assert.match(agentSystem('maker', { dir: '/x', returns: 'answer' }), /report is 
 // Subagents: a specialist's role, type and model go into the launch; a continued run stays with it.
 {
   const home = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'roamies-subagent-')));
+  process.on('exit', () => fs.rmSync(home, { recursive: true, force: true }));
   const children = [], asked = [];
   const fork = () => { const c = new EventEmitter(); Object.assign(c, { sent: [], connected: true, send(m) { c.sent.push(m); }, kill() {} }); children.push(c); return c; };
   let crewOn = true;
@@ -516,6 +518,7 @@ assert.match(agentSystem('maker', { dir: '/x', returns: 'answer' }), /report is 
 // A subagent on a model that can't see images (#152): pictures stay in its inputs folder and out of its first message.
 {
   const home = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'roamies-textagent-')));
+  process.on('exit', () => fs.rmSync(home, { recursive: true, force: true }));
   const children = [];
   const fork = () => { const c = new EventEmitter(); Object.assign(c, { sent: [], connected: true, send(m) { c.sent.push(m); }, kill() {} }); children.push(c); return c; };
   const config = {

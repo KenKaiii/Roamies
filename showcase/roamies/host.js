@@ -201,6 +201,8 @@
   // One place per setting: in notch mode everything (state and replies) is in the capsule.
   const capR = notchOn;
   const N = () => Roamie.notch;
+  // With the capsule on, a Roamie still out by the cursor from before goes, so the two never show together (#165).
+  const sendRoamieAway = () => { const a = getAgent(); if (a?.visible && !responding) a.hide(); };
   if (Roamie.notch) Roamie.notch._busy = () => responding;
   const toolWords = (anim) => {
     if (anim.tool === 'web') return webStatus(anim);
@@ -350,7 +352,7 @@
           if (!text) break;
           // say() morphs an open thought cloud into the speech bubble, so drop the thought handle.
           thought = null;
-          speech = a.say('', { stream: true, mood: nextMood });
+          speech = a.say('', { stream: true, mood: nextMood, ghost: !!Roamie.liveSpoken });
           nextMood = null;
         }
         speech.append(text);
@@ -478,14 +480,15 @@
         return;
       }
       listen = a.listen({ placeholder: m.mode === 'handsfree' ? 'Listening… tap again to send' : 'Listening…' });
-    } else if (m.type === 'partial') { listen?.set(m.text); if (notchOn()) N().heard(m.text); }
+    // In a live conversation (Roamie.live) what they say isn't written out: it's a conversation, not dictation.
+    } else if (m.type === 'partial') { if (!Roamie.live) { listen?.set(m.text); if (notchOn()) N().heard(m.text); } }
     else if (m.type === 'level') { listen?.level(m.v); if (notchOn()) N().level(m.v); }
     else if (m.type === 'state' && m.state === 'processing') listen?.processing();
     else if (m.type === 'final') {
       heardText = true;
-      if (notchOn()) { N().heard(m.text); N().think(); }
+      if (notchOn()) { if (!Roamie.live) N().heard(m.text); N().think(); }
       // Keep what was heard on screen until the agent starts thinking.
-      if (listen) { listen.set(m.text).processing(); heard = listen; listen = null; }
+      if (listen) { (Roamie.live ? listen : listen.set(m.text)).processing(); heard = listen; listen = null; }
       Roamie.sfx?.play('heard');
     } else if (m.type === 'state' && m.state === 'idle') {
       // Nothing was heard (or it was cancelled): no answer is coming for that talk.
@@ -548,7 +551,7 @@
     if (m.kind === 'speech') { Roamie.voiceOut?.handle(m); return; } // plays on, even while it changes screens
     if (m.kind === 'volume') { Roamie.voiceOut?.setVolume(m.v); if (Roamie.sfx) Roamie.sfx.volume = m.v; return; }
     if (held) { held.q.push(m); return; }
-    if (m.kind === 'notch') { if (Roamie.notch) { Roamie.notch.enabled = !!m.on; if (m.style) Roamie.notch.style = m.style; if (!m.on) Roamie.notch.close(); } return; }
+    if (m.kind === 'notch') { if (Roamie.notch) { Roamie.notch.enabled = !!m.on; if (m.style) Roamie.notch.style = m.style; if (!m.on) Roamie.notch.close(); else sendRoamieAway(); } return; }
     if (m.kind === 'sound') { if (Roamie.sfx) Roamie.sfx.enabled = m.on; return; }
     if (m.kind === 'size') { for (const t of Roamie.tiles ?? []) t.creature.setForm?.(m.size); return; }
     if (m.kind === 'look') {
@@ -584,6 +587,7 @@
     if (m.kind === 'summon') {
       // ⌃⌥S toggles; the menu's Show Sidekick only ever shows. With the capsule on, it's the capsule that comes out.
       if (notchOn()) {
+        sendRoamieAway();
         if (!N().active) N().hello();
         else if (!m.show) {
           if (responding || Roamie.voiceOut?.playing()) { send({ type: 'menu', id: 'stop', via: 'hide' }); Roamie.voiceOut?.stop(); }
@@ -608,6 +612,9 @@
     else if (m.kind === 'agent') onAgent(m.e);
     else if (m.kind === 'voice') onVoice(m);
     else if (m.kind === 'list') Roamie.ink?.reminders(m);
+    // A live conversation started or ended (sidecar live.mjs): replies are heard, not captioned (agent.js), meanwhile.
+    // liveSpoken: replies are said out loud, so their bubbles can go (with replies as text only, they stay).
+    else if (m.kind === 'live') { Roamie.live = !!m.on; Roamie.liveSpoken = !!m.on && !!m.spoken; Roamie.sfx?.play(m.on ? 'listen' : 'tick'); }
     else if (m.kind === 'front_window') Roamie.sidebar?.front(m);
   };
 
