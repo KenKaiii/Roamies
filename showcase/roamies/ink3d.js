@@ -20,7 +20,7 @@
   const TAU = Math.PI * 2;
   const SHAPES = {
     sphere: () => mesh((u, v) => { const t = u * TAU, f = v * Math.PI, n = [Math.sin(f) * Math.cos(t), Math.cos(f), Math.sin(f) * Math.sin(t)]; return [n.map((x) => x * 0.5), n]; }, 24, 14),
-    torus: () => mesh((u, v) => { const t = u * TAU, f = v * TAU, R0 = 0.36, r = 0.14, c = [Math.cos(t), 0, Math.sin(t)], n = [Math.cos(f) * c[0], Math.sin(f), Math.cos(f) * c[2]]; return [[c[0] * R0 + n[0] * r, n[1] * r, c[2] * R0 + n[2] * r], n]; }, 28, 12),
+    torus: () => mesh((u, v) => { const t = u * TAU, f = v * TAU, R0 = 0.42, r = 0.08, c = [Math.cos(t), 0, Math.sin(t)], n = [Math.cos(f) * c[0], Math.sin(f), Math.cos(f) * c[2]]; return [[c[0] * R0 + n[0] * r, n[1] * r, c[2] * R0 + n[2] * r], n]; }, 28, 12),
     // Sides plus caps: cone is a cylinder whose top radius is 0.
     cylinder: (top = 0.5) => {
       const side = mesh((u, v) => { const t = u * TAU, rr = 0.5 + (top - 0.5) * v, k = 0.5 - top, n = [Math.cos(t), k, Math.sin(t)], l = Math.hypot(...n); return [[Math.cos(t) * rr, v - 0.5, Math.sin(t) * rr], n.map((x) => x / l)]; }, 24, 1);
@@ -96,13 +96,13 @@
     const items = parts.slice(0, 40).map((q) => {
       const g = (cache[q.shape] ??= (() => { const [p, n] = SHAPES[q.shape](); return { p: buf(p), n: buf(n), count: p.length / 3 }; })());
       const [x, y, z] = q.at ?? [0, 0, 0], [sx, sy, sz] = q.size ?? [0.5, 0.5, 0.5], [rx, ry, rz] = (q.rot ?? [0, 0, 0]).map((d) => (d * Math.PI) / 180);
-      return { g, turn: mul(RZ(rz), mul(RY(ry), RX(rx))), size: [sx, sy, sz], motion: q.motion, k: TONE_K[q.tone] ?? 1, label: q.label, at: [x, y, z], r: Math.max(sx, sy, sz) * (q.motion?.do === 'pulse' ? 1.14 : 1) };
+      return { g, shape: q.shape, turn: mul(RZ(rz), mul(RY(ry), RX(rx))), size: [sx, sy, sz], motion: q.motion, k: TONE_K[q.tone] ?? 1, label: q.label, at: [x, y, z], r: Math.max(sx, sy, sz) * (q.motion?.do === 'pulse' ? 1.14 : 1) };
     });
     // Fit the whole model in view, wherever its parts move to: centre it and scale its bounding sphere to about one unit.
     const reach = items.map((it) => (it.motion ? Array.from({ length: 8 }, (_, k) => moved(it, (k / 8) * Math.max(0.3, Math.min(60, it.motion.secs ?? CYCLE[it.motion.do]))).at) : [it.at]));
     // A still part that holds smaller ones inside it, wherever they move (a cylinder round its piston): see-through.
     const within = (it, q) => { const d = q.map((v, i) => v - it.at[i]), m = it.turn; return [0, 4, 8].every((c, i) => Math.abs((m[c] * d[0] + m[c + 1] * d[1] + m[c + 2] * d[2]) / (it.size[i] || 1e-6)) < 0.5); };
-    for (const it of items) it.glass = !it.motion && items.some((o, n) => o !== it && o.r < it.r && reach[n].every((q) => within(it, q)));
+    for (const it of items) it.glass = it.shape !== 'torus' && !it.motion && items.some((o, n) => o !== it && o.r < it.r && reach[n].every((q) => within(it, q)));
     // Each part counts once, at the middle of where it goes.
     const c = reach.reduce((a, qs) => a.map((v, i) => v + qs.reduce((s2, q) => s2 + q[i], 0) / qs.length / items.length), [0, 0, 0]);
     // Unit shapes reach about 0.5 from their centre (a box's corner a little more), times their size.

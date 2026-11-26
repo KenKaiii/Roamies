@@ -154,6 +154,23 @@ function tidyMark(m) {
     const kept = m.parts.filter((p) => !/^card(\s*base)?$/i.test(String(p?.label || "").trim()));
     if (kept.length) m.parts = kept;
     if (m.parts.length > 1 && /\b(single\s+)?(cube|sphere)\b/i.test(String(m.title || ""))) m.parts = [m.parts[0]];
+    const sp = m.parts.find((p) => p?.shape === "sphere"), tr = m.parts.find((p) => p?.shape === "torus");
+    if (sp && tr) {
+      const sat = Array.isArray(sp.at) ? sp.at : new Array(0, 0, 0);
+      const cx = sat.at(0) || 0, cy = sat.at(1) || 0, cz = sat.at(2) || 0;
+      const ssz = Array.isArray(sp.size) ? sp.size : new Array(Number(sp.size) || 0.6, Number(sp.size) || 0.6, Number(sp.size) || 0.6);
+      const d0 = Math.max(...ssz, 0.5);
+      tr.at = new Array(cx, cy, cz);
+      tr.rot = new Array(26, 0, 14);
+      tr.size = new Array(d0 * 2.55, d0 * 0.42, d0 * 2.55);
+      if (/asteroid|belt/i.test(String(m.title || "") + " " + String(tr.label || ""))) {
+        const rad = d0 * 1.07;
+        for (let k = 0; k < 14 && m.parts.length < 36; k++) {
+          const ang = (k / 14) * Math.PI * 2, r0 = rad * (0.92 + (k % 3) * 0.08);
+          m.parts.push({ shape: k % 2 ? "box" : "sphere", at: new Array(cx + Math.cos(ang) * r0, cy + ((k % 3) - 1) * 0.03, cz + Math.sin(ang) * r0), size: d0 * (0.07 + (k % 3) * 0.02), tone: tr.tone || "amber", motion: { do: "orbit", around: new Array(cx, cy, cz), secs: 7 + (k % 5) * 1.4 } });
+        }
+      }
+    }
   }
     if (m.kind === "molecule") {
     const SMILES = { caffeine: "CN1C=NC2=C1C(=O)N(C(=O)N2C)C", water: "O", ethanol: "CCO", glucose: "C(C1C(C(C(C(O1)O)O)O)O)O", aspirin: "CC(=O)OC1=CC=CC=C1C(=O)O", dopamine: "C1=CC(=C(C=C1CCN)O)O", serotonin: "C1=CC2=C(C=C1O)C(=CN2)CCN", benzene: "c1ccccc1", methane: "C" };
