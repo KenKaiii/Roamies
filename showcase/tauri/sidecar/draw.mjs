@@ -120,7 +120,7 @@ function tidyMark(m) {
   for (const k of ['at', 'to', 'tie']) if (typeof m[k] === 'string' && m[k].trim()) m = { ...m, [k]: { text: m[k].trim() } };
   // An empty field (text: "") is one left out, not a mistake to send back.
   if (Object.values(m).includes('')) m = Object.fromEntries(Object.entries(m).filter(([, v]) => v !== ''));
-  const KIND_ARR = { list: "items", math: "steps", model: "parts", quiz: "questions", timeline: "events", mindmap: "branches", flow: "nodes", graph: "plots", sources: "sources" };
+  const KIND_ARR = { list: "items", math: "steps", model: "parts", quiz: "questions", timeline: "events", mindmap: "branches", flow: "nodes", graph: "plots" };
   for (const [k, arrKey] of Object.entries(KIND_ARR)) {
     if (isObj(m[k])) { const sub = m[k]; delete m[k]; m = { kind: m.kind || k, ...sub, ...m }; }
     else if (Array.isArray(m[k])) { const arr = m[k]; delete m[k]; m = { kind: m.kind || k, [arrKey]: arr, ...m }; }
