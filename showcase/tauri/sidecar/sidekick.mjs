@@ -25,7 +25,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createInterface } from 'node:readline';
 import {
-  addFact, applySynced, syncSnapshot, DIR as STORE_DIR, repeatLabel, startOfDay, applyFold, approxTokens, archiveFolded, clearFacts, clearFinished, compactTrigger, fitContext, flushWrites, forgetFact, isSummary, listItems, listFacts, nextDue, pickFacts, planFold,
+  addCommitment, addFact, applySynced, syncSnapshot, DIR as STORE_DIR, repeatLabel, startOfDay, applyFold, approxTokens, archiveFolded, clearFacts, clearFinished, compactTrigger, fitContext, flushWrites, forgetFact, isSummary, listItems, listFacts, nextDue, pickFacts, planFold,
   touchFacts, forDisk, forProvider, loadLatestSession, newSession, openCommitments, pruneSessions, readJson, saveSession, takeDueReminders, updateCommitment, writeJson,
   planAndStrategyText,
 } from './store.mjs';
@@ -2198,6 +2198,34 @@ function showList({ seconds = 0, flash = null, toggle = false } = {}) {
   const fmt = (i) => ({ id: i.id, text: i.text, done: i.done, overdue: i.overdue, when: i.due ? `${shortWhen(i.due, now)}${i.repeat ? ' ↻' : ''}` : '' });
   ui({ kind: 'list', today: L.today.map(fmt), later: L.later.map(fmt), seconds, flash, toggle });
 }
+async function onRemCard(m) {
+  const op = String(m.op ?? "");
+  if (op === "remove" && m.id) {
+    await updateCommitment(String(m.id), { status: "dropped" });
+    menu(); scheduleReminders(); showList({ seconds: 6 }); syncSoon();
+    return;
+  }
+  if (listAsking) return;
+  const all = listItems().today.concat(listItems().later);
+  const cur = op === "edit" ? all.find((i) => i.id === String(m.id)) : null;
+  if (op === "edit" && !cur) return;
+  listAsking = true;
+  let typed;
+  try {
+    typed = await ask(op === "add"
+      ? { prompt: "Add a reminder", placeholder: "What to remember" }
+      : { prompt: "Edit reminder", placeholder: "Reminder text", value: cur.text });
+  } finally { listAsking = false; }
+  const clean = String(typed ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
+  if (!clean) return;
+  if (op === "add") {
+    const c = await addCommitment(clean, null, "commitment");
+    menu(); scheduleReminders(); showList({ flash: c?.id, seconds: 6 }); syncSoon();
+  } else if (op === "edit") {
+    await updateCommitment(cur.id, { text: clean });
+    menu(); scheduleReminders(); showList({ flash: cur.id, seconds: 6 }); syncSoon();
+  }
+}
 async function toggleItem(id) {
   const c = listItems().today.concat(listItems().later).find((i) => i.id === id);
   if (!c) return;
@@ -3009,6 +3037,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   // A link clicked on the research card: web and mail links only.
   else if (m.type === 'open_link') { const v = checkLink(m.url); if (v.level === SAFE) openUrl(String(m.url)); else console.error('open_link blocked:', v.reason); }
   else if (m.type === 'list_toggle') toggleItem(String(m.id)).catch((e) => console.error('list', e));
+  else if (m.type === 'rem_card') onRemCard(m).catch((e) => console.error('rem_card', e));
   else if (m.type === 'show_list') showList({ seconds: 20, toggle: true });
   // The overlay's drawing: a segment started, a wait for a click or hover ended, a card was closed, a button clicked.
   else if (m.type === 'draw_started') { ink.started(String(m.id), m.seg | 0); if (String(m.id) === showcase?.id) ob({ kind: 'showcase', phase: 'beat', beat: m.seg | 0 }); }
