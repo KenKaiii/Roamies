@@ -121,6 +121,31 @@ function tidyMark(m) {
   // An empty field (text: "") is one left out, not a mistake to send back.
   if (Object.values(m).includes('')) m = Object.fromEntries(Object.entries(m).filter(([, v]) => v !== ''));
   m = fixShapes(m);
+  if (!m.kind) {
+    if (Array.isArray(m.nodes) || Array.isArray(m.links)) m = { ...m, kind: 'flow' };
+    else if (Array.isArray(m.vertices) || Array.isArray(m.lines) || Array.isArray(m.angles) || Array.isArray(m.circles)) m = { ...m, kind: 'geometry' };
+    else if (Array.isArray(m.events)) m = { ...m, kind: 'timeline' };
+    else if (Array.isArray(m.bars)) m = { ...m, kind: 'bars' };
+    else if (Array.isArray(m.columns) || Array.isArray(m.rows)) m = { ...m, kind: 'table' };
+    else if (Array.isArray(m.steps)) m = { ...m, kind: 'math' };
+    else if (Array.isArray(m.pins) || typeof m.region === 'string' || Array.isArray(m.shade)) m = { ...m, kind: 'map' };
+    else if (Array.isArray(m.parts)) m = { ...m, kind: 'model' };
+    else if (Array.isArray(m.questions)) m = { ...m, kind: 'quiz' };
+    else if (Array.isArray(m.plots)) m = { ...m, kind: 'graph' };
+    else if (Array.isArray(m.branches)) m = { ...m, kind: 'mindmap' };
+    else if (typeof m.smiles === 'string') m = { ...m, kind: 'molecule' };
+    else if (isObj(m.action)) m = { ...m, kind: 'button' };
+    else if (Array.isArray(m.items)) m = { ...m, kind: 'list' };
+    else if (typeof m.text === 'string' || typeof m.heading === 'string') m = { ...m, kind: 'card' };
+  }
+  const strId = (v) => (typeof v === 'number' ? String(v) : v);
+  if (Array.isArray(m.vertices)) m = { ...m, vertices: each(m.vertices, (v) => ('id' in v ? { ...v, id: strId(v.id) } : v)) };
+  if (Array.isArray(m.lines)) m = { ...m, lines: each(m.lines, (l) => ({ ...l, ...('from' in l ? { from: strId(l.from) } : {}), ...('to' in l ? { to: strId(l.to) } : {}) })) };
+  if (Array.isArray(m.angles)) m = { ...m, angles: each(m.angles, (a) => ({ ...a, ...('at' in a ? { at: strId(a.at) } : {}), ...('from' in a ? { from: strId(a.from) } : {}), ...('to' in a ? { to: strId(a.to) } : {}) })) };
+  if (Array.isArray(m.circles)) m = { ...m, circles: each(m.circles, (c) => ('at' in c ? { ...c, at: strId(c.at) } : c)) };
+  if (Array.isArray(m.nodes)) m = { ...m, nodes: each(m.nodes, (n) => ('id' in n ? { ...n, id: strId(n.id) } : n)) };
+  if (Array.isArray(m.links)) m = { ...m, links: each(m.links, (l) => ({ ...l, ...('from' in l ? { from: strId(l.from) } : {}), ...('to' in l ? { to: strId(l.to) } : {}) })) };
+  if (Array.isArray(m.events)) m = { ...m, events: each(m.events, (e) => (typeof e.when === 'string' && e.when.length > 16 ? { ...e, when: e.when.slice(0, 16) } : e)) };
   if (m.kind === 'button' && !m.text && typeof m.label === 'string') return { ...m, text: m.label };
   if (m.kind === 'card' && !m.text && !m.heading && typeof m.title === 'string') return { ...m, heading: m.title };
   return m;
@@ -135,7 +160,10 @@ function tidyBeat(b) {
     else if (marks.length === 1 && isObj(marks[0]) && (!extra.kind || extra.kind === marks[0].kind)) marks = [{ ...extra, ...marks[0] }];
   }
   // No line to say (#117): it draws without a caption instead of the whole drawing failing.
-  return { ...b, say: typeof b.say === 'string' ? b.say : '', marks: Array.isArray(marks) ? marks.map(tidyMark) : marks };
+  const wait = b.wait === true ? 'click' : b.wait === false ? undefined : b.wait;
+  const outBeat = { ...b, say: typeof b.say === 'string' ? b.say : '', marks: Array.isArray(marks) ? marks.map(tidyMark) : marks };
+  if (wait === undefined) delete outBeat.wait; else outBeat.wait = wait;
+  return outBeat;
 }
 // Reading a card (#143): a deep explanation closes each card as the next opens, so a card stays at least as long as its
 // words take to read, about 200 a minute, between 3 and 30 seconds. Names, places and settings aren't read.
