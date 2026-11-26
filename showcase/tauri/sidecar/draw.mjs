@@ -96,7 +96,7 @@ const vecs = (o, keys) => Object.fromEntries(Object.entries(o).map(([k, v]) => [
 // Lists and places sent as JSON text ("[{…}]"), as DeepSeek does, are read as what they say.
 const SHAPED = new Set(['at', 'to', 'tie', 'points', 'items', 'branches', 'sources', 'x_range', 'y_range', 'plots', 'dots', 'keys', 'events', 'parts',
   'nodes', 'links', 'columns', 'rows', 'bars', 'labels', 'shade', 'pins', 'routes', 'steps', 'vertices', 'lines', 'angles', 'circles', 'questions', 'action', 'marks', 'beats', 'edit']);
-export const unjson = (v) => { if (typeof v !== 'string' || !/^\s*[[{]/.test(v)) return v; try { return JSON.parse(v); } catch { return v; } };
+export const unjson = (v) => { if (typeof v !== "string") return v; let t = v.trim().replace(/^```(?:json)?\s*/i,"").replace(/\s*```$/i,"").trim(); for (let i=0;i<2&&typeof t==="string";i++) { if (/^["']/.test(t)) { try { t=JSON.parse(t); continue; } catch {} } if (/^[[{]/.test(t)) { try { t=JSON.parse(t); continue; } catch { try { t=JSON.parse(t.replace(/,\s*([}\]])/g,"$1")); continue; } catch {} } } break; } return t; };
 const parsed = (o) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, SHAPED.has(k) ? unjson(v) : v]));
 function fixShapes(m) {
   const out = parsed(m);
@@ -175,7 +175,9 @@ export function readSecs(marks) {
   return words ? Math.min(30, Math.max(3, Math.round(words / 3.3))) : 0;
 }
 export function tidyDraw(a) {
+  a = unjson(a);
   if (isObj(a)) a = parsed(a);
+  if (isObj(a)) { for (const k of ["keep","deep"]) if (typeof a[k]==="string") a[k]=a[k].toLowerCase()==="true"; if (isObj(a.beats)) a={...a,beats:[a.beats]}; }
   // A lone mark sent as the whole call, with no beats (DeepSeek).
   if (isObj(a) && a.beats === undefined && !a.edit && typeof a.kind === 'string') a = { ...a, beats: [{ marks: [] }] };
   if (!isObj(a) || !Array.isArray(a.beats)) return a;
@@ -187,13 +189,14 @@ export function tidyDraw(a) {
 }
 const Beat = z.object({ say: z.string().max(240), marks: z.array(Mark).max(LIMITS.marks), wait: z.enum(['click', 'hover']).optional() });
 const Edit = z.object({ do: z.enum(['recolor', 'move', 'erase', 'clear']), part: z.string().max(8).optional(), tone: z.enum(TONES).optional(), dx: num.optional(), dy: num.optional() });
-export const DrawArgs = z.preprocess(tidyDraw, z.object({
+const DrawArgsObj = z.object({
   target: z.string().optional(),
   beats: z.array(Beat).max(LIMITS.beats).optional(),
   edit: z.array(Edit).max(20).optional(),
   deep: z.boolean().optional(),
   keep: z.boolean().optional(),
-}));
+});
+export const DrawArgs = z.preprocess((raw) => { const t = tidyDraw(raw); const r = DrawArgsObj.safeParse(t); if (!r.success) console.error("[draw-invalid-args]", JSON.stringify({ issues: r.error.issues, raw })); return t; }, DrawArgsObj);
 
 /** What the model is shown of draw, from its lean schema: every field and type, but a card's list items (bars, nodes,
  *  parts …) only as objects with their counts; their fields are in draw's description. */
