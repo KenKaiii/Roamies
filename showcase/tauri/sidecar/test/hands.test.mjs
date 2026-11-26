@@ -224,10 +224,10 @@ assert.match(opened, /no app called "NoSuchAppRoamiesTest"/, 'treated as a link 
   // Regression: "make everything" drew eight cards at once, which covered the screen. Only a few stay up; the model is
   // told which closed, and what it lists as on screen is what's left.
   made.nextTurn();
-  const many = await draw.execute({ beats: 'abcdefghijklmnopqrstuv'.split('').map((text) => ({ say: `Card ${text}.`, marks: [{ kind: 'note', text }] })) }, { toolCallId: 'd13' });
-  assert.match(many, /Drew p\d+ note “a”, .*p\d+ note “v”\./, 'all ten are named as drawn');
-  assert.match(many, /Only 20 cards stay up at once, so the oldest closed as newer ones were drawn \(p\d+, p\d+\)\./);
-  assert.match(many, /On screen now: p\d+ note “c”, (p\d+ note “[d-u]”, ){18}p\d+ note “v”\./);
+  const many = await draw.execute({ beats: 'abcdefghijklmnopqrstuvwxyz1'.split('').map((text) => ({ say: `Card ${text}.`, marks: [{ kind: 'note', text }] })) }, { toolCallId: 'd13' });
+  assert.match(many, /Drew p\d+ note “a”, .*p\d+ note “1”\./, 'all ten are named as drawn');
+  assert.match(many, /Only 25 cards stay up at once, so the oldest closed as newer ones were drawn \(p\d+, p\d+\)\./);
+  assert.match(many, /On screen now: p\d+ note “c”, (p\d+ note “[d-z]”, ){23}p\d+ note “1”\./);
   // A drawing that goes by itself (the setup showcase) keeps all of its cards.
   made.nextTurn();
   await made.ink.show('abcdefghij'.split('').map((text) => ({ say: `Card ${text}.`, marks: [{ kind: 'note', text }] })), 'showcase-2', { fade: 5 });

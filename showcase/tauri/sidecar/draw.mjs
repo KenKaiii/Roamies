@@ -6,8 +6,8 @@ import { z } from 'zod';
 import { checkUrl } from './safety.mjs';
 import { COUNTRIES } from './countries.mjs';
 
-export const LIMITS = { beats: 20, marks: 40, points: 200, parts3d: 40, atoms: 120, photoBytes: 800_000, iconBytes: 64_000,
-  nodes: 16, links: 24, columns: 6, rows: 12, bars: 12, labels: 8, pins: 12, shade: 40, routes: 8, steps: 10, tex: 300, vertices: 16, questions: 6, cardsShown: 20 };
+export const LIMITS = { beats: 25, marks: 40, points: 200, parts3d: 40, atoms: 120, photoBytes: 800_000, iconBytes: 64_000,
+  nodes: 16, links: 24, columns: 6, rows: 12, bars: 12, labels: 8, pins: 12, shade: 40, routes: 8, steps: 10, tex: 300, vertices: 16, questions: 6, cardsShown: 25 };
 export const TONES = ['accent', 'teal', 'amber', 'coral', 'lilac', 'sky', 'lime', 'red', 'white'];
 // Marks on the real screen (they need a place on it), actions in apps, and cards drawn on calm space.
 export const SCREEN = ['point', 'target', 'hover', 'ring', 'frame', 'underline', 'strike', 'check', 'cross', 'connect', 'trace', 'num', 'label', 'write', 'scroll', 'spotlight', 'highlight', 'line', 'curve', 'arrow', 'circle', 'rect'];
@@ -39,7 +39,7 @@ const Mark = z.object({
   card_size: z.enum(['small', 'normal', 'large', 'full']).optional(),
   name: z.string().max(20).optional(), url: z.string().max(2000).optional(), query: z.string().min(1).max(100).optional(),
   title: z.string().min(1).max(60).optional(), heading: z.string().min(1).max(80).optional(),
-  items: z.array(z.string().min(1).max(120)).max(12).optional(),
+  items: z.array(z.string().min(1).max(120)).max(30).optional(),
   branches: z.array(z.object({ text: z.string().min(1).max(60), items: z.array(z.string().min(1).max(60)).max(6).optional(), tone: z.enum(TONES).optional() })).max(8).optional(),
   sources: z.array(z.object({ name: z.string().min(1).max(40), url: z.string().max(2000) })).max(8).optional(),
   x_range: pair.optional(), y_range: pair.optional(),

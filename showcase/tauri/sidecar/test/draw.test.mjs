@@ -30,7 +30,7 @@ console.log('draw schema tests: passed');
 assert.equal(shapeRadius(24, 24, 'checkbox'), 12, 'checkbox is round');
 assert.equal(shapeRadius(90, 28, 'button'), 14, 'thin button is a pill');
 assert.equal(shapeRadius(64, 60, 'button'), 30, 'small square button is round');
-assert.equal(shapeRadius(300, 200, ''), 18, 'big area: gently rounded');
+assert.equal(shapeRadius(300, 250, ''), 18, 'big area: gently rounded');
 assert.equal(shapeRadius(300, 28, 'text field'), 4, 'a field stays a box even when thin');
 assert.equal(shapeRadius(300, 28, 'button', 6), 6, 'r overrides');
 console.log('shape radius tests: passed');
