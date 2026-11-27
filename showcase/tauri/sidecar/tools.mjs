@@ -33,6 +33,18 @@ export const run = (cmd, args, { onLine, ...opts } = {}) => new Promise((res) =>
     for (let k; (k = buf.indexOf('\n')) >= 0; buf = buf.slice(k + 1)) { try { onLine(buf.slice(0, k)); } catch { /* a listener's fault never fails the command */ } }
   });
 });
+// search_files: rg, or grep when rg can't be started. Both exit 1 for no matches and 2 for an error (#208): an
+// error with nothing found is thrown with its message, so a bad pattern isn't reported as "No matches.".
+export async function searchText(pattern, dir, runner = run) {
+  // -e and -- keep a pattern like "--pre=cmd" from being read as an option (rg --pre runs programs).
+  let r = await runner('rg', ['-n', '--max-count', '5', '--max-columns', '200', '-e', pattern, '--', dir]);
+  // A string code is a spawn failure (ENOENT, EACCES); a number is the exit status.
+  if (typeof r.err?.code === 'string' && r.err.code !== 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') r = await runner('grep', ['-rnI', '-m', '5', '-E', '-e', pattern, '--', dir]);
+  if (r.stdout) return r.stdout;
+  if (!r.err || r.err.code === 1) return 'No matches.';
+  if (r.err.code === 'ENOENT') throw new Error('Search failed: neither rg nor grep is installed here. Use run_command instead.');
+  throw new Error(`Search failed: ${(r.stderr || r.err.message || String(r.err)).trim().slice(0, 2000)}`);
+}
 // Windows "open": Start-Process gets the target (and the app to open it in) through environment variables, so
 // nothing in them is ever parsed as a command (cmd's start split URLs at "&", and quotes in names broke it). A
 // failure says "Unable to find application", as macOS's open does.
@@ -1051,10 +1063,7 @@ A drawing stays until it's cleared, the window changes or the next one replaces 
       parameters: z.object({ pattern: z.string(), dir: z.string() }),
       execute: async ({ pattern, dir }) => {
         const d = allowed(checkRead(at(dir), HOME, { recursive: true }));
-        // -e and -- keep a pattern like "--pre=cmd" from being read as an option (rg --pre runs programs).
-        let r = await run('rg', ['-n', '--max-count', '5', '--max-columns', '200', '-e', pattern, '--', d]);
-        if (r.err?.code === 'ENOENT') r = await run('grep', ['-rnI', '-m', '5', '-E', '-e', pattern, '--', d]);
-        return clip(r.stdout || 'No matches.', 12_000);
+        return clip(await searchText(pattern, d), 12_000);
       },
     },
     {

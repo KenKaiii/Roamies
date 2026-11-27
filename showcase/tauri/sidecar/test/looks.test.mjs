@@ -14,7 +14,7 @@ assert.equal(DEFAULT_VOICE, '2680da81de8348a68e1f4dbaa79272f1');
 assert.equal(voices.jarvis, 'e13fa398a7f445a685316a3de6089ce7');
 // Regression: Roamie spoke with JARVIS's voice (the default was JARVIS's ID).
 assert.equal(new Set([DEFAULT_VOICE, ...Object.values(voices).filter(Boolean)]).size, 8, 'every look has its own voice');
-assert.ok(!/config\.fishVoice/.test(side), 'a saved fishVoice (the old JARVIS default) is never used');
+assert.ok(!/config\.fishVoice\b/.test(side), 'a saved fishVoice (the old JARVIS default) is never used');
 assert.equal(voices.anime, 'd8f3b4c1199f4568a767ec54112d2b17');
 assert.equal(voices.sarah, '933563129e564b19a115bedd57b7406a');
 assert.equal(voices.adrian, 'bf322df2096a46f18c579d0baa36f41d');
@@ -96,3 +96,6 @@ for (const who of ['anime', 'sarah', 'adrian', 'rita', 'ultren', 'glayos']) {
   }
   assert.equal(tops.size, 1, `${who} doesn't hop on its own while cheering (the kit moves it)`);
 }
+// A Fish voice ID the user pasted for a look wins over the look's own (#133), and only through fishVoiceId.
+assert.match(side, /const lookVoice = \(\) => config\.fishVoices\?\.\[config\.look\] \?\? \(LOOKS/);
+assert.match(side, /const id = raw == null \? null : fishVoiceId\(raw\);/);

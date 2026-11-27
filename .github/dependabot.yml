@@ -30,6 +30,16 @@ updates:
       # Stays on the major version Tauri's own plugins use (tauri-plugin-single-instance), so it isn't built twice.
       - dependency-name: zbus
         update-types: ["version-update:semver-major"]
+      # The GTK 3 stack Tauri's webkit2gtk is built on: a new major (javascriptcore-rs 2, on a newer glib) no longer
+      # matches the values webkit2gtk hands back, so these move only when Tauri moves.
+      - dependency-name: gtk
+        update-types: ["version-update:semver-major"]
+      - dependency-name: gtk-layer-shell
+        update-types: ["version-update:semver-major"]
+      - dependency-name: webkit2gtk
+        update-types: ["version-update:semver-major"]
+      - dependency-name: javascriptcore-rs
+        update-types: ["version-update:semver-major"]
     groups:
       minor-and-patch:
         update-types: ["minor", "patch"]

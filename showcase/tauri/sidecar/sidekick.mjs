@@ -50,7 +50,7 @@ import { JOB_KINDS, findModelByName, findModelMention, hybridOn, isChitchat, job
 import { becauseOf, createLimits, firstFree, isQuota, limitFrom, untilWords } from './limits.mjs';
 import { SLOTS, isSetting, resolveEffort } from './effort.mjs';
 import { pickNotch } from './notch.mjs';
-import { DEFAULT_VOICE, FISH_CHOICES } from './fish.mjs';
+import { DEFAULT_VOICE, FISH_CHOICES, fishVoiceId } from './fish.mjs';
 import { GEMINI_CHOICES, GEMINI_DEFAULT_VOICE, GEMINI_LOOK_VOICES, GEMINI_MODEL, GEMINI_VOICES } from './gemini.mjs';
 import { createSecrets, retryLoad, runInput } from './secrets.mjs';
 import { showTrayIcon } from './wintray.mjs';
@@ -142,6 +142,7 @@ const DEFAULTS = {
   studioSpeak: 'short', // how much VoiceStudio says out loud: 'short', 'medium' or 'full' (it renders slower than real time)
   studioVoices: {}, // look → its VoiceStudio voice (a saved profile id; none: the selected engine's default voice)
   fishModel: FISH_CHOICES[0].id, // Drama 3 (most expressive) or S2.1 Pro (natural pace, cheaper)
+  fishVoices: {}, // look → a Fish Audio voice ID the user pasted in Settings (else the look's own, LOOKS)
   geminiVoices: {}, // look → the Gemini voice it speaks in, where picked in the setup guide or the panel (else GEMINI_LOOK_VOICES)
   geminiModel: GEMINI_MODEL, // Flash Lite (quick, cheaper) or Flash (studio quality)
   avatarPin: null, // where the user pinned the Roamie: {corner, x, y, margin}, or null to follow the cursor
@@ -170,7 +171,7 @@ const LOOKS = [
   ['adrian', 'Adrian', 'bf322df2096a46f18c579d0baa36f41d'],
   ['rita', 'Rita X', '84aadb575ed74e9aa44ba7ab8619d1a1'],
 ];
-const lookVoice = () => (LOOKS.find(([id]) => id === config.look) ?? LOOKS[0])[2];
+const lookVoice = () => config.fishVoices?.[config.look] ?? (LOOKS.find(([id]) => id === config.look) ?? LOOKS[0])[2];
 // The look's voice with Gemini and with VoiceStudio: the user's pick for it, else its own default.
 const geminiVoice = () => config.geminiVoices?.[config.look] ?? GEMINI_LOOK_VOICES[config.look] ?? GEMINI_DEFAULT_VOICE;
 const studioVoice = () => config.studioVoices?.[config.look] ?? null;
@@ -817,8 +818,8 @@ const SLOW_TOOLS = new Set(['web_search', 'web_fetch', 'see_photo', 'take_screen
 const VOICE_ON = () => config.replies === 'voice' && speech.on;
 // VoiceStudio's engines would read voice cues out, so its prompt has no cue paragraph (and any cue left is removed).
 const replyStyle = () => (!VOICE_ON() ? TEXT_STYLE : tts().local ? VOICE_STYLE.replace(/^Your voice carries feeling:.*\n/m, '') : VOICE_STYLE);
-const TEXT_STYLE = `You talk through small speech bubbles: one to three sentences unless asked for detail. Light markdown shows (**bold** for the key word, \`code\` for commands and file names, [links](https://…)); no headings or tables in a bubble, and never narrate actions like *waves*. Amounts, a comparison, a place, dates, a process and maths are drawn, not listed: for those use draw and write no "- " lines. When the answer is genuinely a list, steps or a breakdown, it shows on a card beside you: a one-sentence answer, 3 to 6 short "- " points (one fact each, under 20 words), and, if you used the web this turn, a line "Sources: " with the site names as [name](url) links; the card renders all markdown, but no preamble. A quick fact from the web (a score, a date, the weather, who someone is) stays a short bubble, with no points and no sources. An emoji now and then is fine. `;
-const VOICE_STYLE = `You talk out loud: what you write is spoken in your voice and shown in a small bubble, so write for the ear: one to three short sentences of plain spoken words (6 to 20 each, contractions welcome), with no markdown, emoji, links, file paths or code (name the site, file or app instead). Say numbers, times and money the way people say them. What's for reading goes below and is never read out: "- " lines for points, options or steps (3 to 6, under 20 words each), "> " lines for a draft they'll send or copy, a \`\`\` block for code. What they asked to hear (a story, a joke, advice) is said, short (a story in 4 to 6 sentences). An explanation is spoken too, in a few sentences, with a drawing beside it when a picture carries it. An answer from the web is said like any other: a quick fact (a score, a date, the weather, who someone is) is just your sentences, no points and no sources. Only when the answer is genuinely a list, steps or a breakdown that's easier to read than hear: say it in one or two sentences, then the "- " points, then, if you used the web, a line "Sources: " with [name](url) links; only your sentences are spoken. Amounts, a comparison, a place, dates, a process and maths are drawn, not listed: for those use draw and write no "- " lines. Never say "here's a list" or read out what's on screen ("the steps are on screen" is enough).
+const TEXT_STYLE = `You talk through small speech bubbles: one to three sentences unless asked for detail. Light markdown shows (**bold** for the key word, \`code\` for commands and file names, [links](https://…), and a file or folder on this computer as [its name](file:///full/path, spaces as %20), which opens with a click); no headings or tables in a bubble, and never narrate actions like *waves*. Amounts, a comparison, a place, dates, a process and maths are drawn, not listed: for those use draw and write no "- " lines. When the answer is genuinely a list, steps or a breakdown, it shows on a card beside you: a one-sentence answer, 3 to 6 short "- " points (one fact each, under 20 words), and, if you used the web this turn, a line "Sources: " with the site names as [name](url) links; the card renders all markdown, but no preamble. A quick fact from the web (a score, a date, the weather, who someone is) stays a short bubble, with no points and no sources. An emoji now and then is fine. `;
+const VOICE_STYLE = `You talk out loud: what you write is spoken in your voice and shown in a small bubble, so write for the ear: one to three short sentences of plain spoken words (6 to 20 each, contractions welcome), with no markdown, emoji, links, file paths or code (name the site, file or app instead). Say numbers, times and money the way people say them. What's for reading goes below and is never read out: "- " lines for points, options or steps (3 to 6, under 20 words each), "> " lines for a draft they'll send or copy, a \`\`\` block for code. What they asked to hear (a story, a joke, advice) is said, short (a story in 4 to 6 sentences). An explanation is spoken too, in a few sentences, with a drawing beside it when a picture carries it. An answer from the web is said like any other: a quick fact (a score, a date, the weather, who someone is) is just your sentences, no points and no sources. Only when the answer is genuinely a list, steps or a breakdown that's easier to read than hear: say it in one or two sentences, then the "- " points (a file or folder on this computer as [its name](file:///full/path, spaces as %20), which opens with a click), then, if you used the web, a line "Sources: " with [name](url) links; only your sentences are spoken. Amounts, a comparison, a place, dates, a process and maths are drawn, not listed: for those use draw and write no "- " lines. Never say "here's a list" or read out what's on screen ("the steps are on screen" is enough).
 Your voice carries feeling: start a sentence with a voice cue in square brackets when the moment calls for it; it's performed, never shown or read out. Moods: ${VOICE_CUES.emotions.filter((e) => !EMOTES.includes(e)).join(', ')}, softened or strengthened with slightly, very or extremely ("[slightly sad]"), or paired ("[warm and curious]"). How it's said, right before the words: ${VOICE_CUES.tones.join(', ')} ("It's [emphasis] today."). Sounds, followed by the sound in words: ${VOICE_CUES.sounds.join(', ')} ("[chuckling] Heh, fair enough."). Pauses and background: ${VOICE_CUES.effects.join(', ')}. Or a few plain words when no cue fits ("[quietly, a little embarrassed]"). Match what's really happening: laugh at something funny, go gentle with bad news, whisper a secret, light up at good news. Most replies want a voice cue somewhere, often on the first sentence, but at most one mood and one sound per sentence, never one just to fill, and shouting, sobbing and background effects only when they truly fit.
 Before anything slow (the web, reading a page or file, looking at the screen, acting in an app, running a command), say one short beat of 2 to 6 words that shows you heard them ("On it, checking Paris."), then call the tool in the same reply. No beat when you answer straight away, and never describe your steps; in longer work, one short line per new stage.
 `;
@@ -919,7 +920,7 @@ function commitmentsText() {
 // The conversation lives in `session` (saved to ~/Roamies/Data/sessions). The Agent is rebuilt from it
 // whenever settings change, so switching model or toggling a setting never loses the conversation.
 let agent = null, controller = null, busy = false, quiet = false, running = Promise.resolve();
-const activity = createActivity();
+const activity = createActivity({ keep: () => config.recentActivity !== false });
 // Rebuild the agent (same conversation) before the next message. Rarely needed now: memory and settings
 // reach the model through the live section, which is refreshed before every call.
 let agentStale = false;
@@ -1849,6 +1850,18 @@ async function signOut(provider) {
   say(`${label} is removed.`, 'happy'); panelNote(`${label} is removed.`);
 }
 
+// A link clicked in a reply: web and mail in the browser; a file on this computer (file:///…) in its usual app, or a
+// folder in the file manager (#200), by the open tool's rules, so a script or app never runs from a click.
+async function openLink(url) {
+  if (!/^file:/i.test(url)) { const v = checkLink(url); if (v.level === SAFE) openUrl(url); else console.error('open_link blocked:', v.reason); return; }
+  let p = null;
+  try { p = fileURLToPath(url); } catch { /* checkLink says why */ }
+  const st = p && await fs.stat(p).catch(() => null);
+  const v = checkLink(url, { home: HOME, executable: !!st?.isFile() && process.platform !== 'win32' && (st.mode & 0o111) !== 0 });
+  if (v.level !== SAFE) { console.error('open_link blocked:', v.reason); say(v.reason, 'concerned'); return; }
+  if (!st) { say(`I can't find ${path.basename(p)} any more. It may have moved.`, 'concerned'); return; }
+  openUrl(p);
+}
 function openUrl(url) {
   if (process.platform === 'win32') return void winOpen(url);
   const [cmd, args] = process.platform === 'darwin' ? ['open', [url]] : ['xdg-open', [url]];
@@ -1939,6 +1952,18 @@ const studioState = () => {
   if (!l) return { checking: true, voice: speech.localVoice };
   return { ok: !!l.ok, reason: l.reason ?? null, message: l.message ?? null, engine: l.engineName ?? l.engine ?? null, voices: (l.voices ?? []).slice(0, 200).map((v) => ({ id: v.id, name: v.name })), voice: speech.localVoice };
 };
+
+// This look's Fish Audio voice: an ID or fish.audio link the user pasted, or null to go back to the look's own.
+function setFishVoice(raw) {
+  const id = raw == null ? null : fishVoiceId(raw);
+  if (raw != null && !id) { panelNote("That isn't a Fish Audio voice ID. Paste the ID or the link from the voice's page on fish.audio.", true); return; }
+  if ((config.fishVoices?.[config.look] ?? null) === id) return;
+  const { [config.look]: _, ...rest } = config.fishVoices ?? {};
+  config.fishVoices = id ? { ...rest, [config.look]: id } : rest; saveConfig(); // this look's
+  if (tts().id === 'fish') speech.setVoice(lookVoice());
+  menu(); if (onboarding) obState();
+  if (tts().id === 'fish' && VOICE_ON()) speakLine('This is how I sound.');
+}
 
 function setGeminiVoice(v) {
   if (!GEMINI_VOICES.some((x) => x.id === v) || v === geminiVoice()) return;
@@ -2350,7 +2375,7 @@ function panelState() {
         note: !on || !r ? '' : !r.ok ? downNote(x, r.reason) : r.models.length ? '' : noModelsNote(x, r.all, true) };
     }),
     loggingIn,
-    recent: activity.recent,
+    recent: activity.recent, recentActivity: config.recentActivity !== false,
     usage: today.requests ? today : null,
     usageHistory: usage.history(14),
     usageTotals: { week: usage.total(7), month: usage.total(30) },
@@ -2363,7 +2388,7 @@ function panelState() {
     look: config.look ?? 'classic', looks: LOOKS.map(([id, label]) => [id, label]), name: lookName(),
     size: sizeNow(), sizes: SIZES,
     replies: VOICE_ON() ? 'voice' : 'text', tts: tts().id, fishKey: hasVoiceKey('fish'), geminiKey: hasVoiceKey('gemini'),
-    fishModel: config.fishModel, fishModels: FISH_CHOICES, fishFree: tts().id === 'fish' && speech.on && speech.model.endsWith('-free'),
+    fishModel: config.fishModel, fishModels: FISH_CHOICES, fishVoice: config.fishVoices?.[config.look] ?? null, fishFree: tts().id === 'fish' && speech.on && speech.model.endsWith('-free'),
     geminiVoice: geminiVoice(), geminiVoices: GEMINI_VOICES, geminiShared: ttsKeys.gemini === 'shared',
     geminiModel: config.geminiModel, geminiModels: GEMINI_CHOICES,
     studio: tts().local ? studioState() : null,
@@ -2625,6 +2650,7 @@ async function onMenu(id, via) {
   else if (id === 'geminikey_remove') removeVoiceKey('gemini');
   else if (id.startsWith('tts:')) setTts(id.slice(4));
   else if (id.startsWith('geminivoice:')) setGeminiVoice(id.slice(12));
+  else if (id === 'fishvoice_reset') setFishVoice(null);
   else if (id.startsWith('studiovoice:')) setStudioVoice(id.slice(12));
   else if (id === 'voicestudio_check') { await speech.checkLocal(); menu(); if (onboarding) obState(); }
   else if (id.startsWith('geminimodel:') && GEMINI_CHOICES.some((c) => c.id === id.slice(12))) {
@@ -2674,6 +2700,7 @@ async function onMenu(id, via) {
     menu();
   }
   else if (id === 'askconnect') await typeToAsk({ value: 'Connect my ' });
+  else if (id === 'recentactivity') { config.recentActivity = config.recentActivity === false; saveConfig(); if (!config.recentActivity) activity.clear(); menu(); }
   else if (id === 'learnskills') { config.learnSkills = config.learnSkills === false; saveConfig(); if (!config.learnSkills) dropLearn(); menu(); }
   else if (id === 'morningbrief') { config.morningBrief = !config.morningBrief; saveConfig(); menu(); }
   else if (id === 'brieftodoist' && HANDS_OK) { config.briefTodoist = !config.briefTodoist; saveConfig(); menu(); }
@@ -2977,7 +3004,8 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       .catch((e) => { const p = problem('key', e, { store: KEY_STORE }); panelNote(p.text, true, p); });
   } else if (m.type === 'panel_local_add' && typeof m.label === 'string' && typeof m.baseUrl === 'string') {
     addServer({ label: m.label.slice(0, 200), baseUrl: m.baseUrl.slice(0, 500), key: typeof m.key === 'string' ? m.key.trim().slice(0, 1000) : '', images: m.images === true }).catch((e) => console.error('add server', e));
-  } else if ((m.type === 'panel_fishkey' || m.type === 'panel_geminikey') && typeof m.key === 'string') voiceKeyLogin({ provider: m.type === 'panel_geminikey' ? 'gemini' : 'fish', given: m.key.slice(0, 1000), note: panelNote }).catch((e) => console.error('voice key', e));
+  } else if (m.type === 'panel_fishvoice' && typeof m.id === 'string') setFishVoice(m.id.slice(0, 300));
+  else if ((m.type === 'panel_fishkey' || m.type === 'panel_geminikey') && typeof m.key === 'string') voiceKeyLogin({ provider: m.type === 'panel_geminikey' ? 'gemini' : 'fish', given: m.key.slice(0, 1000), note: panelNote }).catch((e) => console.error('voice key', e));
   else if (m.type === 'answer') { pending.get(m.id)?.(m.text ?? null); pending.delete(m.id); }
   else if (m.type === 'ui_ready') {
     retired.then((notes) => { if (notes.length) { retired = Promise.resolve([]); say(`${notes.join(' ')} Do it on the Model page in ${PANEL}.`, 'concerned'); } });
@@ -3005,7 +3033,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   else if (m.type === 'reply_said') { live.last = Date.now(); if (!busy) { holdWake(false); saidPending = false; clearTimeout(saidCap); stir(); } }
   else if (m.type === 'listen_cancel') { autoTurn = null; endLive('esc'); send({ type: 'listen_cancel' }); } // Esc while the mic is on
   // A link clicked on the research card: web and mail links only.
-  else if (m.type === 'open_link') { const v = checkLink(m.url); if (v.level === SAFE) openUrl(String(m.url)); else console.error('open_link blocked:', v.reason); }
+  else if (m.type === 'open_link') openLink(String(m.url ?? '')).catch((e) => console.error('open_link', e));
   else if (m.type === 'list_toggle') toggleItem(String(m.id)).catch((e) => console.error('list', e));
   else if (m.type === 'show_list') showList({ seconds: 20, toggle: true });
   // The overlay's drawing: a segment started, a wait for a click or hover ended, a card was closed, a button clicked.

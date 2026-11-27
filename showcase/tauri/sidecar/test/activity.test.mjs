@@ -60,3 +60,17 @@ console.log('activity tests: passed');
   c.noted('Ken uses Firefox, not Chrome, for everything to do with work and the team calendars');
   assert.equal(c.recent[0].text, 'Noted: Ken uses Firefox, not Chrome, for everything to do with wor…');
 }
+{ // The Recent activity switch (#171): off, nothing is kept, but tools are still tracked; clear() empties the list.
+  let on = true;
+  const a = createActivity({ keep: () => on });
+  a.asked('What is on my calendar today?');
+  assert.equal(a.recent.length, 1);
+  on = false; a.clear();
+  a.asked('Something private'); a.start('t1', 'read_file', { path: '/tmp/a.md' });
+  assert.equal(a.recent.length, 0, 'nothing kept while off');
+  assert.equal(a.doing(), 'Reading a.md', 'a running tool is still tracked');
+  a.end('t1', false);
+  assert.equal(a.recent.length, 0);
+  on = true; a.asked('Back on');
+  assert.equal(a.recent[0].text, 'Back on');
+}
