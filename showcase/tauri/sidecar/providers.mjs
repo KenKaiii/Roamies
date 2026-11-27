@@ -28,7 +28,7 @@ export const accountKeys = (provider) => [...new Set([...providerStorageKeys(pro
 export const KEY_LINKS = {
   anthropic: 'https://platform.claude.com/settings/keys', openai: 'https://platform.openai.com/api-keys', gemini: 'https://aistudio.google.com/apikey',
   xai: 'https://console.x.ai/', 'kimi-code': 'https://www.kimi.com/code/console', moonshot: 'https://platform.kimi.ai/console/api-keys',
-  glm: 'https://z.ai/manage-apikey/apikey-list', minimax: 'https://platform.minimax.io/console/keys', xiaomi: 'https://platform.xiaomimimo.com/',
+  'glm-coding': 'https://z.ai/manage-apikey/apikey-list', glm: 'https://z.ai/manage-apikey/apikey-list', minimax: 'https://platform.minimax.io/console/keys', xiaomi: 'https://platform.xiaomimimo.com/',
   'xiaomi-credits': 'https://platform.xiaomimimo.com/', deepseek: 'https://platform.deepseek.com/api_keys', sakana: 'https://console.sakana.ai/',
   openrouter: 'https://openrouter.ai/settings/keys', huggingface: 'https://huggingface.co/settings/tokens',
   // One OpenCode Console makes the keys for both: Go is the subscription, OpenCode the pay-per-token credits.
@@ -36,7 +36,7 @@ export const KEY_LINKS = {
 };
 const SIGN_IN_NAMES = { anthropic: ['Claude', 'Anthropic'], openai: ['ChatGPT', 'OpenAI'] };
 // Short enough for a one-line card; gg-core's labels ("Token Plan") don't say whose.
-const KEY_NAMES = { 'kimi-code': 'Kimi Code', moonshot: 'Moonshot', xiaomi: 'MiMo Plan', 'xiaomi-credits': 'MiMo Credits', 'opencode-go': 'OpenCode Go', opencode: 'OpenCode' };
+const KEY_NAMES = { 'kimi-code': 'Kimi Code', moonshot: 'Moonshot', 'glm-coding': 'GLM Plan', glm: 'Z.AI API', xiaomi: 'MiMo Plan', 'xiaomi-credits': 'MiMo Credits', 'opencode-go': 'OpenCode Go', opencode: 'OpenCode' };
 
 /** Sign-in cards, in `ids` order; `on(id)`: signed in with that account (not just a key). */
 export const signInCards = (ids, on, labels = {}) =>

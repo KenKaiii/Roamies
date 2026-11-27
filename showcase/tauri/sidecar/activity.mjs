@@ -47,13 +47,15 @@ export function describe(name, args = {}) {
   }
 }
 
-// The recent list: newest first, at most `max` lines. A failed tool says so.
-export function createActivity({ max = 12, now = () => Date.now() } = {}) {
+// The recent list: newest first, at most `max` lines. A failed tool says so. With keep() false nothing is added
+// (the Recent activity switch, #171); tools are still tracked, for doing() and stopped().
+export function createActivity({ max = 12, now = () => Date.now(), keep = () => true } = {}) {
   const recent = [];
   const running = new Map();
-  const add = (kind, text) => { recent.unshift({ at: now(), kind, text }); recent.length = Math.min(recent.length, max); };
+  const add = (kind, text) => { if (!keep()) return; recent.unshift({ at: now(), kind, text }); recent.length = Math.min(recent.length, max); };
   return {
     recent,
+    clear() { recent.length = 0; },
     asked(text) { add('ask', short(text, 80)); },
     // A drawing handed part of the work on: said in the list like anything else it did.
     handoff(task) { add('did', `Handed off: ${short(task, 60)}`); },

@@ -19,6 +19,13 @@ export const FISH_CHOICES = [
 // Roamie's own voice (the default look); JARVIS's is in sidekick.mjs LOOKS.
 export const DEFAULT_VOICE = '2680da81de8348a68e1f4dbaa79272f1';
 export const RATE = 44100;
+// A voice the user picked on fish.audio (#133): its 32-character ID, or a fish.audio link with one in it. null if neither.
+export function fishVoiceId(s) {
+  const t = String(s ?? '').trim();
+  if (/^[0-9a-f]{32}$/i.test(t)) return t.toLowerCase();
+  const m = /^https:\/\/(?:www\.)?fish\.audio\/(?:[a-z-]+\/)*([0-9a-f]{32})(?:[/?#]|$)/i.exec(t);
+  return m ? m[1].toLowerCase() : null;
+}
 
 // The voice's settings: balanced latency measured as fast as "low" (~0.4 s) with better quality. Loudness isn't
 // normalized: that flattened a whisper and a shout to the same level (1-8 dB apart; 10-28 dB without it, no clipping).

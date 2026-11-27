@@ -368,7 +368,7 @@
           state.snap ?? mac ? btn('Ask about an area', () => act('snap', true), { k: 'snap' }) : null,
           state.busy ? btn('Stop', () => act('stop'), { k: 'stop' }) : btn('New chat', () => act('new'), { k: 'new', disabled: !state.canNew, aria: 'Start a new conversation' }),
           mac ? null : btn(`Show ${state.name}`, () => act('show', true), { k: 'show' }))),
-      recentList(),
+      state.recentActivity === false ? null : recentList(),
       usageGroup(),
     ].flat();
   }
@@ -858,6 +858,7 @@
           picks('Voice model', state.fishModels.map((c) => [c.id, c.name]), state.fishModel, (x) => act(`fishmodel:${x}`), 'fishmodel',
             Object.fromEntries(state.fishModels.map((c) => [c.id, `${WHY_LONG[c.id] ?? ''} ${price(c)}`.trim()]))),
           el('p', { className: `why${state.fishFree ? ' late' : ''}`, textContent: state.fishFree ? "No credit left, so it's on Fish's free tier" : WHY[state.fishModel] ?? '' }),
+          fishVoiceRow(),
         ) : null,
         local ? null : el('div', { className: 'setting' },
           el('span', {}, `${T} key`, el('small', { textContent: shared ? 'Shared with the Model page' : hasKey ? `Saved in ${where()}` : 'Needed for spoken replies' })),
@@ -865,6 +866,21 @@
             link(ui.key === tts ? 'Cancel' : shared ? 'Use another' : hasKey ? 'Change' : 'Add', () => toggleKey(tts), { k: `addkey:${tts}`, aria: hasKey ? `Change the ${T} key` : `Add a ${T} key` }),
             hasKey && !shared && ui.key !== tts ? armed('Remove', 'Confirm', `${tts}key-remove`, `${tts}key_remove`, `Remove the ${T} key`) : null)),
         local ? null : keyForm(tts, T, (key) => send({ type: `panel_${tts}key`, key }))),
+    ];
+  }
+  // This look's Fish Audio voice (#133): its own, or an ID or link pasted from fish.audio, with Reset to go back.
+  function fishVoiceRow() {
+    const K = 'fishvoice', mine = state.fishVoice;
+    const input = el('input', { type: 'text', id: `key-${K}`, autocomplete: 'off', spellcheck: false, placeholder: 'Voice ID or fish.audio link', 'aria-label': `Fish Audio voice ID for ${state.name}`, maxLength: 300 });
+    const save = () => { const v = input.value.trim(); if (!v) return input.focus(); send({ type: 'panel_fishvoice', id: v }); input.value = ''; closeKey(); };
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') save(); else if (e.key === 'Escape') { e.stopPropagation(); closeKey(); } });
+    return [
+      el('div', { className: 'setting' },
+        el('span', {}, `Voice for ${state.name}`, el('small', { title: mine ?? '', textContent: mine ? `Your own Fish voice · ${mine.slice(0, 8)}…` : `${state.name}'s own voice` })),
+        el('span', { className: 'row-btns' },
+          link(ui.key === K ? 'Cancel' : mine ? 'Change' : 'Use my own', () => toggleKey(K), { k: `addkey:${K}`, aria: `Use your own Fish Audio voice for ${state.name}` }),
+          mine && ui.key !== K ? link('Reset', () => act('fishvoice_reset'), { k: 'fishvoice_reset', aria: `Go back to ${state.name}'s own voice` }) : null)),
+      el('div', { className: 'keyform', hidden: ui.key !== K, 'data-anim': `key-${K}` }, el('span', { className: 'px field' }, input), btn('Save', save, { k: `save:${K}` })),
     ];
   }
   // Which mic I listen on (from #59, by overspend1): automatic (the system's default, or on a Mac the built-in mic while
@@ -1032,6 +1048,7 @@
         state.gameMode != null ? toggle('Game mode', 'In a fullscreen game, I move to a panel at the edge of the screen.', state.gameMode, () => act('gamemode'), 'gamemode') : null,
         toggle('Allow file edits and commands', 'Change files and run commands', state.actions, () => act('actions'), 'actions'),
         state.actions ? toggle('Skip Allow prompts', 'Go ahead without asking first. Blocked steps stay blocked.', state.skipAllow, () => act('skipallow'), 'skipallow') : null,
+        state.recentActivity != null ? toggle('Recent activity', 'Keep a list of what you asked and what I did on Home, until I quit.', state.recentActivity, () => act('recentactivity'), 'recentactivity') : null,
         state.learnSkills != null ? toggle('Learn skills', 'After a long task that worked, I keep the how-to for next time.', state.learnSkills, () => act('learnskills'), 'learnskills') : null,
         state.login ? toggle('Open at login', null, state.login.on, () => act('login'), 'login') : null,
         state.sync ? el('div', { className: 'setting' },
@@ -1333,7 +1350,7 @@
       jobs: [{ id: 'j1a2b3c', title: 'Tech news', paused: false, next: 'Thu 6 Nov, 08:00', repeat: 'weekdays', last: 'Last: Summed up 6 stories on AI chips and a Mac update', bad: false },
         { id: 'j4d5e6f', title: 'Tidy Downloads', paused: true, next: 'Paused', repeat: 'Fri', last: "Didn't run: Allow File Edits & Commands is off", bad: true }],
       skills: [{ slug: 'export-figma-frames', name: 'Export Figma frames', description: 'When they want frames out of Figma as PNGs at 2x.' },
-        { slug: 'weekly-invoice', name: 'Weekly invoice', description: 'When making the Friday invoice in Numbers from the hours sheet.' }], learnSkills: true,
+        { slug: 'weekly-invoice', name: 'Weekly invoice', description: 'When making the Friday invoice in Numbers from the hours sheet.' }], learnSkills: true, recentActivity: true,
       connections: [{ name: 'linear', remote: true, where: 'https://mcp.linear.app/mcp', enabled: true, state: 'connected', toolCount: 23, error: null, trust: 'always' },
         { name: 'notion', remote: true, where: 'https://mcp.notion.com/mcp', enabled: true, state: 'needs-login', toolCount: 0, error: 'Requires login.' },
         { name: 'everything', remote: false, where: 'npx -y @modelcontextprotocol/server-everything', enabled: true, state: 'error', toolCount: 0, error: 'spawn npx ENOENT' },
@@ -1383,6 +1400,8 @@
     if (q.get('note') === 'bad') setTimeout(() => window.__panel({ kind: 'note', text: "That key didn't save (E30). Try again.", bad: true, copy: true }), 400);
     if (q.get('update') === 'failed') s.update.result = { ok: false, error: "Couldn't check for updates. Check your internet." };
     if (q.has('checking')) s.update.checking = true;
+    if (q.has('norecent')) s.recentActivity = false;
+    if (q.has('fishvoice')) s.fishVoice = 'e13fa398a7f445a685316a3de6089ce7';
     // ?studio: VoiceStudio is the voice provider (?studio=off: it isn't running; ?studio=engine: its engine isn't ready; ?studio=empty: no saved voices).
     const STUDIO = {
       on: { ok: true, engine: 'OmniVoice', voices: [{ id: 'a642d572', name: 'Ben' }, { id: 'fa08aff1', name: 'British · Female · Young Adult · High' }], voice: 'fa08aff1' },

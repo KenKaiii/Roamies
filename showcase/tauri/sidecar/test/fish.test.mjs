@@ -128,3 +128,13 @@ console.log('fish voice tests: passed');
   assert.equal(v.rebind({ onAudio() {} }), false);
   console.log('fish rebind tests: passed');
 }
+
+{ // A voice picked on fish.audio (#133): the ID, or a link to its page; anything else is refused.
+  const { fishVoiceId } = await import('../fish.mjs');
+  const id = 'e13fa398a7f445a685316a3de6089ce7';
+  assert.equal(fishVoiceId(id), id);
+  assert.equal(fishVoiceId(`  ${id.toUpperCase()} `), id);
+  assert.equal(fishVoiceId(`https://fish.audio/m/${id}/`), id);
+  assert.equal(fishVoiceId(`https://fish.audio/app/m/${id}?from=share`), id);
+  for (const bad of ['', null, 'jarvis', id.slice(1), `${id}0`, `https://evil.example/m/${id}`, `https://fish.audio.evil.example/m/${id}`, `${id}\n--x`]) assert.equal(fishVoiceId(bad), null, String(bad));
+}

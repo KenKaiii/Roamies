@@ -3,6 +3,7 @@
 import dns from 'node:dns/promises';
 import fs from 'node:fs';
 import nodePath from 'node:path';
+import { fileURLToPath } from 'node:url';
 // Rules work on forward-slash paths everywhere, so a Windows path (C:\Users\ken\.ssh) meets the same checks.
 const path = nodePath.posix;
 const slash = (p) => String(p ?? '').replace(/\\/g, '/');
@@ -404,7 +405,7 @@ export function classifyCommand(cmd, home, { exists, cwd: start = null, own = nu
 
 // ---------- opening things and fetching pages ----------
 
-const RUNNABLE = /\.(app|command|sh|bash|zsh|tool|terminal|scpt|scptd|applescript|workflow|action|pkg|mpkg|dmg|jar|py|rb|pl|js|mjs|exe|bat|cmd|ps1|shortcut|mobileconfig|kext|plugin|prefPane|saver|desktop|appimage|deb|rpm|run|flatpakref|flatpak|snap)\/?$/i;
+const RUNNABLE = /\.(app|command|sh|bash|zsh|tool|terminal|scpt|scptd|applescript|workflow|action|pkg|mpkg|dmg|jar|py|rb|pl|js|mjs|exe|bat|cmd|ps1|shortcut|mobileconfig|kext|plugin|prefPane|saver|desktop|appimage|deb|rpm|run|flatpakref|flatpak|snap|msi|msix|appx|appxbundle|vbs|vbe|wsf|wsh|hta|scr|cpl|lnk|reg|msc|pif|jse|psm1|fileloc|webloc|inetloc)\/?$/i;
 // Where installed apps live: opening one there just starts it. Linux lists them as .desktop files.
 const APP_DIRS = ['/Applications/', '/System/Applications/', '/System/Library/CoreServices/', '/usr/share/applications/', '/usr/local/share/applications/', '/var/lib/flatpak/exports/share/applications/', '/var/lib/snapd/desktop/applications/'];
 
@@ -474,10 +475,18 @@ export async function checkFetch(url, { lookup = dns.lookup } = {}) {
 }
 
 /** A link the user clicked in a reply: opened in their browser, so web and mail links only (no file:, apps or scripts). */
-export function checkLink(url) {
+export function checkLink(url, { home = null, executable = false } = {}) {
   let u;
   try { u = new URL(String(url)); } catch { return verdict(BLOCK, "That isn't a valid link."); }
   if (u.protocol === 'mailto:') return verdict(SAFE);
+  // A file on this computer, clicked in a reply (#200): only where the caller says whose home it is, and by the open
+  // tool's rules (documents and folders, never a script, installer or app).
+  if (u.protocol === 'file:' && home) {
+    if (u.host && u.host !== 'localhost') return verdict(BLOCK, 'Links to files on other computers are blocked.');
+    let p;
+    try { p = fileURLToPath(u); } catch { return verdict(BLOCK, "That isn't a valid file link."); }
+    return checkOpen(p, home, { executable });
+  }
   if (u.protocol !== 'http:' && u.protocol !== 'https:') return verdict(BLOCK, 'Only web and email links open from a reply.');
   if (u.username || u.password) return verdict(BLOCK, 'Links with passwords in them are blocked.');
   return verdict(SAFE);

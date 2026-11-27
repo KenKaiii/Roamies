@@ -78,7 +78,7 @@ cases('open', (t) => checkOpen(t, HOME), [
   ['~/Documents', SAFE], ['~/Documents/report.pdf', SAFE], ['/Applications/Safari.app', SAFE],
   ['file:///etc/passwd', BLOCK], ['javascript:alert(1)', BLOCK], ['ssh://evil', BLOCK], ['x-apple.systempreferences:com.apple', BLOCK],
   ['~/Downloads/installer.pkg', BLOCK], ['~/Downloads/run.command', BLOCK], ['~/Downloads/Evil.app', BLOCK], ['~/Desktop/a.sh', BLOCK],
-  ['~/Downloads/x.dmg', BLOCK], ['/bin/zsh', BLOCK], ['/usr/bin/python3', BLOCK], ['~/.ssh', BLOCK], ['../../bin/sh', BLOCK], ['', BLOCK],
+  ['~/Downloads/x.dmg', BLOCK], ['~/Downloads/setup.msi', BLOCK], ['~/Desktop/Shortcut.lnk', BLOCK], ['~/Desktop/a.hta', BLOCK], ['/bin/zsh', BLOCK], ['/usr/bin/python3', BLOCK], ['~/.ssh', BLOCK], ['../../bin/sh', BLOCK], ['', BLOCK],
   // A Windows Settings page opens (#81); other Windows links still don't.
   ['ms-settings:personalization-background', SAFE], ['ms-windows-store://pdp/?productid=x', BLOCK], ['ms-msdt:/id x', BLOCK], ['search-ms:query=x', BLOCK],
 ]);
@@ -96,6 +96,17 @@ cases('link', checkLink, [
   ['https://user:pw@example.com', BLOCK],
   ['not a url', BLOCK],
 ]);
+
+// A file link clicked in a reply (#200): only with a home given, and by the open rules.
+const fileLink = (u) => checkLink(u, { home: HOME });
+cases('file link', fileLink, [
+  ['file:///etc/passwd', BLOCK], ['file://otherhost/Users/ken/a.pdf', BLOCK],
+  ['file:///Users/ken/Downloads/run.command', BLOCK], ['file:///Users/ken/Downloads/Evil.app', BLOCK], ['file:///Users/ken/.ssh/id_ed25519', BLOCK],
+  ['file:///Users/ken/Downloads/setup.msi', BLOCK], ['file:///Users/ken/Desktop/Thing.lnk', BLOCK], ['file:///Users/ken/Desktop/go.vbs', BLOCK],
+  ['file:///Users/ken/Desktop/Site.webloc', BLOCK], ['file:///Users/ken/Desktop/x.reg', BLOCK],
+  ...(process.platform === 'win32' ? [] : [['file:///Users/ken/Documents/My%20Report.pdf', SAFE], ['file://localhost/Users/ken/Documents', SAFE]]),
+]);
+assert.equal(checkLink('file:///Users/ken/Documents/My%20Report.pdf', { home: HOME, executable: true }).level, BLOCK, 'an executable file never opens from a click');
 
 cases('url', checkUrl, [
   ['https://example.com/page', SAFE], ['http://news.ycombinator.com', SAFE], ['https://192.0.2.10/x', SAFE],

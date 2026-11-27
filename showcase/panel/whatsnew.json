@@ -1,6 +1,16 @@
 {
   "updates": [
     {
+      "version": "0.1.53",
+      "date": "2026-11-27",
+      "items": [
+        { "kind": "new", "title": "Your own Fish voice", "text": "Paste a Fish Audio voice ID for each look under Speaking. Thanks Aiden-1092!" },
+        { "kind": "new", "title": "Open files from answers", "text": "Files I find on your computer open with one click. Thanks pat-iphone!" },
+        { "kind": "new", "title": "Hide recent activity", "text": "Switch off the Home list under General, and I stop keeping it. Thanks atewertfd!" },
+        { "kind": "fixed", "title": "Search says what went wrong", "text": "A file search that fails says why, not that nothing matched. Thanks mattschwarz!" }
+      ]
+    },
+    {
       "version": "0.1.52",
       "date": "2026-11-26",
       "items": [
