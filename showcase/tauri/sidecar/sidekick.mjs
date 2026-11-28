@@ -1,3 +1,4 @@
+import { connectNineRouter } from './ninerouter.mjs';
 // Sidekick brain: a gg-agent Agent with tools whose calls drive the sidekick's animations.
 // Talks to the Tauri shell over stdio, one JSON object per line. stdout is the protocol, so all
 // logging goes to stderr. Auth is GG Coder's ~/.gg/auth.json, shared with the app and CLI.
@@ -501,6 +502,25 @@ async function removeServer(id) {
   if (config.provider === 'local' && serverFor([s], config.model)) { config.provider = null; config.model = null; ensureModel(); saveConfig(); }
   agent = null; menu();
   panelNote(`${s.label} is ${s.custom ? 'removed' : 'disconnected'}.`);
+}
+let nineRouterConnecting = false;
+async function setupNineRouter(options) {
+  if (nineRouterConnecting) return;
+  nineRouterConnecting = true; panel();
+  try {
+    const result = await connectNineRouter(auth, config.localServers, { ...options, windows: local.windows });
+    if (!result.ok) return panelNote(result.error, true);
+    config.localServers = result.savedServers;
+    local.status.set(result.server.id, result.connection);
+    await refreshAuth();
+    if (result.selectedModel) {
+      config.provider = 'local'; config.model = result.selectedModel.id; agent = null;
+    }
+    saveConfig(); menu();
+    panelNote(result.selectedModel ? `9router connected. Now using ${result.selectedModel.name}.` : connectedNote(result.server, result.connection), !result.selectedModel);
+  } catch {
+    panelNote('Could not connect to 9router. Check that its server is ready and try again.', true);
+  } finally { nineRouterConnecting = false; panel(); }
 }
 // Some models run on only one kind of key (Kimi K2.8 Preview on a Kimi Code plan key, MiMo UltraSpeed on API Credits).
 const canRun = (p, id) => !!signedIn.get(p) && seesImages(p, id) && getAuthStorageKeys(p, id).some((k) => k === p || storedKeys.has(k));
@@ -2371,9 +2391,10 @@ function panelState() {
     // The Model page's local rows: each server, connected or not, and why its models aren't in the menu.
     localServers: servers().map((x) => {
       const on = storedKeys.has(`local:${x.id}`), r = local.status.get(x.id);
-      return { id: x.id, label: x.label, custom: !!x.custom, baseUrl: x.custom ? x.baseUrl : null, images: !!x.supportsImages, on,
+      return { id: x.id, label: x.label, custom: !!x.custom, baseUrl: x.custom ? x.baseUrl : null, modelId: x.modelId ?? null, images: !!x.supportsImages, on,
         note: !on || !r ? '' : !r.ok ? downNote(x, r.reason) : r.models.length ? '' : noModelsNote(x, r.all, true) };
     }),
+    nineRouterConnecting,
     loggingIn,
     recent: activity.recent, recentActivity: config.recentActivity !== false,
     usage: today.requests ? today : null,
@@ -3002,7 +3023,8 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     if (storageKeyProvider(id) !== m.provider) return;
     apiKeyLogin(id, m.key.slice(0, 1000)).then(() => panelNote(signedIn.get(m.provider) ? `${label} is connected.` : `That ${label} key didn't work.`, !signedIn.get(m.provider)))
       .catch((e) => { const p = problem('key', e, { store: KEY_STORE }); panelNote(p.text, true, p); });
-  } else if (m.type === 'panel_local_add' && typeof m.label === 'string' && typeof m.baseUrl === 'string') {
+  } else if (m.type === 'panel_ninerouter_connect' && typeof m.baseUrl === 'string' && (m.key == null || typeof m.key === 'string')) setupNineRouter({ baseUrl: m.baseUrl.slice(0, 500), key: m.key?.slice(0, 1000), images: m.images === true, modelId: typeof m.modelId === 'string' ? m.modelId.slice(0, 200) : 'my-combo' });
+  else if (m.type === 'panel_local_add' && typeof m.label === 'string' && typeof m.baseUrl === 'string') {
     addServer({ label: m.label.slice(0, 200), baseUrl: m.baseUrl.slice(0, 500), key: typeof m.key === 'string' ? m.key.trim().slice(0, 1000) : '', images: m.images === true }).catch((e) => console.error('add server', e));
   } else if (m.type === 'panel_fishvoice' && typeof m.id === 'string') setFishVoice(m.id.slice(0, 300));
   else if ((m.type === 'panel_fishkey' || m.type === 'panel_geminikey') && typeof m.key === 'string') voiceKeyLogin({ provider: m.type === 'panel_geminikey' ? 'gemini' : 'fish', given: m.key.slice(0, 1000), note: panelNote }).catch((e) => console.error('voice key', e));

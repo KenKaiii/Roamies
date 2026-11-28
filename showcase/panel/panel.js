@@ -16,7 +16,7 @@
   let state = null, tab = 'home', deferred = false;
   // What's open in the panel itself: a key field (provider id, 'fish' or 'gemini'), the row action waiting for its
   // Confirm, each long list's page (pg) and how many rows fit on one (per, measured), Memory's tab and its search.
-  const ui = { key: null, kind: {}, arm: null, add: { label: '', url: '', key: '', images: false }, addSent: null, pg: {}, per: {}, base: {}, rec: null, mtab: 'facts', tabs: {}, q: '', bindShown: new Set() };
+  const ui = { key: null, kind: {}, arm: null, add: { label: '', url: '', key: '', images: false }, router: { url: null, key: '', images: null, modelId: null }, addSent: null, pg: {}, per: {}, base: {}, rec: null, mtab: 'facts', tabs: {}, q: '', bindShown: new Set() };
   let armTimer = 0;
   const disarm = () => { clearTimeout(armTimer); if (ui.arm) { ui.arm = null; return true; } return false; };
 
@@ -637,9 +637,10 @@
     // Tabs, so each part fits the window: the model you talk to, hybrid models, subagents, backups and the accounts. The
     // middle three need a signed-in account; with none, the page opens on Accounts.
     const hybrid = hybridGroup(), crew = subagentGroup(), backups = fallbackGroup();
-    const tabs = [['default', 'Default'], hybrid ? ['hybrid', 'Hybrid'] : null, crew ? ['crew', 'Subagents'] : null, backups ? ['backups', 'Backups'] : null, ['accounts', 'Accounts']].filter(Boolean);
+    const tabs = [['default', 'Default'], hybrid ? ['hybrid', 'Hybrid'] : null, crew ? ['crew', 'Subagents'] : null, backups ? ['backups', 'Backups'] : null, ['accounts', 'Accounts'], ['9router', '9router']].filter(Boolean);
     const t = pageTab('model', tabs, on.length ? 'default' : 'accounts');
     const head = el('div', { className: 'mhead' }, tabRow('Model', 'model-panel', tabs, t, (id) => { ui.tabs.model = id; }));
+    if (t === '9router') return [head, tabPanel('model-panel', t, nineRouterCard())];
     if (t === 'accounts') return [head, tabPanel('model-panel', t, el('div', { className: 'group paged' }, el('div', { className: 'ghead' }, el('p', { textContent: 'Sign in to use their models.' })), box)), foot(null, nav)];
     return [head, tabPanel('model-panel', t, ...(t === 'hybrid' ? [hybrid] : t === 'crew' ? [crew] : t === 'backups' ? [backups] : [group(null, 'Which AI answers you.', null,
       select ?? el('p', { className: 'empty', textContent: 'Sign in on the Accounts tab first.' }),
@@ -710,6 +711,44 @@
           el('span', { id: `lbl-crew-${c.id}` }, c.label, el('small', { className: 'wrap', textContent: c.via === 'hybrid' ? `${c.hint} Uses ${modelName(c.uses)}.` : c.hint })),
           modelSelect(`${c.label} model`, `crew_${c.id}`, c.value, hybridOn ? 'Follow hybrid' : 'Off', (sel) => act(`crew_${c.id}:${sel.value}`), true)),
         c.value ? effortRow(`sub_${c.id}`, c.value) : null)) : null);
+  }
+  const ROUTER = '9router-connect';
+  function nineRouterCard() {
+    const saved = (state.localServers ?? []).find((s) => s.label?.toLowerCase() === '9router');
+    const models = saved ? (state.providers.find((p) => p.id === 'local')?.models ?? []).filter((m) => m.id.startsWith(`local/${saved.id}/`)) : [];
+    const active = saved && state.model?.provider === 'local' && state.model.id.startsWith(`local/${saved.id}/`);
+    const open = ui.key === ROUTER, busy = !!state.nineRouterConnecting, a = ui.router;
+    const url = a.url ?? saved?.baseUrl ?? 'http://127.0.0.1:20128/v1';
+    const images = a.images ?? saved?.images ?? false;
+    const field = (id, label, value, type, update) => el('span', { className: 'px field' }, el('input', {
+      id, type, value, placeholder: label, 'aria-label': label, autocomplete: 'off', spellcheck: false,
+      maxLength: type === 'password' ? 1000 : 500, disabled: busy,
+      on: { input: (e) => update(e.target.value), keydown: (e) => { if (e.key === 'Enter') save(); else if (e.key === 'Escape') { e.stopPropagation(); closeKey(); } } },
+    }));
+    const save = () => {
+      if (busy) return;
+      const address = (a.url ?? saved?.baseUrl ?? 'http://127.0.0.1:20128/v1').trim();
+      if (!address) return $('9router-address')?.focus();
+      send({ type: 'panel_ninerouter_connect', baseUrl: address, key: a.key.trim(), images, modelId: a.modelId ?? saved?.modelId ?? 'my-combo' });
+      a.key = ''; render('9router-save');
+    };
+    return group('9router', 'Use the models configured in your 9router server.', null,
+      el('div', { className: 'setting' },
+        el('span', {}, '9router connection', el('small', { textContent: busy ? 'Connecting…' : active ? `Using ${state.model.name}` : saved?.note || (saved?.on && models.length ? 'Connected · choose a model below' : saved ? 'Saved · connect to check availability' : 'Not connected') })),
+        link(open ? 'Cancel' : saved ? 'Edit connection' : 'Connect 9router', () => { if (!open) { a.url = saved?.baseUrl ?? 'http://127.0.0.1:20128/v1'; a.images = saved?.images ?? false; a.modelId = saved?.modelId ?? 'my-combo'; } else a.key = ''; toggleKey(ROUTER); }, { k: `addkey:${ROUTER}`, disabled: busy })),
+      open ? el('div', { className: 'addserver', 'data-anim': `key-${ROUTER}` },
+        el('p', { className: 'sub', textContent: '9router address' }),
+        field('9router-address', '9router server address', url, 'text', (v) => { a.url = v; }),
+        el('p', { className: 'sub', textContent: 'Combo or model name' }),
+        field('9router-combo', '9router combo or model name', a.modelId ?? saved?.modelId ?? 'my-combo', 'text', (v) => { a.modelId = v; }),
+        el('p', { className: 'sub', textContent: saved ? 'API key · leave blank to keep the saved key' : 'API key · from your 9router dashboard' }),
+        field(`key-${ROUTER}`, '9router API key', a.key, 'password', (v) => { a.key = v; }),
+        toggle('My 9router model supports screenshots', 'Turn on only if the model or combo you use can understand images.', images, () => { a.images = !images; render('9router-images'); }, '9router-images'),
+        btn(busy ? 'Connecting…' : 'Connect and use 9router', save, { k: '9router-save', disabled: busy }),
+        el('p', { className: 'why', textContent: 'Connect sends a short “Reply with OK” test to your combo, then saves it and switches models. This avoids waiting for 9router’s full model list. Your provider’s normal usage charges may apply.' })) : null,
+      models.length ? el('span', { className: 'px field select' }, el('select', { 'aria-label': '9router model', 'data-k': '9router-model', on: { change: (e) => act(`model:local:${e.target.value}`) } },
+        active ? null : el('option', { value: '', textContent: 'Choose a 9router model', disabled: true, selected: true }),
+        models.map((m) => el('option', { value: m.id, textContent: m.name, selected: active && state.model.id === m.id })))) : null);
   }
   // A local server: connected (a lit dot) or not, its address if it was added, and why its models aren't in the
   // Model menu (not running, or none can see images). Ollama and LM Studio disconnect; added ones are removed.

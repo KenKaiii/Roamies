@@ -5,6 +5,7 @@ import {
   DEFAULT_LOCAL_ENDPOINTS, LOCAL_API_KEY_PLACEHOLDER, clearRuntimeModels, localAuthStorageKey, parseLocalModelId, probeEndpoint,
   registerRuntimeModels, toModelInfo,
 } from '@kenkaiiii/gg-core';
+import { probeNineRouter } from './ninerouter-probe.mjs';
 
 export const OLLAMA = DEFAULT_LOCAL_ENDPOINTS.find((e) => e.id === 'ollama');
 export const OLLAMA_KEY = localAuthStorageKey(OLLAMA.id);
@@ -37,7 +38,7 @@ const okServer = (s) => s && typeof s === 'object' && typeof s.id === 'string' &
 
 /** Ollama, LM Studio, then the servers the user added (`config.localServers`: { id, label, baseUrl, images }). */
 export const serverList = (saved) => [...BUILT_IN, ...(Array.isArray(saved) ? saved : []).filter(okServer).slice(0, MAX_SERVERS).map((s) => ({
-  id: s.id, label: s.label, baseUrl: s.baseUrl, kind: 'custom', custom: true,
+  id: s.id, label: s.label, baseUrl: s.baseUrl, ...(typeof s.modelId === 'string' && s.modelId.trim() ? { modelId: s.modelId.trim().slice(0, 200) } : {}), kind: 'custom', custom: true,
   // Off means "let the server say" (llama.cpp reports it), not "never".
   ...(s.images === true ? { supportsImages: true } : {}),
 }))];
@@ -87,9 +88,11 @@ export const forgetLocal = (id) => clearRuntimeModels(onServer(id));
  * → { ok, reason, models, text, all }: `models` can also see images, `text` counts those that can't (subagents only),
  * `all` counts every chat model.
  */
-export async function connectLocal(auth, server, { save = false, apiKey, windows, probe = probeEndpoint } = {}) {
+export async function connectLocal(auth, server, { save = false, apiKey, windows, probe } = {}) {
   const key = apiKey || await storedKey(auth, server.id);
-  const p = await probe(key ? { ...server, apiKey: key } : server, { timeoutMs: 1500 });
+  const router = server.modelId && server.label?.toLowerCase() === '9router';
+  const check = probe ?? (router ? probeNineRouter : probeEndpoint);
+  const p = await check(key ? { ...server, apiKey: key } : server, { timeoutMs: router ? 30000 : 1500 });
   if (!p.reachable) return { ok: false, reason: p.reason ?? 'not running', models: [], all: 0 };
   const usable = toolModels([p], windows), models = usable.filter((m) => m.supportsImages);
   clearRuntimeModels(onServer(server.id));
